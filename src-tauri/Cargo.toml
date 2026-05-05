@@ -1,0 +1,43 @@
+[package]
+name = "beachead"
+version = "0.1.0"
+edition = "2021"
+description = "Secure AI Orchestrator - manages AI agents in Docker Sandbox microVMs"
+license = "MIT"
+
+[dependencies]
+# Tauri
+tauri = { version = "2", features = [] }
+tauri-plugin-shell = "2"
+
+# HTTP/WebSocket server
+axum = { version = "0.8", features = ["ws"] }
+tokio = { version = "1", features = ["full"] }
+tower-http = { version = "0.6", features = ["cors"] }
+
+# Database
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Utilities
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+thiserror = "2"
+dashmap = "6"
+zeroize = { version = "1", features = ["derive"] }
+
+# PTY
+portable-pty = "0.8"
+
+[dev-dependencies]
+proptest = "1"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
