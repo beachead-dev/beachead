@@ -72,6 +72,81 @@ pub fn get_agent_type(conn: &Connection, id: &AgentTypeId) -> Result<AgentType, 
     })
 }
 
+pub fn update_agent_type(
+    conn: &Connection,
+    id: &AgentTypeId,
+    name: &str,
+    kit_ref: Option<&str>,
+    metadata: &AgentMetadata,
+    updated_at: &DateTime<Utc>,
+) -> Result<(), OrchestratorError> {
+    let metadata_json =
+        serde_json::to_string(metadata).map_err(|e| OrchestratorError::Internal(e.to_string()))?;
+
+    let rows = conn.execute(
+        "UPDATE agent_types SET name = ?1, kit_ref = ?2, metadata = ?3, updated_at = ?4
+         WHERE id = ?5",
+        params![name, kit_ref, metadata_json, updated_at.to_rfc3339(), id.0],
+    )?;
+
+    if rows == 0 {
+        return Err(OrchestratorError::NotFound(format!(
+            "Agent type not found: {}",
+            id.0
+        )));
+    }
+    Ok(())
+}
+
+pub fn delete_agent_type(conn: &Connection, id: &AgentTypeId) -> Result<(), OrchestratorError> {
+    let rows = conn.execute("DELETE FROM agent_types WHERE id = ?1", params![id.0])?;
+    if rows == 0 {
+        return Err(OrchestratorError::NotFound(format!(
+            "Agent type not found: {}",
+            id.0
+        )));
+    }
+    Ok(())
+}
+
+pub fn count_personas_by_agent_type(
+    conn: &Connection,
+    agent_type_id: &AgentTypeId,
+) -> Result<i64, OrchestratorError> {
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM personas WHERE agent_type_id = ?1",
+            params![agent_type_id.0],
+            |row| row.get(0),
+        )
+        .map_err(|e| OrchestratorError::Database(e.to_string()))?;
+    Ok(count)
+}
+
+pub fn agent_type_name_exists(
+    conn: &Connection,
+    name: &str,
+    exclude_id: Option<&AgentTypeId>,
+) -> Result<bool, OrchestratorError> {
+    let exists: bool = match exclude_id {
+        Some(id) => conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM agent_types WHERE name = ?1 AND id != ?2",
+                params![name, id.0],
+                |row| row.get(0),
+            )
+            .map_err(|e| OrchestratorError::Database(e.to_string()))?,
+        None => conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM agent_types WHERE name = ?1",
+                params![name],
+                |row| row.get(0),
+            )
+            .map_err(|e| OrchestratorError::Database(e.to_string()))?,
+    };
+    Ok(exists)
+}
+
 pub fn list_agent_types(conn: &Connection) -> Result<Vec<AgentType>, OrchestratorError> {
     let mut stmt = conn.prepare(
         "SELECT id, name, sbx_agent, kit_ref, is_builtin, metadata, created_at, updated_at
