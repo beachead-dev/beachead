@@ -17,6 +17,7 @@ pub mod sbx;
 mod sbx_property_tests;
 mod server;
 pub mod session_manager;
+pub mod system_manager;
 pub mod template_manager;
 mod types;
 pub mod workspace_manager;
