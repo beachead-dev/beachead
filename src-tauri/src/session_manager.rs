@@ -103,7 +103,7 @@ impl SessionManager {
         };
         self.db.with_conn(|conn| db_ops::insert_session(conn, &session))?;
 
-        // 4. Build SbxRunArgs and call sbx.run()
+        // 4. Build args and call sbx create (creates sandbox without attaching)
         let agent = self.resolve_agent_identifier(&persona)?;
         let run_args = SbxRunArgs {
             agent,
@@ -114,7 +114,13 @@ impl SessionManager {
             agent_args: persona.agent_cli_args.clone(),
         };
 
-        let sandbox_id = match self.sbx.run(&run_args).await {
+        let sandbox_id = match self.sbx.create(&crate::sbx::SbxCreateArgs {
+            agent: run_args.agent,
+            kit_paths: run_args.kit_paths,
+            workspace: run_args.workspace,
+            name: run_args.name,
+            template: run_args.template,
+        }).await {
             Ok(id) => id,
             Err(OrchestratorError::SbxError(ref msg)) => {
                 // Check stderr for credential error patterns
@@ -165,7 +171,7 @@ impl SessionManager {
             db_ops::update_session_sandbox_id(conn, &session_id, &sandbox_id)
         })?;
 
-        // 5. Spawn PTY via PtyBridge with `sbx exec -it <sandbox_id>`
+        // 5. Spawn PTY via PtyBridge with `sbx run <sandbox_id>` to attach
         let sbx_path = self.sbx.path().to_string_lossy().to_string();
         let pty_bridge = self.pty_bridge.clone();
         let pty_session_id = session_id.clone();
@@ -174,7 +180,7 @@ impl SessionManager {
             pty_bridge.spawn(
                 pty_session_id,
                 &sbx_path,
-                &["exec", "-it", &sandbox_id_clone],
+                &["run", &sandbox_id_clone],
             )
         })
         .await
@@ -546,19 +552,19 @@ mod tests {
             file,
             r#"#!/bin/sh
 case "$1" in
-    run)
+    create)
         echo "sandbox-abc123"
         exit 0
+        ;;
+    run)
+        # For PTY spawn (attaching to existing sandbox), just run cat to keep process alive
+        exec cat
         ;;
     stop|rm)
         exit 0
         ;;
     cp)
         exit 0
-        ;;
-    exec)
-        # For PTY spawn, just run cat to keep process alive
-        exec cat
         ;;
     *)
         echo "unknown command: $1" >&2
@@ -568,7 +574,10 @@ esac
 "#
         )
         .unwrap();
+        file.sync_all().unwrap();
+        drop(file);
         fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755)).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1));
         script_path
     }
 
@@ -580,7 +589,7 @@ esac
             file,
             r#"#!/bin/sh
 case "$1" in
-    run)
+    create)
         echo "Error: unauthorized - invalid API key or credentials not configured" >&2
         exit 1
         ;;
@@ -591,7 +600,10 @@ esac
 "#
         )
         .unwrap();
+        file.sync_all().unwrap();
+        drop(file);
         fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755)).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1));
         script_path
     }
 
@@ -603,7 +615,7 @@ esac
             file,
             r#"#!/bin/sh
 case "$1" in
-    run)
+    create)
         echo "Error: network timeout connecting to sandbox runtime" >&2
         exit 1
         ;;
@@ -614,7 +626,10 @@ esac
 "#
         )
         .unwrap();
+        file.sync_all().unwrap();
+        drop(file);
         fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755)).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1));
         script_path
     }
 
@@ -1035,7 +1050,10 @@ esac
 "#
         )
         .unwrap();
+        file.sync_all().unwrap();
+        drop(file);
         fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755)).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1));
         script_path
     }
 
@@ -1065,7 +1083,10 @@ esac
 "#
         )
         .unwrap();
+        file.sync_all().unwrap();
+        drop(file);
         fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755)).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1));
         script_path
     }
 
