@@ -353,6 +353,303 @@ mod tests {
         }
     }
 
+    // Property 5: Secrets never stored in SQLite
+    // **Validates: Requirements 2.13**
+
+    /// Generate a string that looks like a secret/API key
+    fn arb_secret_value() -> impl Strategy<Value = String> {
+        prop_oneof![
+            "[a-zA-Z0-9]{20,40}".prop_map(|s| format!("sk-{}", s)),
+            "[a-zA-Z0-9]{20,40}".prop_map(|s| format!("api-key-{}", s)),
+            "[a-zA-Z0-9]{20,40}".prop_map(|s| format!("Bearer {}", s)),
+            "[a-zA-Z0-9]{20,40}".prop_map(|s| format!("ghp_{}", s)),
+            "[a-zA-Z0-9]{20,40}".prop_map(|s| format!("xai-{}", s)),
+            "[a-zA-Z0-9]{20,40}".prop_map(|s| format!("gsk_{}", s)),
+        ]
+    }
+
+    /// Generate a list of secret-like patterns to use as "required_secrets" metadata
+    /// (these are service NAMES, not actual secret values)
+    fn arb_service_names() -> impl Strategy<Value = Vec<String>> {
+        prop::collection::vec(
+            prop::sample::select(vec![
+                "anthropic".to_string(),
+                "openai".to_string(),
+                "github".to_string(),
+                "google".to_string(),
+                "aws".to_string(),
+                "cursor".to_string(),
+                "xai".to_string(),
+            ]),
+            0..4,
+        )
+    }
+
+    /// Represents an operation that might accidentally store secrets
+    #[derive(Debug, Clone)]
+    enum DbOperation {
+        InsertAgent {
+            name: String,
+            description: String,
+            required_secrets: Vec<String>,
+        },
+        InsertPersona {
+            name: String,
+            workspace: PathBuf,
+            cli_args: Vec<String>,
+        },
+        InsertSession {
+            sandbox_id: Option<String>,
+            error_message: Option<String>,
+        },
+        InsertMcpServer {
+            name: String,
+            url: String,
+            description: Option<String>,
+        },
+    }
+
+    /// Generate a sequence of DB operations where field values include secret-like strings
+    /// to verify they don't end up stored as actual secrets
+    fn arb_operations_with_secrets(
+        secret_values: Vec<String>,
+    ) -> impl Strategy<Value = Vec<DbOperation>> {
+        let secrets = secret_values.clone();
+        prop::collection::vec(
+            (0u8..4, arb_name(), arb_name(), arb_workspace_path(), arb_url())
+                .prop_map(move |(op_type, name1, name2, ws, url)| {
+                    match op_type % 4 {
+                        0 => DbOperation::InsertAgent {
+                            name: name1,
+                            description: name2,
+                            required_secrets: secrets.iter().take(2).map(|_| "anthropic".to_string()).collect(),
+                        },
+                        1 => DbOperation::InsertPersona {
+                            name: name1,
+                            workspace: ws,
+                            cli_args: vec!["--verbose".to_string(), "--model".to_string()],
+                        },
+                        2 => DbOperation::InsertSession {
+                            sandbox_id: Some(format!("sbx-{}", name1)),
+                            error_message: Some(format!("Failed to connect to {}", name2)),
+                        },
+                        _ => DbOperation::InsertMcpServer {
+                            name: name1,
+                            url: url,
+                            description: Some(name2),
+                        },
+                    }
+                }),
+            1..6,
+        )
+    }
+
+    /// Scan all cells in all tables for secret-like patterns
+    fn scan_db_for_secrets(conn: &rusqlite::Connection, secrets: &[String]) -> Vec<String> {
+        let mut found = Vec::new();
+
+        // Get all table names
+        let mut stmt = conn
+            .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+            .unwrap();
+        let tables: Vec<String> = stmt
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect();
+
+        for table in &tables {
+            // Get column count
+            let col_info_sql = format!("PRAGMA table_info({})", table);
+            let mut col_stmt = conn.prepare(&col_info_sql).unwrap();
+            let col_names: Vec<String> = col_stmt
+                .query_map([], |row| row.get::<_, String>(1))
+                .unwrap()
+                .filter_map(|r| r.ok())
+                .collect();
+
+            // Read all rows
+            let select_sql = format!("SELECT * FROM {}", table);
+            let mut select_stmt = conn.prepare(&select_sql).unwrap();
+            let col_count = col_names.len();
+
+            let mut rows = select_stmt.query([]).unwrap();
+            while let Some(row) = rows.next().unwrap() {
+                for col_idx in 0..col_count {
+                    if let Ok(val) = row.get::<_, String>(col_idx) {
+                        for secret in secrets {
+                            if val.contains(secret.as_str()) {
+                                found.push(format!(
+                                    "Secret '{}' found in table '{}', column '{}'",
+                                    secret, table, col_names[col_idx]
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        found
+    }
+
+    proptest! {
+        #[test]
+        fn prop_secrets_never_stored_in_sqlite(
+            secret_values in prop::collection::vec(arb_secret_value(), 1..4),
+            operations in arb_operations_with_secrets(vec![
+                "sk-test1234567890abcdef".to_string(),
+                "api-key-secret9876543210xyz".to_string(),
+                "Bearer tokenvalue123456789".to_string(),
+            ]),
+        ) {
+            let db = Database::open_in_memory().unwrap();
+
+            // Collect the actual secret values we're checking for
+            let all_secrets: Vec<String> = secret_values.clone();
+
+            // Execute operations - these should NEVER store secret values in the DB
+            db.with_conn(|conn| {
+                // First insert a base agent type (needed for persona FK)
+                let now = Utc::now();
+                let base_agent = AgentType {
+                    id: AgentTypeId::new(),
+                    name: format!("base-agent-{}", uuid::Uuid::new_v4()),
+                    sbx_agent: Some("claude".to_string()),
+                    kit_ref: None,
+                    is_builtin: true,
+                    metadata: AgentMetadata {
+                        required_secrets: vec!["anthropic".to_string()],
+                        auth_methods: vec![AuthMethod::ApiKey],
+                        description: "Test agent".to_string(),
+                        supports_interactive_auth: false,
+                    },
+                    created_at: now,
+                    updated_at: now,
+                };
+                insert_agent_type(conn, &base_agent)?;
+
+                let mut persona_id: Option<PersonaId> = None;
+
+                for op in &operations {
+                    match op {
+                        DbOperation::InsertAgent { name, description, required_secrets } => {
+                            let agent = AgentType {
+                                id: AgentTypeId::new(),
+                                name: format!("{}-{}", name, uuid::Uuid::new_v4()),
+                                sbx_agent: Some(name.clone()),
+                                kit_ref: None,
+                                is_builtin: false,
+                                metadata: AgentMetadata {
+                                    required_secrets: required_secrets.clone(),
+                                    auth_methods: vec![AuthMethod::ApiKey],
+                                    description: description.clone(),
+                                    supports_interactive_auth: false,
+                                },
+                                created_at: now,
+                                updated_at: now,
+                            };
+                            let _ = insert_agent_type(conn, &agent);
+                        }
+                        DbOperation::InsertPersona { name, workspace, cli_args } => {
+                            let pid = PersonaId::new();
+                            let persona = Persona {
+                                id: pid.clone(),
+                                name: format!("{}-{}", name, uuid::Uuid::new_v4()),
+                                agent_type_id: base_agent.id.clone(),
+                                workspace_path: workspace.clone(),
+                                memory_enabled: false,
+                                agent_cli_args: cli_args.clone(),
+                                mcp_servers: vec![],
+                                created_at: now,
+                                updated_at: now,
+                            };
+                            let _ = insert_persona(conn, &persona);
+                            persona_id = Some(pid);
+                        }
+                        DbOperation::InsertSession { sandbox_id, error_message } => {
+                            // Need a persona for the session FK
+                            let pid = match &persona_id {
+                                Some(p) => p.clone(),
+                                None => {
+                                    let p = PersonaId::new();
+                                    let persona = Persona {
+                                        id: p.clone(),
+                                        name: format!("session-persona-{}", uuid::Uuid::new_v4()),
+                                        agent_type_id: base_agent.id.clone(),
+                                        workspace_path: PathBuf::from("/tmp/test"),
+                                        memory_enabled: false,
+                                        agent_cli_args: vec![],
+                                        mcp_servers: vec![],
+                                        created_at: now,
+                                        updated_at: now,
+                                    };
+                                    let _ = insert_persona(conn, &persona);
+                                    persona_id = Some(p.clone());
+                                    p
+                                }
+                            };
+                            let session = Session {
+                                id: SessionId::new(),
+                                persona_id: pid,
+                                sandbox_id: sandbox_id.clone(),
+                                kit_path: None,
+                                status: SessionStatus::Running,
+                                error_message: error_message.clone(),
+                                created_at: now,
+                                updated_at: now,
+                            };
+                            let _ = insert_session(conn, &session);
+                        }
+                        DbOperation::InsertMcpServer { name, url, description } => {
+                            let pid = match &persona_id {
+                                Some(p) => p.clone(),
+                                None => {
+                                    let p = PersonaId::new();
+                                    let persona = Persona {
+                                        id: p.clone(),
+                                        name: format!("mcp-persona-{}", uuid::Uuid::new_v4()),
+                                        agent_type_id: base_agent.id.clone(),
+                                        workspace_path: PathBuf::from("/tmp/test"),
+                                        memory_enabled: false,
+                                        agent_cli_args: vec![],
+                                        mcp_servers: vec![],
+                                        created_at: now,
+                                        updated_at: now,
+                                    };
+                                    let _ = insert_persona(conn, &persona);
+                                    persona_id = Some(p.clone());
+                                    p
+                                }
+                            };
+                            let mcp = PersonaMcpServer {
+                                id: uuid::Uuid::new_v4().to_string(),
+                                persona_id: pid,
+                                name: format!("{}-{}", name, uuid::Uuid::new_v4()),
+                                url: url.clone(),
+                                description: description.clone(),
+                                auth_headers: None,
+                                created_at: now,
+                                updated_at: now,
+                            };
+                            let _ = insert_persona_mcp_server(conn, &mcp);
+                        }
+                    }
+                }
+
+                // Now scan the entire database for secret values
+                let violations = scan_db_for_secrets(conn, &all_secrets);
+                assert!(
+                    violations.is_empty(),
+                    "Secrets found in SQLite database: {:?}",
+                    violations
+                );
+
+                Ok(())
+            }).unwrap();
+        }
+    }
+
     // Property 8: Session-sandbox mapping persistence
     proptest! {
         #[test]
