@@ -6,6 +6,9 @@ mod db_ops;
 #[cfg(test)]
 mod db_property_tests;
 mod error;
+pub mod sbx;
+#[cfg(test)]
+mod sbx_property_tests;
 mod server;
 mod types;
 
