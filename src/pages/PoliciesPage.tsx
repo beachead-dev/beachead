@@ -196,20 +196,30 @@ export function PoliciesPage() {
               <table className="rules-table" aria-label="Policy rules">
                 <thead>
                   <tr>
+                    <th>Rule</th>
                     <th>Action</th>
                     <th>Target</th>
-                    <th>Actions</th>
+                    <th></th>
                   </tr>
                 </thead>
                 <tbody>
                   {policyState.rules
-                    .filter((rule) => !ruleSearch || rule.target.toLowerCase().includes(ruleSearch.toLowerCase()))
+                    .filter((rule) => {
+                      if (!ruleSearch) return true;
+                      const search = ruleSearch.toLowerCase();
+                      return (
+                        rule.target.toLowerCase().includes(search) ||
+                        (rule.id && rule.id.toLowerCase().includes(search)) ||
+                        rule.action.toLowerCase().includes(search)
+                      );
+                    })
                     .map((rule, i) => (
-                    <tr key={rule.id || i}>
+                    <tr key={`${rule.id}-${i}`}>
+                      <td><code className="rule-name">{rule.id || "—"}</code></td>
                       <td><span className={`badge badge-${rule.action}`}>{rule.action}</span></td>
                       <td><code>{rule.target}</code></td>
                       <td>
-                        {rule.id && (
+                        {rule.id && !rule.id.startsWith("default-") && (
                           <button className="btn btn-sm btn-danger" onClick={() => handleRemoveRule(rule.id!)} aria-label={`Remove rule for ${rule.target}`}>
                             Remove
                           </button>
