@@ -1,8 +1,83 @@
+import { useState, useEffect } from "react";
+import ReactMarkdown from "react-markdown";
+import { api } from "../lib/api";
+
+interface HelpTopic {
+  id: string;
+  label: string;
+}
+
+const HELP_TOPICS: HelpTopic[] = [
+  { id: "getting-started", label: "Getting Started" },
+  { id: "personas", label: "Personas" },
+  { id: "agents", label: "Agents" },
+  { id: "sessions", label: "Sessions" },
+  { id: "policies", label: "Policies" },
+  { id: "system-settings", label: "System Settings" },
+  { id: "troubleshooting", label: "Troubleshooting" },
+  { id: "glossary", label: "Glossary" },
+];
+
 export function HelpPage() {
+  const [activeTopic, setActiveTopic] = useState("getting-started");
+  const [content, setContent] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+
+    api
+      .get<string>(`/api/system/help/${activeTopic}`)
+      .then((data) => {
+        if (!cancelled) {
+          setContent(data);
+          setLoading(false);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setError(err.message || "Failed to load help content");
+          setLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTopic]);
+
   return (
-    <div>
-      <h2>Help</h2>
-      <p>Documentation and guides for using Beachead.</p>
+    <div className="help-page">
+      <nav className="help-sidebar" aria-label="Help topics">
+        <h2 className="help-sidebar-title">Documentation</h2>
+        <ul className="help-topic-list">
+          {HELP_TOPICS.map((topic) => (
+            <li key={topic.id}>
+              <button
+                className={`help-topic-btn${
+                  activeTopic === topic.id ? " help-topic-btn--active" : ""
+                }`}
+                onClick={() => setActiveTopic(topic.id)}
+                aria-current={activeTopic === topic.id ? "page" : undefined}
+              >
+                {topic.label}
+              </button>
+            </li>
+          ))}
+        </ul>
+      </nav>
+      <main className="help-content" aria-live="polite">
+        {loading && <p className="help-loading">Loading...</p>}
+        {error && <p className="help-error">{error}</p>}
+        {!loading && !error && (
+          <div className="help-markdown">
+            <ReactMarkdown>{content}</ReactMarkdown>
+          </div>
+        )}
+      </main>
     </div>
   );
 }

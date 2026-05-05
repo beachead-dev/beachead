@@ -80,10 +80,15 @@ async fn help_topic(
 ) -> Result<String, OrchestratorError> {
     let content = match topic.as_str() {
         "getting-started" => include_str!("../help/getting-started.md"),
+        "personas" => include_str!("../help/personas.md"),
         "agents" => include_str!("../help/agents.md"),
         "credentials" => include_str!("../help/credentials.md"),
+        "sessions" => include_str!("../help/sessions.md"),
         "policies" => include_str!("../help/policies.md"),
         "templates" => include_str!("../help/templates.md"),
+        "system-settings" => include_str!("../help/system-settings.md"),
+        "troubleshooting" => include_str!("../help/troubleshooting.md"),
+        "glossary" => include_str!("../help/glossary.md"),
         _ => {
             return Err(OrchestratorError::NotFound(format!(
                 "Help topic '{}' not found",

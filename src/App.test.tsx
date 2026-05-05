@@ -10,7 +10,7 @@ describe("App", () => {
     expect(screen.getByRole("link", { name: "Agents" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Sessions" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Policies" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Help" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Help and documentation" })).toBeInTheDocument();
     expect(
       screen.getByRole("link", { name: "System Settings" }),
     ).toBeInTheDocument();
