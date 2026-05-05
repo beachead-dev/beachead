@@ -14,9 +14,11 @@ use crate::server::AppState;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/templates", get(list_templates))
-        .route("/api/templates/{sandbox_id}", axum::routing::post(save_template))
         .route("/api/templates/load", axum::routing::post(load_template))
-        .route("/api/templates/{tag}", axum::routing::delete(remove_template))
+        .route(
+            "/api/templates/{id}",
+            axum::routing::post(save_template).delete(remove_template),
+        )
 }
 
 /// GET /api/templates — list all saved templates.
@@ -34,7 +36,8 @@ struct SaveTemplateRequest {
     tag: String,
 }
 
-/// POST /api/templates/{sandbox_id} — save a sandbox as a template.
+/// POST /api/templates/{id} — save a sandbox as a template.
+/// The path parameter is the sandbox_id to save.
 async fn save_template(
     State(state): State<AppState>,
     Path(sandbox_id): Path<String>,
@@ -62,7 +65,8 @@ async fn load_template(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// DELETE /api/templates/{tag} — remove a template by tag.
+/// DELETE /api/templates/{id} — remove a template by tag.
+/// The path parameter is the template tag to remove.
 async fn remove_template(
     State(state): State<AppState>,
     Path(tag): Path<String>,

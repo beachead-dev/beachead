@@ -104,9 +104,15 @@ mod tests {
         #[cfg(unix)]
         {
             use std::fs;
+            use std::io::Write;
             use std::os::unix::fs::PermissionsExt;
-            fs::write(&script_path, script_content).unwrap();
+            let mut file = fs::File::create(&script_path).unwrap();
+            file.write_all(script_content.as_bytes()).unwrap();
+            file.sync_all().unwrap();
+            drop(file);
             fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755)).unwrap();
+            // Brief yield to ensure kernel releases write lock on the file
+            std::thread::sleep(std::time::Duration::from_millis(1));
         }
 
         #[cfg(windows)]
