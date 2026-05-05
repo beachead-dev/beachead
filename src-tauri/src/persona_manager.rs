@@ -400,6 +400,7 @@ fn classify_mcp_changes(
 mod tests {
     use super::*;
     use crate::types::{AgentMetadata, AgentType, AgentTypeId, AuthMethod};
+    use proptest::prelude::*;
 
     fn setup_manager() -> PersonaManager {
         let db = Arc::new(Database::open_in_memory().unwrap());
@@ -1191,6 +1192,108 @@ mod tests {
             auth_headers: None,
             created_at: now,
             updated_at: now,
+        }
+    }
+
+    // --- Property-Based Tests ---
+
+    /// Generate a unique MCP server name
+    fn arb_mcp_name() -> impl Strategy<Value = String> {
+        "[a-z][a-z0-9-]{1,15}".prop_map(|s| s)
+    }
+
+    /// Generate a set of unique MCP server names (1..8 names)
+    fn arb_unique_names(min: usize, max: usize) -> impl Strategy<Value = Vec<String>> {
+        proptest::collection::hash_set(arb_mcp_name(), min..max)
+            .prop_map(|set| set.into_iter().collect::<Vec<_>>())
+    }
+
+    // Property 3: Edit classification — additive vs. removal
+    // **Validates: Requirements 1.8, 1.9**
+    //
+    // For any persona edit diff applied to a persona with active sessions:
+    // - If all existing MCP server names appear in the new entries (additive-only),
+    //   classify_mcp_changes returns false (live-applicable).
+    // - If any existing MCP server name is missing from the new entries (removal),
+    //   classify_mcp_changes returns true (requires-restart).
+    proptest! {
+        #[test]
+        fn prop_edit_classification_additive_only(
+            existing_names in arb_unique_names(1, 6),
+            extra_names in arb_unique_names(0, 5),
+        ) {
+            // Build existing MCP servers from existing_names
+            let existing: Vec<PersonaMcpServer> = existing_names
+                .iter()
+                .map(|n| make_mcp_server(n))
+                .collect();
+
+            // Build new entries that include ALL existing names plus extras
+            // Filter extras to avoid duplicates with existing names
+            let mut new_entry_names: Vec<String> = existing_names.clone();
+            for extra in &extra_names {
+                if !new_entry_names.contains(extra) {
+                    new_entry_names.push(extra.clone());
+                }
+            }
+
+            let new_entries: Vec<CreateMcpServerEntry> = new_entry_names
+                .iter()
+                .enumerate()
+                .map(|(i, name)| CreateMcpServerEntry {
+                    name: name.clone(),
+                    url: format!("http://localhost:{}", 8000 + i),
+                    description: None,
+                    auth_headers: None,
+                })
+                .collect();
+
+            // Additive-only: all existing names present in new entries
+            let result = classify_mcp_changes(&existing, &new_entries);
+            prop_assert!(
+                !result,
+                "Expected additive-only (false) but got requires-restart (true). \
+                 existing={:?}, new={:?}",
+                existing_names, new_entry_names
+            );
+        }
+
+        #[test]
+        fn prop_edit_classification_with_removal(
+            all_names in arb_unique_names(2, 8),
+            remove_count in 1usize..4,
+        ) {
+            // Ensure we have enough names to remove at least one
+            prop_assume!(all_names.len() >= 2);
+            let actual_remove = remove_count.min(all_names.len() - 1);
+
+            // Build existing MCP servers from all names
+            let existing: Vec<PersonaMcpServer> = all_names
+                .iter()
+                .map(|n| make_mcp_server(n))
+                .collect();
+
+            // Build new entries that are MISSING some existing names (removal)
+            let kept_names = &all_names[actual_remove..];
+            let new_entries: Vec<CreateMcpServerEntry> = kept_names
+                .iter()
+                .enumerate()
+                .map(|(i, name)| CreateMcpServerEntry {
+                    name: name.clone(),
+                    url: format!("http://localhost:{}", 9000 + i),
+                    description: None,
+                    auth_headers: None,
+                })
+                .collect();
+
+            // Removal detected: at least one existing name missing from new entries
+            let result = classify_mcp_changes(&existing, &new_entries);
+            prop_assert!(
+                result,
+                "Expected requires-restart (true) but got additive (false). \
+                 existing={:?}, kept={:?}, removed={:?}",
+                all_names, kept_names, &all_names[..actual_remove]
+            );
         }
     }
 }
