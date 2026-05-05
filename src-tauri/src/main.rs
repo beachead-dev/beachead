@@ -8,6 +8,7 @@ mod db_ops;
 #[cfg(test)]
 mod db_property_tests;
 mod error;
+pub mod kit_generator;
 pub mod persona_manager;
 pub mod sbx;
 #[cfg(test)]
