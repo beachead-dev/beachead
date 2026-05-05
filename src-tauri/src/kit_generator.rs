@@ -485,4 +485,240 @@ mod tests {
 
         assert!(content.contains("description: Auto-generated kit for persona desc-test"));
     }
+
+    // --- Property-based tests ---
+
+    mod prop_tests {
+        use super::*;
+        use proptest::prelude::*;
+        use proptest::collection::vec as prop_vec;
+
+        /// **Validates: Requirements 3.1, 10.4, 10.5, 18.1–18.7**
+        ///
+        /// Property 6: Kit generation completeness
+        /// For any valid persona configuration (varying memory, MCP servers, McpConfig),
+        /// the generated spec.yaml always contains all required sections.
+
+        /// Strategy for generating a valid MCP server name (alphanumeric + hyphens)
+        fn arb_mcp_name() -> impl Strategy<Value = String> {
+            "[a-z][a-z0-9\\-]{1,10}".prop_map(|s| s)
+        }
+
+        /// Strategy for generating a valid port number
+        fn arb_port() -> impl Strategy<Value = u16> {
+            1024..=65000u16
+        }
+
+        /// Strategy for generating a valid MCP server URL with explicit port
+        fn arb_mcp_url() -> impl Strategy<Value = String> {
+            (
+                prop_oneof![Just("http"), Just("https")],
+                prop_oneof![
+                    Just("localhost".to_string()),
+                    Just("host.docker.internal".to_string()),
+                    Just("127.0.0.1".to_string()),
+                ],
+                arb_port(),
+                prop_oneof![
+                    Just("/sse".to_string()),
+                    Just("/mcp".to_string()),
+                    Just("/api".to_string()),
+                ],
+            )
+                .prop_map(|(scheme, host, port, path)| {
+                    format!("{}://{}:{}{}", scheme, host, port, path)
+                })
+        }
+
+        /// Strategy for generating optional auth headers
+        fn arb_auth_headers() -> impl Strategy<Value = Option<serde_json::Value>> {
+            prop_oneof![
+                Just(None),
+                "[a-zA-Z]{5,15}".prop_map(|token| {
+                    Some(serde_json::json!({"Authorization": format!("Bearer {}", token)}))
+                }),
+                "[a-zA-Z0-9]{8,20}".prop_map(|key| {
+                    Some(serde_json::json!({"X-Api-Key": key}))
+                }),
+            ]
+        }
+
+        /// Strategy for generating a PersonaMcpServer
+        fn arb_persona_mcp_server() -> impl Strategy<Value = PersonaMcpServer> {
+            (arb_mcp_name(), arb_mcp_url(), arb_auth_headers()).prop_map(
+                |(name, url, auth_headers)| PersonaMcpServer {
+                    id: format!("mcp-{}", name),
+                    persona_id: PersonaId("prop-test-id".to_string()),
+                    name,
+                    url,
+                    description: None,
+                    auth_headers,
+                    created_at: Utc::now(),
+                    updated_at: Utc::now(),
+                },
+            )
+        }
+
+        /// Strategy for generating an optional McpConfig (memory MCP)
+        fn arb_mcp_config() -> impl Strategy<Value = Option<McpConfig>> {
+            prop_oneof![
+                Just(None),
+                (arb_port(), "[a-zA-Z0-9]{10,30}").prop_map(|(port, token)| {
+                    Some(McpConfig {
+                        url: format!("http://host.docker.internal:{}/sse", port),
+                        bearer_token: token,
+                        port,
+                    })
+                }),
+            ]
+        }
+
+        /// Strategy for generating a persona name (lowercase alpha, 3-12 chars)
+        fn arb_persona_name() -> impl Strategy<Value = String> {
+            "[a-z]{3,12}"
+        }
+
+        proptest! {
+            #[test]
+            fn prop_kit_generation_completeness(
+                name in arb_persona_name(),
+                memory_enabled in any::<bool>(),
+                mcp_servers in prop_vec(arb_persona_mcp_server(), 0..5),
+                mcp_config in arb_mcp_config(),
+            ) {
+                let tmp = TempDir::new().unwrap();
+                let generator = KitGenerator::new(tmp.path().to_path_buf());
+
+                let persona = Persona {
+                    id: PersonaId("prop-test-id".to_string()),
+                    name: name.clone(),
+                    agent_type_id: AgentTypeId("agent-prop".to_string()),
+                    workspace_path: PathBuf::from("/tmp/workspace"),
+                    memory_enabled,
+                    agent_cli_args: vec![],
+                    mcp_servers: mcp_servers.clone(),
+                    created_at: Utc::now(),
+                    updated_at: Utc::now(),
+                };
+
+                let kit_path = generator
+                    .generate(&persona, mcp_config.as_ref())
+                    .unwrap();
+
+                let content = fs::read_to_string(kit_path.join("spec.yaml")).unwrap();
+
+                // --- Always-present sections ---
+                prop_assert!(
+                    content.contains("schemaVersion: \"1\""),
+                    "Missing schemaVersion in spec.yaml"
+                );
+                prop_assert!(
+                    content.contains("kind: mixin"),
+                    "Missing kind: mixin in spec.yaml"
+                );
+                prop_assert!(
+                    content.contains(&format!("name: persona-{}", name)),
+                    "Missing name: persona-{} in spec.yaml", name
+                );
+                prop_assert!(
+                    content.contains(&format!("BEACHEAD_PERSONA: \"{}\"", name)),
+                    "Missing BEACHEAD_PERSONA env var in spec.yaml"
+                );
+
+                // --- Memory section ---
+                if memory_enabled {
+                    prop_assert!(
+                        content.contains("memory: |"),
+                        "memory_enabled=true but missing 'memory: |' section"
+                    );
+                    prop_assert!(
+                        content.contains("Memory Instructions"),
+                        "memory_enabled=true but missing memory instructions"
+                    );
+                } else {
+                    prop_assert!(
+                        !content.contains("memory: |"),
+                        "memory_enabled=false but 'memory: |' section present"
+                    );
+                }
+
+                // --- initFiles section (MCP servers) ---
+                let has_any_mcp = !mcp_servers.is_empty() || mcp_config.is_some();
+                if has_any_mcp {
+                    prop_assert!(
+                        content.contains("initFiles:"),
+                        "Has MCP servers but missing initFiles section"
+                    );
+                    // Each persona MCP server name and URL should appear
+                    for server in &mcp_servers {
+                        prop_assert!(
+                            content.contains(&server.name),
+                            "MCP server name '{}' not found in spec.yaml",
+                            server.name
+                        );
+                        prop_assert!(
+                            content.contains(&server.url),
+                            "MCP server URL '{}' not found in spec.yaml",
+                            server.url
+                        );
+                    }
+                } else {
+                    prop_assert!(
+                        !content.contains("initFiles:"),
+                        "No MCP servers but initFiles section present"
+                    );
+                }
+
+                // --- McpConfig (memory MCP) in initFiles ---
+                if let Some(ref config) = mcp_config {
+                    prop_assert!(
+                        content.contains(&config.url),
+                        "McpConfig URL '{}' not found in spec.yaml",
+                        config.url
+                    );
+                    prop_assert!(
+                        content.contains(&format!("Bearer {}", config.bearer_token)),
+                        "McpConfig bearer token not found in spec.yaml"
+                    );
+                }
+
+                // --- network.allowedDomains ---
+                if has_any_mcp {
+                    prop_assert!(
+                        content.contains("network:"),
+                        "Has MCP servers but missing network section"
+                    );
+                    prop_assert!(
+                        content.contains("allowedDomains:"),
+                        "Has MCP servers but missing allowedDomains"
+                    );
+
+                    // Memory MCP port in allowedDomains
+                    if let Some(ref config) = mcp_config {
+                        prop_assert!(
+                            content.contains(&format!("127.0.0.1:{}", config.port)),
+                            "McpConfig port {} not in allowedDomains",
+                            config.port
+                        );
+                    }
+
+                    // Each persona MCP server host:port in allowedDomains
+                    for server in &mcp_servers {
+                        if let Some(domain) = extract_host_port(&server.url) {
+                            prop_assert!(
+                                content.contains(&domain),
+                                "MCP server domain '{}' not in allowedDomains",
+                                domain
+                            );
+                        }
+                    }
+                } else {
+                    prop_assert!(
+                        !content.contains("network:"),
+                        "No MCP servers but network section present"
+                    );
+                }
+            }
+        }
+    }
 }
