@@ -173,7 +173,10 @@ impl PtyBridge {
         // Forward PTY output to WebSocket
         let ws_forward_handle = tokio::spawn(async move {
             while let Some(data) = rx.recv().await {
-                if ws_sender.send(Message::Binary(data.into())).await.is_err() {
+                // Send as Text since terminal output is UTF-8 text
+                // (xterm.js expects string data)
+                let text = String::from_utf8_lossy(&data).into_owned();
+                if ws_sender.send(Message::Text(text.into())).await.is_err() {
                     break;
                 }
             }
