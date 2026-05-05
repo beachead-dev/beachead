@@ -1,8 +1,450 @@
+import { useEffect, useState, useCallback, useRef } from "react";
+import { api } from "../lib/api";
+import { useWebSocket, ReadyState } from "../hooks/useWebSocket";
+import { useDropzone } from "react-dropzone";
+import { Terminal } from "@xterm/xterm";
+import { FitAddon } from "@xterm/addon-fit";
+import { WebLinksAddon } from "@xterm/addon-web-links";
+import "@xterm/xterm/css/xterm.css";
+
+interface Persona {
+  id: { "0": string };
+  name: string;
+  agent_type_id: { "0": string };
+}
+
+interface Session {
+  id: { "0": string };
+  persona_id: { "0": string };
+  sandbox_id: string | null;
+  status: string;
+  error_message: string | null;
+  created_at: string;
+}
+
+interface PortMapping {
+  host_ip: string;
+  host_port: number;
+  sandbox_port: number;
+  protocol: string;
+}
+
+interface SessionTab {
+  session: Session;
+  personaName: string;
+}
+
 export function SessionsPage() {
+  const [personas, setPersonas] = useState<Persona[]>([]);
+  const [, setSessions] = useState<Session[]>([]);
+  const [tabs, setTabs] = useState<SessionTab[]>([]);
+  const [activeTabId, setActiveTabId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [showLauncher, setShowLauncher] = useState(false);
+  const [selectedPersonaId, setSelectedPersonaId] = useState("");
+  const [launching, setLaunching] = useState(false);
+
+  const fetchData = useCallback(async () => {
+    try {
+      setLoading(true);
+      const [personaList, sessionList] = await Promise.all([
+        api.get<Persona[]>("/api/personas"),
+        api.get<Session[]>("/api/sessions"),
+      ]);
+      setPersonas(personaList);
+      setSessions(sessionList);
+
+      // Build tabs from running/starting sessions
+      const activeSessions = sessionList.filter(
+        (s) => s.status === "running" || s.status === "starting"
+      );
+      setTabs(
+        activeSessions.map((session) => ({
+          session,
+          personaName: personaList.find((p) => p.id["0"] === session.persona_id["0"])?.name || "Unknown",
+        }))
+      );
+      if (activeSessions.length > 0 && !activeTabId) {
+        setActiveTabId(activeSessions[0]?.id["0"] ?? null);
+      }
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load data");
+    } finally {
+      setLoading(false);
+    }
+  }, [activeTabId]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  const handleLaunch = async () => {
+    if (!selectedPersonaId) return;
+    setLaunching(true);
+    try {
+      const resp = await api.post<{ session_id: { "0": string }; ws_url: string }>("/api/sessions", {
+        persona_id: { "0": selectedPersonaId },
+      });
+      setShowLauncher(false);
+      setSelectedPersonaId("");
+      await fetchData();
+      setActiveTabId(resp.session_id["0"]);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to start session");
+    } finally {
+      setLaunching(false);
+    }
+  };
+
+  const handleCloseTab = async (sessionId: string) => {
+    try {
+      await api.post(`/api/sessions/${sessionId}/stop`);
+      setTabs((prev) => prev.filter((t) => t.session.id["0"] !== sessionId));
+      if (activeTabId === sessionId) {
+        const remaining = tabs.filter((t) => t.session.id["0"] !== sessionId);
+        setActiveTabId(remaining.length > 0 ? (remaining[0]?.session.id["0"] ?? null) : null);
+      }
+      await fetchData();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to stop session");
+    }
+  };
+
+  if (loading) {
+    return (
+      <div>
+        <h2>Sessions</h2>
+        <p>Loading...</p>
+      </div>
+    );
+  }
+
   return (
-    <div>
-      <h2>Sessions</h2>
-      <p>View active and past sessions.</p>
+    <div className="sessions-page">
+      <div className="page-header">
+        <h2>Sessions</h2>
+        <div className="page-header-actions">
+          <button className="btn btn-primary" onClick={() => setShowLauncher(true)} aria-label="Start new session">
+            + New Session
+          </button>
+          <a href="/help" className="help-link" aria-label="Sessions help">?</a>
+        </div>
+      </div>
+
+      {error && <div className="alert alert-error" role="alert">{error}</div>}
+
+      {showLauncher && (
+        <div className="session-launcher card" aria-label="New session launcher">
+          <h3>Start New Session</h3>
+          <div className="form-group">
+            <label htmlFor="launch-persona">Select Persona</label>
+            <select
+              id="launch-persona"
+              value={selectedPersonaId}
+              onChange={(e) => setSelectedPersonaId(e.target.value)}
+            >
+              <option value="">Choose a persona...</option>
+              {personas.map((p) => (
+                <option key={p.id["0"]} value={p.id["0"]}>{p.name}</option>
+              ))}
+            </select>
+          </div>
+          <div className="form-actions">
+            <button className="btn" onClick={() => setShowLauncher(false)}>Cancel</button>
+            <button className="btn btn-primary" onClick={handleLaunch} disabled={!selectedPersonaId || launching}>
+              {launching ? "Starting..." : "Start Session"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {tabs.length > 0 && (
+        <div className="session-tabs">
+          <div className="tab-bar" role="tablist" aria-label="Session tabs">
+            {tabs.map((tab) => (
+              <div
+                key={tab.session.id["0"]}
+                className={`session-tab ${activeTabId === tab.session.id["0"] ? "active" : ""}`}
+                role="tab"
+                aria-selected={activeTabId === tab.session.id["0"]}
+                onClick={() => setActiveTabId(tab.session.id["0"])}
+                onKeyDown={(e) => { if (e.key === "Enter") setActiveTabId(tab.session.id["0"]); }}
+                tabIndex={0}
+              >
+                <span className={`status-indicator status-${tab.session.status}`} aria-label={tab.session.status} />
+                <span className="tab-label">{tab.personaName}</span>
+                <button
+                  className="tab-close"
+                  onClick={(e) => { e.stopPropagation(); handleCloseTab(tab.session.id["0"]); }}
+                  aria-label={`Close ${tab.personaName} session`}
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+
+          {activeTabId && (
+            <SessionPanel
+              sessionId={activeTabId}
+              sandboxId={tabs.find((t) => t.session.id["0"] === activeTabId)?.session.sandbox_id || null}
+            />
+          )}
+        </div>
+      )}
+
+      {tabs.length === 0 && !showLauncher && (
+        <p className="empty-state">No active sessions. Start a new session to begin.</p>
+      )}
+    </div>
+  );
+}
+
+interface SessionPanelProps {
+  sessionId: string;
+  sandboxId: string | null;
+}
+
+function SessionPanel({ sessionId, sandboxId }: SessionPanelProps) {
+  const [panelView, setPanelView] = useState<"terminal" | "files" | "ports">("terminal");
+
+  return (
+    <div className="session-panel">
+      <nav className="panel-nav" aria-label="Session panel sections">
+        <button className={`tab-btn ${panelView === "terminal" ? "active" : ""}`} onClick={() => setPanelView("terminal")}>
+          Terminal
+        </button>
+        <button className={`tab-btn ${panelView === "files" ? "active" : ""}`} onClick={() => setPanelView("files")}>
+          Files
+        </button>
+        <button className={`tab-btn ${panelView === "ports" ? "active" : ""}`} onClick={() => setPanelView("ports")}>
+          Ports
+        </button>
+      </nav>
+
+      {panelView === "terminal" && <TerminalView sessionId={sessionId} />}
+      {panelView === "files" && <FileUploadView sessionId={sessionId} />}
+      {panelView === "ports" && sandboxId && <PortManagerView sandboxId={sandboxId} />}
+      {panelView === "ports" && !sandboxId && <p>No sandbox associated with this session.</p>}
+    </div>
+  );
+}
+
+function TerminalView({ sessionId }: { sessionId: string }) {
+  const termRef = useRef<HTMLDivElement>(null);
+  const terminalRef = useRef<Terminal | null>(null);
+  const fitAddonRef = useRef<FitAddon | null>(null);
+  const wsUrl = `ws://127.0.0.1:9876/api/sessions/${sessionId}/terminal`;
+  const { sendMessage, lastMessage, readyState, connect } = useWebSocket(wsUrl);
+
+  useEffect(() => {
+    if (!termRef.current) return;
+
+    const term = new Terminal({
+      cursorBlink: true,
+      fontSize: 14,
+      fontFamily: "Menlo, Monaco, 'Courier New', monospace",
+      theme: { background: "#1a1a2e" },
+    });
+    const fitAddon = new FitAddon();
+    const webLinksAddon = new WebLinksAddon();
+
+    term.loadAddon(fitAddon);
+    term.loadAddon(webLinksAddon);
+    term.open(termRef.current);
+    fitAddon.fit();
+
+    term.onData((data) => {
+      sendMessage(data);
+    });
+
+    terminalRef.current = term;
+    fitAddonRef.current = fitAddon;
+    connect();
+
+    const handleResize = () => fitAddon.fit();
+    window.addEventListener("resize", handleResize);
+
+    return () => {
+      window.removeEventListener("resize", handleResize);
+      term.dispose();
+      terminalRef.current = null;
+      fitAddonRef.current = null;
+    };
+  }, [sessionId, connect, sendMessage]);
+
+  useEffect(() => {
+    if (lastMessage && terminalRef.current) {
+      terminalRef.current.write(lastMessage.data);
+    }
+  }, [lastMessage]);
+
+  return (
+    <div className="terminal-container">
+      <div className="terminal-status">
+        <span className={`status-dot ${readyState === ReadyState.OPEN ? "status-ok" : "status-missing"}`} />
+        <span>{readyState === ReadyState.OPEN ? "Connected" : "Disconnected"}</span>
+      </div>
+      <div ref={termRef} className="terminal-view" aria-label="Terminal" role="application" />
+    </div>
+  );
+}
+
+function FileUploadView({ sessionId }: { sessionId: string }) {
+  const [uploadResult, setUploadResult] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
+  const onDrop = useCallback(async (acceptedFiles: File[]) => {
+    if (acceptedFiles.length === 0) return;
+    setUploading(true);
+    setUploadError(null);
+    setUploadResult(null);
+
+    try {
+      const formData = new FormData();
+      for (const file of acceptedFiles) {
+        formData.append("file", file);
+      }
+
+      const response = await fetch(`http://127.0.0.1:9876/api/sessions/${sessionId}/upload`, {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error(`Upload failed: ${response.statusText}`);
+      }
+
+      const result = await response.json();
+      setUploadResult(result.sandbox_path || "Upload complete");
+    } catch (e) {
+      setUploadError(e instanceof Error ? e.message : "Upload failed");
+    } finally {
+      setUploading(false);
+    }
+  }, [sessionId]);
+
+  const { getRootProps, getInputProps, isDragActive } = useDropzone({ onDrop });
+
+  return (
+    <div className="file-upload-view">
+      <div
+        {...getRootProps()}
+        className={`dropzone ${isDragActive ? "dropzone-active" : ""}`}
+        aria-label="File upload drop zone"
+      >
+        <input {...getInputProps()} />
+        {uploading ? (
+          <p>Uploading...</p>
+        ) : isDragActive ? (
+          <p>Drop files here...</p>
+        ) : (
+          <p>Drag & drop files here, or click to select files</p>
+        )}
+      </div>
+      {uploadError && <div className="alert alert-error" role="alert">{uploadError}</div>}
+      {uploadResult && (
+        <div className="upload-result">
+          <p>Uploaded to: <code>{uploadResult}</code></p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PortManagerView({ sandboxId }: { sandboxId: string }) {
+  const [ports, setPorts] = useState<PortMapping[]>([]);
+  const [portSpec, setPortSpec] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchPorts = useCallback(async () => {
+    try {
+      setLoading(true);
+      const portList = await api.get<PortMapping[]>(`/api/sandboxes/${sandboxId}/ports`);
+      setPorts(portList);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load ports");
+    } finally {
+      setLoading(false);
+    }
+  }, [sandboxId]);
+
+  useEffect(() => {
+    fetchPorts();
+  }, [fetchPorts]);
+
+  const handlePublish = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!portSpec.trim()) return;
+    try {
+      await api.post(`/api/sandboxes/${sandboxId}/ports`, { port_spec: portSpec.trim() });
+      setPortSpec("");
+      await fetchPorts();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to publish port");
+    }
+  };
+
+  const handleUnpublish = async (_port: PortMapping) => {
+    try {
+      await api.del(`/api/sandboxes/${sandboxId}/ports`);
+      await fetchPorts();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to unpublish port");
+    }
+  };
+
+  if (loading) return <p>Loading ports...</p>;
+
+  return (
+    <div className="port-manager">
+      <p className="section-description">Published ports do not persist across sandbox restarts.</p>
+      {error && <div className="alert alert-error" role="alert">{error}</div>}
+
+      <form className="port-form" onSubmit={handlePublish} aria-label="Publish port">
+        <input
+          type="text"
+          value={portSpec}
+          onChange={(e) => setPortSpec(e.target.value)}
+          placeholder="Port spec (e.g., 8080 or 8080:80)"
+          aria-label="Port specification"
+        />
+        <button type="submit" className="btn btn-sm btn-primary">Publish</button>
+      </form>
+
+      {ports.length > 0 ? (
+        <table className="port-table" aria-label="Published ports">
+          <thead>
+            <tr>
+              <th>Host Port</th>
+              <th>Sandbox Port</th>
+              <th>Protocol</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {ports.map((p, i) => (
+              <tr key={i}>
+                <td>{p.host_ip}:{p.host_port}</td>
+                <td>{p.sandbox_port}</td>
+                <td>{p.protocol}</td>
+                <td>
+                  <button className="btn btn-sm btn-danger" onClick={() => handleUnpublish(p)} aria-label={`Unpublish port ${p.sandbox_port}`}>
+                    Unpublish
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        <p className="empty-state">No ports published.</p>
+      )}
     </div>
   );
 }

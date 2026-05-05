@@ -18,6 +18,6 @@ describe("App", () => {
 
   it("navigates to personas page by default", () => {
     render(<App />);
-    expect(screen.getByText("Manage your AI agent personas here.")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Personas" })).toBeInTheDocument();
   });
 });
