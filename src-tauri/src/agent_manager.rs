@@ -735,4 +735,113 @@ mod tests {
         assert!(agent.metadata.description.is_empty());
         assert!(!agent.metadata.supports_interactive_auth);
     }
+
+    #[tokio::test]
+    async fn test_create_agent_with_local_kit_path_no_sbx_skips_validation() {
+        // When sbx is None, kit validation is skipped even if the path exists
+        let dir = tempfile::tempdir().unwrap();
+        let kit_path = dir.path().to_string_lossy().to_string();
+
+        let mgr = setup_manager(); // sbx = None
+
+        let req = CreateAgentRequest {
+            name: "Kit Agent".to_string(),
+            kit_ref: Some(kit_path.clone()),
+            metadata: None,
+        };
+        // Should succeed because sbx is None — validation is skipped
+        let agent = mgr.create(req).await.unwrap();
+        assert_eq!(agent.kit_ref, Some(kit_path));
+    }
+
+    #[tokio::test]
+    async fn test_create_agent_with_nonexistent_kit_path_succeeds() {
+        // Non-existent paths are not validated (could be OCI or Git refs)
+        let mgr = setup_manager();
+
+        let req = CreateAgentRequest {
+            name: "Remote Kit Agent".to_string(),
+            kit_ref: Some("/nonexistent/path/to/kit".to_string()),
+            metadata: None,
+        };
+        let agent = mgr.create(req).await.unwrap();
+        assert_eq!(
+            agent.kit_ref,
+            Some("/nonexistent/path/to/kit".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_update_agent_with_nonexistent_kit_path_succeeds() {
+        let mgr = setup_manager();
+
+        let req = CreateAgentRequest {
+            name: "Updatable Agent".to_string(),
+            kit_ref: None,
+            metadata: None,
+        };
+        let created = mgr.create(req).await.unwrap();
+
+        // OCI/Git refs that don't exist on disk are accepted without validation
+        let update_req = UpdateAgentRequest {
+            name: None,
+            kit_ref: Some("oci://registry.example.com/my-kit:latest".to_string()),
+            metadata: None,
+        };
+        let updated = mgr.update(&created.id, update_req).await.unwrap();
+        assert_eq!(
+            updated.kit_ref,
+            Some("oci://registry.example.com/my-kit:latest".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_list_includes_both_builtin_and_custom() {
+        let mgr = setup_manager();
+        mgr.seed_builtin_agents().unwrap();
+
+        let req = CreateAgentRequest {
+            name: "Custom One".to_string(),
+            kit_ref: None,
+            metadata: None,
+        };
+        mgr.create(req).await.unwrap();
+
+        let agents = mgr.list().unwrap();
+        assert_eq!(agents.len(), 11); // 10 built-in + 1 custom
+
+        let custom = agents.iter().find(|a| a.name == "Custom One").unwrap();
+        assert!(!custom.is_builtin);
+    }
+
+    #[tokio::test]
+    async fn test_update_preserves_unchanged_fields() {
+        let mgr = setup_manager();
+
+        let req = CreateAgentRequest {
+            name: "Stable Agent".to_string(),
+            kit_ref: Some("/some/kit".to_string()),
+            metadata: Some(AgentMetadata {
+                required_secrets: vec!["openai".to_string()],
+                auth_methods: vec![AuthMethod::ApiKey],
+                description: "Original description".to_string(),
+                supports_interactive_auth: false,
+            }),
+        };
+        let created = mgr.create(req).await.unwrap();
+
+        // Update only the name
+        let update_req = UpdateAgentRequest {
+            name: Some("Renamed Agent".to_string()),
+            kit_ref: None,
+            metadata: None,
+        };
+        let updated = mgr.update(&created.id, update_req).await.unwrap();
+
+        assert_eq!(updated.name, "Renamed Agent");
+        // kit_ref and metadata should be preserved
+        assert_eq!(updated.kit_ref, Some("/some/kit".to_string()));
+        assert_eq!(updated.metadata.required_secrets, vec!["openai"]);
+        assert_eq!(updated.metadata.description, "Original description");
+    }
 }
