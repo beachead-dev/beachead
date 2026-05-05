@@ -13,11 +13,12 @@ export class ApiError extends Error {
 
 async function handleResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
+    const text = await response.text();
     let body: unknown;
     try {
-      body = await response.json();
+      body = JSON.parse(text);
     } catch {
-      body = await response.text();
+      body = text;
     }
     throw new ApiError(response.status, response.statusText, body);
   }
@@ -65,11 +66,12 @@ export async function getText(path: string): Promise<string> {
     method: "GET",
   });
   if (!response.ok) {
+    const text = await response.text();
     let body: unknown;
     try {
-      body = await response.json();
+      body = JSON.parse(text);
     } catch {
-      body = await response.text();
+      body = text;
     }
     throw new ApiError(response.status, response.statusText, body);
   }
