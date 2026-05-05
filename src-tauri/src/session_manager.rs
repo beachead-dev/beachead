@@ -230,6 +230,47 @@ impl SessionManager {
         Ok(())
     }
 
+    /// Resume a stopped session.
+    ///
+    /// Reattaches to the sandbox by spawning a new PTY with `sbx run <sandbox_name>`.
+    /// The sandbox must be in stopped state.
+    pub async fn resume(&self, session_id: &SessionId) -> Result<(), OrchestratorError> {
+        let session = self.db.with_conn(|conn| db_ops::get_session(conn, session_id))?;
+
+        if session.status != SessionStatus::Stopped {
+            return Err(OrchestratorError::Validation(format!(
+                "Cannot resume session in '{}' state, must be 'stopped'",
+                session.status
+            )));
+        }
+
+        let sandbox_id = session.sandbox_id.as_ref().ok_or_else(|| {
+            OrchestratorError::Internal("Session has no sandbox_id to resume".to_string())
+        })?;
+
+        // Spawn PTY with `sbx run <sandbox_name>` to reattach
+        let sbx_path = self.sbx.path().to_string_lossy().to_string();
+        let pty_bridge = self.pty_bridge.clone();
+        let pty_session_id = session_id.clone();
+        let sandbox_id_clone = sandbox_id.clone();
+        tokio::task::spawn_blocking(move || {
+            pty_bridge.spawn(
+                pty_session_id,
+                &sbx_path,
+                &["run", &sandbox_id_clone],
+            )
+        })
+        .await
+        .map_err(|e| OrchestratorError::Internal(format!("PTY spawn task failed: {}", e)))??;
+
+        // Update session status to running
+        self.db.with_conn(|conn| {
+            db_ops::update_session_status(conn, session_id, &SessionStatus::Running, None)
+        })?;
+
+        Ok(())
+    }
+
     /// Remove a session completely.
     ///
     /// Invokes `sbx rm`, cleans up the kit directory, and updates session status

@@ -36,7 +36,7 @@ interface SessionTab {
 
 export function SessionsPage() {
   const [personas, setPersonas] = useState<Persona[]>([]);
-  const [, setSessions] = useState<Session[]>([]);
+  const [sessions, setSessions] = useState<Session[]>([]);
   const [tabs, setTabs] = useState<SessionTab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -98,7 +98,32 @@ export function SessionsPage() {
     }
   };
 
+  const handleResumeSession = async (sessionId: string) => {
+    try {
+      // Resume reattaches to the stopped sandbox
+      await api.post(`/api/sessions/${sessionId}/resume`);
+      await fetchData();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to resume session");
+    }
+  };
+
+  const handleRemoveSession = async (sessionId: string) => {
+    try {
+      await api.del(`/api/sessions/${sessionId}`);
+      setTabs((prev) => prev.filter((t) => t.session.id !== sessionId));
+      if (activeTabId === sessionId) {
+        const remaining = tabs.filter((t) => t.session.id !== sessionId);
+        setActiveTabId(remaining.length > 0 ? (remaining[0]?.session.id ?? null) : null);
+      }
+      await fetchData();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to remove session");
+    }
+  };
+
   const handleCloseTab = async (sessionId: string) => {
+    // Close tab stops the session (sandbox preserved for restart)
     try {
       await api.post(`/api/sessions/${sessionId}/stop`);
       setTabs((prev) => prev.filter((t) => t.session.id !== sessionId));
@@ -197,6 +222,41 @@ export function SessionsPage() {
 
       {tabs.length === 0 && !showLauncher && (
         <p className="empty-state">No active sessions. Start a new session to begin.</p>
+      )}
+
+      {/* Stopped sessions section */}
+      {sessions.filter((s) => s.status === "stopped").length > 0 && (
+        <div className="stopped-sessions">
+          <h3>Stopped Sessions</h3>
+          <p className="hint">Stopped sandboxes retain their state and can be restarted.</p>
+          <div className="stopped-session-list">
+            {sessions
+              .filter((s) => s.status === "stopped")
+              .map((session) => (
+                <div key={session.id} className="stopped-session-item">
+                  <span className="stopped-session-name">
+                    {session.sandbox_id || session.id}
+                  </span>
+                  <div className="stopped-session-actions">
+                    <button
+                      className="btn btn-sm btn-primary"
+                      onClick={() => handleResumeSession(session.id)}
+                      aria-label="Resume session"
+                    >
+                      Resume
+                    </button>
+                    <button
+                      className="btn btn-sm btn-danger"
+                      onClick={() => handleRemoveSession(session.id)}
+                      aria-label="Remove session and sandbox"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              ))}
+          </div>
+        </div>
       )}
     </div>
   );

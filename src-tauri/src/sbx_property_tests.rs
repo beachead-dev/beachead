@@ -127,8 +127,13 @@ proptest! {
         let has_workspace = cmd.iter().any(|a| a == &workspace_str);
         prop_assert!(has_workspace, "Missing workspace path in command");
 
-        // Should NOT have -v flag
-        let has_v = cmd.iter().any(|a| a == "-v");
+        // Should NOT have -v flag in the command portion (before --)
+        let separator_pos = cmd.iter().position(|a| a == "--");
+        let cmd_before_sep = match separator_pos {
+            Some(pos) => &cmd[..pos],
+            None => &cmd[..],
+        };
+        let has_v = cmd_before_sep.iter().any(|a| a == "-v");
         prop_assert!(!has_v, "Should not use -v flag for workspace mount");
     }
 

@@ -396,6 +396,9 @@ impl SbxCli {
 
         cmd_args.push(args.agent.clone());
 
+        // Quiet mode to get just the sandbox name on stdout
+        cmd_args.push("-q".to_string());
+
         for kit_path in &args.kit_paths {
             cmd_args.push("--kit".to_string());
             cmd_args.push(kit_path.to_string_lossy().to_string());
@@ -422,7 +425,16 @@ impl SbxCli {
             )));
         }
 
-        Ok(output.stdout.trim().to_string())
+        // With -q flag, stdout should contain just the sandbox name
+        // Fall back to parsing "Created sandbox 'NAME'" if quiet mode still outputs extra
+        let sandbox_name = extract_sandbox_name(&output.stdout);
+        if sandbox_name.is_empty() {
+            return Err(OrchestratorError::SbxError(
+                "sbx create did not return a sandbox name".to_string(),
+            ));
+        }
+
+        Ok(sandbox_name)
     }
 
     /// Stop a sandbox: `sbx stop <sandbox_id>`
@@ -1166,4 +1178,50 @@ fn parse_template_ls_text(output: &str) -> Vec<TemplateInfo> {
         }
     }
     templates
+}
+
+/// Extract the sandbox name from `sbx create` output.
+///
+/// With `-q` flag, output should be just the sandbox name.
+/// Without `-q`, output contains image pull progress and a line like:
+///   "✓ Created sandbox 'kiro-bhtestworspace-1'"
+///
+/// This function handles both cases:
+/// 1. If output is a single clean line, use it directly
+/// 2. Otherwise, look for "Created sandbox 'NAME'" pattern
+/// 3. Fall back to looking for "sbx run NAME" pattern
+fn extract_sandbox_name(output: &str) -> String {
+    let trimmed = output.trim();
+
+    // Case 1: single line with no spaces or special chars = likely the sandbox name
+    if !trimmed.contains('\n') && !trimmed.contains(' ') && !trimmed.is_empty() {
+        return trimmed.to_string();
+    }
+
+    // Case 2: look for "Created sandbox 'NAME'" pattern
+    for line in output.lines() {
+        if let Some(start) = line.find("Created sandbox '") {
+            let after = &line[start + 17..]; // skip "Created sandbox '"
+            if let Some(end) = after.find('\'') {
+                return after[..end].to_string();
+            }
+        }
+    }
+
+    // Case 3: look for "sbx run NAME" pattern at end of output
+    for line in output.lines().rev() {
+        let line = line.trim();
+        if line.starts_with("sbx run ") {
+            return line["sbx run ".len()..].trim().to_string();
+        }
+    }
+
+    // Last resort: take the last non-empty line
+    output
+        .lines()
+        .rev()
+        .map(|l| l.trim())
+        .find(|l| !l.is_empty())
+        .unwrap_or("")
+        .to_string()
 }

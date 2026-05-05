@@ -20,6 +20,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/sessions", post(create_session).get(list_sessions))
         .route("/api/sessions/{id}", get(get_session).delete(remove_session))
         .route("/api/sessions/{id}/stop", post(stop_session))
+        .route("/api/sessions/{id}/resume", post(resume_session))
         .route("/api/sessions/{id}/upload", post(upload_file))
         .route("/api/sessions/{id}/terminal", get(ws_terminal))
 }
@@ -69,6 +70,16 @@ async fn stop_session(
 ) -> Result<StatusCode, OrchestratorError> {
     let mgr = state.require_session_manager()?;
     mgr.stop(&SessionId(id)).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// POST /api/sessions/{id}/resume — resume a stopped session.
+async fn resume_session(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, OrchestratorError> {
+    let mgr = state.require_session_manager()?;
+    mgr.resume(&SessionId(id)).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
