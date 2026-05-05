@@ -11,9 +11,9 @@ interface McpServer {
 }
 
 interface Persona {
-  id: { "0": string };
+  id: string;
   name: string;
-  agent_type_id: { "0": string };
+  agent_type_id: string;
   workspace_path: string;
   memory_enabled: boolean;
   agent_cli_args: string[];
@@ -23,7 +23,7 @@ interface Persona {
 }
 
 interface AgentType {
-  id: { "0": string };
+  id: string;
   name: string;
   is_builtin: boolean;
   metadata: {
@@ -108,7 +108,7 @@ export function PersonasPage() {
   const openEditForm = (persona: Persona) => {
     setEditingPersona(persona);
     setFormName(persona.name);
-    setFormAgentType(persona.agent_type_id["0"]);
+    setFormAgentType(persona.agent_type_id);
     setFormWorkspace(persona.workspace_path);
     setFormMemory(persona.memory_enabled);
     setFormCliArgs(persona.agent_cli_args.join(" "));
@@ -165,7 +165,7 @@ export function PersonasPage() {
 
       const body = {
         name: formName.trim(),
-        agent_type_id: { "0": formAgentType },
+        agent_type_id: formAgentType,
         workspace_path: formWorkspace.trim(),
         memory_enabled: formMemory,
         agent_cli_args: formCliArgs.trim() ? formCliArgs.trim().split(/\s+/) : [],
@@ -173,7 +173,7 @@ export function PersonasPage() {
       };
 
       if (editingPersona) {
-        await api.put(`/api/personas/${editingPersona.id["0"]}`, body);
+        await api.put(`/api/personas/${editingPersona.id}`, body);
       } else {
         await api.post("/api/personas", body);
       }
@@ -215,12 +215,12 @@ export function PersonasPage() {
   };
 
   const getAgentName = (agentTypeId: string) => {
-    const agent = agents.find((a) => a.id["0"] === agentTypeId);
+    const agent = agents.find((a) => a.id === agentTypeId);
     return agent?.name || "Unknown";
   };
 
   const hasMissingSecrets = (persona: Persona) => {
-    const agent = agents.find((a) => a.id["0"] === persona.agent_type_id["0"]);
+    const agent = agents.find((a) => a.id === persona.agent_type_id);
     if (!agent) return false;
     return agent.metadata.required_secrets.some(
       (s) => !secrets.find((sec) => sec.service === s && sec.configured)
@@ -254,7 +254,7 @@ export function PersonasPage() {
         <div className="persona-list" role="list" aria-label="Personas list">
           {personas.length === 0 && <p className="empty-state">No personas configured. Create one to get started.</p>}
           {personas.map((persona) => (
-            <div key={persona.id["0"]} className="card" role="listitem">
+            <div key={persona.id} className="card" role="listitem">
               <div className="card-header">
                 <h3 className="card-title">
                   {persona.name}
@@ -268,7 +268,7 @@ export function PersonasPage() {
                   </button>
                   <button
                     className="btn btn-sm btn-danger"
-                    onClick={() => setDeleteConfirm(persona.id["0"])}
+                    onClick={() => setDeleteConfirm(persona.id)}
                     aria-label={`Delete ${persona.name}`}
                   >
                     Delete
@@ -278,7 +278,7 @@ export function PersonasPage() {
               <div className="card-body">
                 <dl className="detail-list">
                   <dt>Agent Type</dt>
-                  <dd>{getAgentName(persona.agent_type_id["0"])}</dd>
+                  <dd>{getAgentName(persona.agent_type_id)}</dd>
                   <dt>Workspace</dt>
                   <dd><code>{persona.workspace_path}</code></dd>
                   <dt>Memory</dt>
@@ -337,7 +337,7 @@ export function PersonasPage() {
             >
               <option value="">Select an agent type</option>
               {agents.map((agent) => (
-                <option key={agent.id["0"]} value={agent.id["0"]}>
+                <option key={agent.id} value={agent.id}>
                   {agent.name}
                 </option>
               ))}

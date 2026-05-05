@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import { api } from "../lib/api";
 
 interface AgentType {
-  id: { "0": string };
+  id: string;
   name: string;
   sbx_agent: string | null;
   kit_ref: string | null;
@@ -197,10 +197,10 @@ export function AgentsPage() {
           <div className="agent-list" role="list" aria-label="Agent list">
             {agents.map((agent) => (
               <div
-                key={agent.id["0"]}
-                className={`card card-clickable ${selectedAgent?.id["0"] === agent.id["0"] ? "card-selected" : ""}`}
+                key={agent.id}
+                className={`card card-clickable ${selectedAgent?.id === agent.id ? "card-selected" : ""}`}
                 role="listitem"
-                onClick={() => setSelectedAgent(selectedAgent?.id["0"] === agent.id["0"] ? null : agent)}
+                onClick={() => setSelectedAgent(selectedAgent?.id === agent.id ? null : agent)}
                 onKeyDown={(e) => { if (e.key === "Enter") setSelectedAgent(agent); }}
                 tabIndex={0}
                 aria-label={`${agent.name} - ${agent.is_builtin ? "built-in" : "custom"}`}

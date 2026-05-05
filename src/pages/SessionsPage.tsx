@@ -8,14 +8,14 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 
 interface Persona {
-  id: { "0": string };
+  id: string;
   name: string;
-  agent_type_id: { "0": string };
+  agent_type_id: string;
 }
 
 interface Session {
-  id: { "0": string };
-  persona_id: { "0": string };
+  id: string;
+  persona_id: string;
   sandbox_id: string | null;
   status: string;
   error_message: string | null;
@@ -62,11 +62,11 @@ export function SessionsPage() {
       setTabs(
         activeSessions.map((session) => ({
           session,
-          personaName: personaList.find((p) => p.id["0"] === session.persona_id["0"])?.name || "Unknown",
+          personaName: personaList.find((p) => p.id === session.persona_id)?.name || "Unknown",
         }))
       );
       if (activeSessions.length > 0 && !activeTabId) {
-        setActiveTabId(activeSessions[0]?.id["0"] ?? null);
+        setActiveTabId(activeSessions[0]?.id ?? null);
       }
       setError(null);
     } catch (e) {
@@ -84,13 +84,13 @@ export function SessionsPage() {
     if (!selectedPersonaId) return;
     setLaunching(true);
     try {
-      const resp = await api.post<{ session_id: { "0": string }; ws_url: string }>("/api/sessions", {
-        persona_id: { "0": selectedPersonaId },
+      const resp = await api.post<{ session_id: string; ws_url: string }>("/api/sessions", {
+        persona_id: selectedPersonaId,
       });
       setShowLauncher(false);
       setSelectedPersonaId("");
       await fetchData();
-      setActiveTabId(resp.session_id["0"]);
+      setActiveTabId(resp.session_id);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to start session");
     } finally {
@@ -101,10 +101,10 @@ export function SessionsPage() {
   const handleCloseTab = async (sessionId: string) => {
     try {
       await api.post(`/api/sessions/${sessionId}/stop`);
-      setTabs((prev) => prev.filter((t) => t.session.id["0"] !== sessionId));
+      setTabs((prev) => prev.filter((t) => t.session.id !== sessionId));
       if (activeTabId === sessionId) {
-        const remaining = tabs.filter((t) => t.session.id["0"] !== sessionId);
-        setActiveTabId(remaining.length > 0 ? (remaining[0]?.session.id["0"] ?? null) : null);
+        const remaining = tabs.filter((t) => t.session.id !== sessionId);
+        setActiveTabId(remaining.length > 0 ? (remaining[0]?.session.id ?? null) : null);
       }
       await fetchData();
     } catch (e) {
@@ -147,7 +147,7 @@ export function SessionsPage() {
             >
               <option value="">Choose a persona...</option>
               {personas.map((p) => (
-                <option key={p.id["0"]} value={p.id["0"]}>{p.name}</option>
+                <option key={p.id} value={p.id}>{p.name}</option>
               ))}
             </select>
           </div>
@@ -165,19 +165,19 @@ export function SessionsPage() {
           <div className="tab-bar" role="tablist" aria-label="Session tabs">
             {tabs.map((tab) => (
               <div
-                key={tab.session.id["0"]}
-                className={`session-tab ${activeTabId === tab.session.id["0"] ? "active" : ""}`}
+                key={tab.session.id}
+                className={`session-tab ${activeTabId === tab.session.id ? "active" : ""}`}
                 role="tab"
-                aria-selected={activeTabId === tab.session.id["0"]}
-                onClick={() => setActiveTabId(tab.session.id["0"])}
-                onKeyDown={(e) => { if (e.key === "Enter") setActiveTabId(tab.session.id["0"]); }}
+                aria-selected={activeTabId === tab.session.id}
+                onClick={() => setActiveTabId(tab.session.id)}
+                onKeyDown={(e) => { if (e.key === "Enter") setActiveTabId(tab.session.id); }}
                 tabIndex={0}
               >
                 <span className={`status-indicator status-${tab.session.status}`} aria-label={tab.session.status} />
                 <span className="tab-label">{tab.personaName}</span>
                 <button
                   className="tab-close"
-                  onClick={(e) => { e.stopPropagation(); handleCloseTab(tab.session.id["0"]); }}
+                  onClick={(e) => { e.stopPropagation(); handleCloseTab(tab.session.id); }}
                   aria-label={`Close ${tab.personaName} session`}
                 >
                   ✕
@@ -189,7 +189,7 @@ export function SessionsPage() {
           {activeTabId && (
             <SessionPanel
               sessionId={activeTabId}
-              sandboxId={tabs.find((t) => t.session.id["0"] === activeTabId)?.session.sandbox_id || null}
+              sandboxId={tabs.find((t) => t.session.id === activeTabId)?.session.sandbox_id || null}
             />
           )}
         </div>
