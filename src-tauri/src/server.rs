@@ -138,6 +138,30 @@ pub async fn start_server(
         eprintln!("Warning: failed to seed built-in agents: {}", e);
     }
 
+    // Spawn session recovery as a non-blocking background task (Req 5.1–5.7)
+    if let Some(ref sm) = session_manager {
+        let sm_clone = sm.clone();
+        tokio::spawn(async move {
+            let results = sm_clone.recover_sessions().await;
+            for result in &results {
+                match result {
+                    crate::session_manager::RecoveryResult::Recovered(id) => {
+                        println!("Session recovery: recovered session {}", id);
+                    }
+                    crate::session_manager::RecoveryResult::Failed { session_id, reason } => {
+                        eprintln!(
+                            "Session recovery: failed to recover session {}: {}",
+                            session_id, reason
+                        );
+                    }
+                }
+            }
+            if results.is_empty() {
+                println!("Session recovery: no active sessions to recover");
+            }
+        });
+    }
+
     let state = AppState {
         persona_manager,
         agent_manager,

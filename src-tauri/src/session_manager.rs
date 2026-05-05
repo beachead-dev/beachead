@@ -20,6 +20,18 @@ use crate::types::{
 };
 use crate::workspace_manager::WorkspaceManager;
 
+/// Result of attempting to recover a single session on startup.
+#[derive(Debug, Clone)]
+pub enum RecoveryResult {
+    /// Session was successfully recovered (PTY reattached).
+    Recovered(SessionId),
+    /// Session recovery failed.
+    Failed {
+        session_id: SessionId,
+        reason: String,
+    },
+}
+
 /// Credential error patterns detected in sbx run stderr output.
 const CREDENTIAL_ERROR_PATTERNS: &[&str] = &[
     "unauthorized",
@@ -249,6 +261,164 @@ impl SessionManager {
     /// Requirements: 4.6
     pub fn list(&self) -> Result<Vec<Session>, OrchestratorError> {
         self.db.with_conn(|conn| db_ops::list_sessions(conn))
+    }
+
+    /// Recover previously active sessions on startup.
+    ///
+    /// Queries SQLite for sessions with status "running" or "starting", then for each:
+    /// 1. If no sandbox_id → mark as stopped (nothing to reattach to)
+    /// 2. Try to spawn a PTY with `sbx exec -it <sandbox_id>`
+    /// 3. If spawn succeeds → session is recovered (status stays "running")
+    /// 4. If spawn fails → check `sbx ls --json` for the sandbox
+    /// 5. If sandbox is stopped/missing → update session to "stopped", attempt `sbx rm`, log result
+    ///
+    /// Requirements: 5.1–5.7
+    pub async fn recover_sessions(&self) -> Vec<RecoveryResult> {
+        let active_sessions = match self.db.with_conn(|conn| db_ops::list_active_sessions(conn)) {
+            Ok(sessions) => sessions,
+            Err(e) => {
+                eprintln!("Failed to query active sessions for recovery: {}", e);
+                return vec![];
+            }
+        };
+
+        let mut results = Vec::new();
+
+        for session in active_sessions {
+            let result = self.recover_single_session(&session).await;
+            results.push(result);
+        }
+
+        results
+    }
+
+    /// Attempt to recover a single session.
+    async fn recover_single_session(&self, session: &Session) -> RecoveryResult {
+        let session_id = &session.id;
+
+        // If no sandbox_id, we can't reattach
+        let sandbox_id = match &session.sandbox_id {
+            Some(id) => id.clone(),
+            None => {
+                let reason = "No sandbox_id recorded".to_string();
+                let _ = self.db.with_conn(|conn| {
+                    db_ops::update_session_status(
+                        conn,
+                        session_id,
+                        &SessionStatus::Stopped,
+                        Some(&reason),
+                    )
+                });
+                return RecoveryResult::Failed {
+                    session_id: session_id.clone(),
+                    reason,
+                };
+            }
+        };
+
+        // First check if the sandbox is still running via `sbx ls --json`
+        let sandbox_status = self.check_sandbox_status(&sandbox_id).await;
+
+        match sandbox_status.as_deref() {
+            Some("running") => {
+                // Sandbox is running — attempt PTY reattachment
+                let sbx_path = self.sbx.path().to_string_lossy().to_string();
+                let pty_bridge = self.pty_bridge.clone();
+                let pty_session_id = session_id.clone();
+                let sandbox_id_for_pty = sandbox_id.clone();
+
+                let spawn_result = tokio::task::spawn_blocking(move || {
+                    pty_bridge.spawn(
+                        pty_session_id,
+                        &sbx_path,
+                        &["exec", "-it", &sandbox_id_for_pty],
+                    )
+                })
+                .await;
+
+                let pty_ok = match spawn_result {
+                    Ok(Ok(())) => true,
+                    Ok(Err(_)) => false,
+                    Err(_) => false,
+                };
+
+                if pty_ok {
+                    // Ensure status is "running"
+                    let _ = self.db.with_conn(|conn| {
+                        db_ops::update_session_status(
+                            conn,
+                            session_id,
+                            &SessionStatus::Running,
+                            None,
+                        )
+                    });
+                    RecoveryResult::Recovered(session_id.clone())
+                } else {
+                    let reason = format!(
+                        "Sandbox {} is running but PTY reattachment failed",
+                        sandbox_id
+                    );
+                    let _ = self.db.with_conn(|conn| {
+                        db_ops::update_session_status(
+                            conn,
+                            session_id,
+                            &SessionStatus::Failed,
+                            Some(&reason),
+                        )
+                    });
+                    RecoveryResult::Failed {
+                        session_id: session_id.clone(),
+                        reason,
+                    }
+                }
+            }
+            _ => {
+                // Sandbox is stopped, missing, or in unknown state
+                let _ = self.db.with_conn(|conn| {
+                    db_ops::update_session_status(
+                        conn,
+                        session_id,
+                        &SessionStatus::Stopped,
+                        Some("Sandbox stopped or missing during recovery"),
+                    )
+                });
+
+                // Attempt `sbx rm` cleanup
+                if let Err(e) = self.sbx.rm(&sandbox_id).await {
+                    eprintln!(
+                        "Recovery: sbx rm failed for sandbox {}: {}. Manual cleanup may be required.",
+                        sandbox_id, e
+                    );
+                }
+
+                let reason = format!(
+                    "Sandbox {} is stopped or missing; session marked as stopped",
+                    sandbox_id
+                );
+                RecoveryResult::Failed {
+                    session_id: session_id.clone(),
+                    reason,
+                }
+            }
+        }
+    }
+
+    /// Check the status of a sandbox via `sbx ls --json`.
+    /// Returns the status string if found, or None if the sandbox is not listed.
+    async fn check_sandbox_status(&self, sandbox_id: &str) -> Option<String> {
+        match self.sbx.ls_json().await {
+            Ok(sandboxes) => {
+                for sb in sandboxes {
+                    if sb.id.as_deref() == Some(sandbox_id)
+                        || sb.name.as_deref() == Some(sandbox_id)
+                    {
+                        return sb.status;
+                    }
+                }
+                None // sandbox not found in listing
+            }
+            Err(_) => None,
+        }
     }
 
     /// Upload a file to a session's workspace or sandbox.
@@ -835,5 +1005,218 @@ esac
             url,
             "ws://127.0.0.1:9876/api/sessions/test-session-123/terminal"
         );
+    }
+
+    /// Helper to create a mock sbx script for recovery tests.
+    /// - `exec` succeeds (spawns cat) to simulate successful reattachment
+    /// - `ls` returns JSON with the given sandbox info
+    /// - `rm` succeeds
+    fn create_mock_sbx_recovery_success(dir: &Path) -> PathBuf {
+        let script_path = dir.join("sbx");
+        let mut file = fs::File::create(&script_path).unwrap();
+        writeln!(
+            file,
+            r#"#!/bin/sh
+case "$1" in
+    exec)
+        exec cat
+        ;;
+    ls)
+        echo '[{{"id":"sandbox-recover-1","name":"sandbox-recover-1","status":"running"}}]'
+        exit 0
+        ;;
+    rm)
+        exit 0
+        ;;
+    *)
+        exit 0
+        ;;
+esac
+"#
+        )
+        .unwrap();
+        fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755)).unwrap();
+        script_path
+    }
+
+    /// Helper to create a mock sbx script where exec fails (sandbox stopped).
+    fn create_mock_sbx_recovery_stopped(dir: &Path) -> PathBuf {
+        let script_path = dir.join("sbx");
+        let mut file = fs::File::create(&script_path).unwrap();
+        writeln!(
+            file,
+            r#"#!/bin/sh
+case "$1" in
+    exec)
+        echo "Error: sandbox not running" >&2
+        exit 1
+        ;;
+    ls)
+        echo '[{{"id":"sandbox-stopped-1","name":"sandbox-stopped-1","status":"stopped"}}]'
+        exit 0
+        ;;
+    rm)
+        exit 0
+        ;;
+    *)
+        exit 0
+        ;;
+esac
+"#
+        )
+        .unwrap();
+        fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755)).unwrap();
+        script_path
+    }
+
+    /// Helper to insert a session directly into the DB with a given status and sandbox_id.
+    fn insert_session_directly(
+        db: &Database,
+        session_id: &str,
+        persona_id: &PersonaId,
+        sandbox_id: Option<&str>,
+        status: SessionStatus,
+    ) {
+        let now = Utc::now();
+        let session = Session {
+            id: SessionId(session_id.to_string()),
+            persona_id: persona_id.clone(),
+            sandbox_id: sandbox_id.map(|s| s.to_string()),
+            kit_path: None,
+            status,
+            error_message: None,
+            created_at: now,
+            updated_at: now,
+        };
+        db.with_conn(|conn| db_ops::insert_session(conn, &session))
+            .unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_recover_sessions_success() {
+        let sbx_dir = TempDir::new().unwrap();
+        let sbx_path = create_mock_sbx_recovery_success(sbx_dir.path());
+        let (db, sbx, kit_generator, pty_bridge, _kit_dir, workspace_dir) =
+            setup_test_env(sbx_path);
+
+        let persona_id = insert_test_persona(&db, workspace_dir.path());
+
+        // Insert a "running" session directly into DB
+        insert_session_directly(
+            &db,
+            "session-recover-1",
+            &persona_id,
+            Some("sandbox-recover-1"),
+            SessionStatus::Running,
+        );
+
+        let manager = SessionManager::new(
+            db.clone(),
+            sbx,
+            kit_generator,
+            pty_bridge.clone(),
+        );
+
+        let results = manager.recover_sessions().await;
+        assert_eq!(results.len(), 1);
+        assert!(matches!(&results[0], RecoveryResult::Recovered(id) if id.0 == "session-recover-1"));
+
+        // Verify session is still running in DB
+        let session = db
+            .with_conn(|conn| db_ops::get_session(conn, &SessionId("session-recover-1".to_string())))
+            .unwrap();
+        assert_eq!(session.status, SessionStatus::Running);
+
+        // Clean up PTY
+        let pb = pty_bridge.clone();
+        let sid = SessionId("session-recover-1".to_string());
+        let _ = tokio::task::spawn_blocking(move || pb.kill(&sid)).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_recover_sessions_sandbox_stopped() {
+        let sbx_dir = TempDir::new().unwrap();
+        let sbx_path = create_mock_sbx_recovery_stopped(sbx_dir.path());
+        let (db, sbx, kit_generator, pty_bridge, _kit_dir, workspace_dir) =
+            setup_test_env(sbx_path);
+
+        let persona_id = insert_test_persona(&db, workspace_dir.path());
+
+        // Insert a "running" session with a sandbox that is actually stopped
+        insert_session_directly(
+            &db,
+            "session-stopped-1",
+            &persona_id,
+            Some("sandbox-stopped-1"),
+            SessionStatus::Running,
+        );
+
+        let manager = SessionManager::new(
+            db.clone(),
+            sbx,
+            kit_generator,
+            pty_bridge.clone(),
+        );
+
+        let results = manager.recover_sessions().await;
+        assert_eq!(results.len(), 1);
+        assert!(matches!(&results[0], RecoveryResult::Failed { session_id, .. } if session_id.0 == "session-stopped-1"));
+
+        // Verify session was marked as stopped in DB
+        let session = db
+            .with_conn(|conn| db_ops::get_session(conn, &SessionId("session-stopped-1".to_string())))
+            .unwrap();
+        assert_eq!(session.status, SessionStatus::Stopped);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_recover_sessions_no_sandbox_id() {
+        let sbx_dir = TempDir::new().unwrap();
+        let sbx_path = create_mock_sbx_success(sbx_dir.path());
+        let (db, sbx, kit_generator, pty_bridge, _kit_dir, workspace_dir) =
+            setup_test_env(sbx_path);
+
+        let persona_id = insert_test_persona(&db, workspace_dir.path());
+
+        // Insert a "starting" session with no sandbox_id
+        insert_session_directly(
+            &db,
+            "session-no-sbx",
+            &persona_id,
+            None,
+            SessionStatus::Starting,
+        );
+
+        let manager = SessionManager::new(
+            db.clone(),
+            sbx,
+            kit_generator,
+            pty_bridge.clone(),
+        );
+
+        let results = manager.recover_sessions().await;
+        assert_eq!(results.len(), 1);
+        assert!(matches!(&results[0], RecoveryResult::Failed { session_id, reason }
+            if session_id.0 == "session-no-sbx" && reason.contains("No sandbox_id")));
+
+        // Verify session was marked as stopped
+        let session = db
+            .with_conn(|conn| db_ops::get_session(conn, &SessionId("session-no-sbx".to_string())))
+            .unwrap();
+        assert_eq!(session.status, SessionStatus::Stopped);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_recover_sessions_empty() {
+        let sbx_dir = TempDir::new().unwrap();
+        let sbx_path = create_mock_sbx_success(sbx_dir.path());
+        let (db, sbx, kit_generator, pty_bridge, _kit_dir, _workspace_dir) =
+            setup_test_env(sbx_path);
+
+        let manager = SessionManager::new(db.clone(), sbx, kit_generator, pty_bridge);
+
+        // No active sessions — should return empty
+        let results = manager.recover_sessions().await;
+        assert!(results.is_empty());
     }
 }

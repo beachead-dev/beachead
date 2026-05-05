@@ -581,6 +581,40 @@ pub fn update_session_sandbox_id(
     Ok(())
 }
 
+/// Query sessions with status "running" or "starting" (used for recovery on startup).
+pub fn list_active_sessions(conn: &Connection) -> Result<Vec<Session>, OrchestratorError> {
+    let mut stmt = conn.prepare(
+        "SELECT id, persona_id, sandbox_id, kit_path, status, error_message, created_at, updated_at
+         FROM sessions WHERE status IN ('running', 'starting') ORDER BY created_at DESC",
+    )?;
+
+    let sessions = stmt
+        .query_map([], |row| {
+            let kit_path_str: Option<String> = row.get(3)?;
+            let status_str: String = row.get(4)?;
+            let created_str: String = row.get(6)?;
+            let updated_str: String = row.get(7)?;
+
+            Ok(Session {
+                id: SessionId(row.get(0)?),
+                persona_id: PersonaId(row.get(1)?),
+                sandbox_id: row.get(2)?,
+                kit_path: kit_path_str.map(std::path::PathBuf::from),
+                status: status_str.parse().unwrap_or(SessionStatus::Failed),
+                error_message: row.get(5)?,
+                created_at: DateTime::parse_from_rfc3339(&created_str)
+                    .unwrap()
+                    .with_timezone(&Utc),
+                updated_at: DateTime::parse_from_rfc3339(&updated_str)
+                    .unwrap()
+                    .with_timezone(&Utc),
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(sessions)
+}
+
 pub fn list_sessions(conn: &Connection) -> Result<Vec<Session>, OrchestratorError> {
     let mut stmt = conn.prepare(
         "SELECT id, persona_id, sandbox_id, kit_path, status, error_message, created_at, updated_at
