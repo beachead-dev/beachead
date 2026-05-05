@@ -6,7 +6,12 @@ export class ApiError extends Error {
     public statusText: string,
     public body: unknown,
   ) {
-    super(`API error ${status}: ${statusText}`);
+    // Extract the backend error message if available
+    const backendMessage =
+      body && typeof body === "object" && "error" in body
+        ? (body as { error: { message?: string } }).error?.message
+        : null;
+    super(backendMessage || `API error ${status}: ${statusText}`);
     this.name = "ApiError";
   }
 }
