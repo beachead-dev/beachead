@@ -212,14 +212,19 @@ impl SessionManager {
     pub async fn stop(&self, session_id: &SessionId) -> Result<(), OrchestratorError> {
         let session = self.db.with_conn(|conn| db_ops::get_session(conn, session_id))?;
 
-        if let Some(ref sandbox_id) = session.sandbox_id {
+        if let Some(ref raw_sandbox_id) = session.sandbox_id {
             // Kill PTY first (ignore errors if already stopped)
             let pty_bridge = self.pty_bridge.clone();
             let sid = session_id.clone();
             let _ = tokio::task::spawn_blocking(move || pty_bridge.kill(&sid)).await;
 
-            // Stop the sandbox
-            self.sbx.stop(sandbox_id).await?;
+            // Stop the sandbox (use extracted name in case of legacy garbage)
+            let sandbox_name = crate::sbx::extract_sandbox_name(raw_sandbox_id);
+            if !sandbox_name.is_empty() {
+                if let Err(e) = self.sbx.stop(&sandbox_name).await {
+                    eprintln!("Warning: sbx stop failed for '{}': {}", sandbox_name, e);
+                }
+            }
         }
 
         // Update session status
@@ -285,9 +290,15 @@ impl SessionManager {
         let sid = session_id.clone();
         let _ = tokio::task::spawn_blocking(move || pty_bridge.kill(&sid)).await;
 
-        // Remove the sandbox
-        if let Some(ref sandbox_id) = session.sandbox_id {
-            self.sbx.rm(sandbox_id).await?;
+        // Remove the sandbox (best-effort — if it fails, still clean up the session record)
+        if let Some(ref raw_sandbox_id) = session.sandbox_id {
+            let sandbox_name = crate::sbx::extract_sandbox_name(raw_sandbox_id);
+            if !sandbox_name.is_empty() {
+                if let Err(e) = self.sbx.rm(&sandbox_name).await {
+                    eprintln!("Warning: sbx rm failed for '{}': {}", sandbox_name, e);
+                    // Continue with session cleanup even if sandbox removal fails
+                }
+            }
         }
 
         // Clean up kit directory

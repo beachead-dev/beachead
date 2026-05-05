@@ -1190,7 +1190,7 @@ fn parse_template_ls_text(output: &str) -> Vec<TemplateInfo> {
 /// 1. If output is a single clean line, use it directly
 /// 2. Otherwise, look for "Created sandbox 'NAME'" pattern
 /// 3. Fall back to looking for "sbx run NAME" pattern
-fn extract_sandbox_name(output: &str) -> String {
+pub fn extract_sandbox_name(output: &str) -> String {
     let trimmed = output.trim();
 
     // Case 1: single line with no spaces or special chars = likely the sandbox name
