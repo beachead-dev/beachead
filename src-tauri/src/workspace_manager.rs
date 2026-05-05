@@ -183,6 +183,7 @@ impl WorkspaceManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
     use tempfile::TempDir;
 
     #[test]
@@ -355,5 +356,108 @@ mod tests {
             &file_path,
             tmp.path()
         ));
+    }
+
+    // =========================================================================
+    // Property-Based Tests — Property 20: Workspace path validation
+    // Validates: Requirements 7.1, 7.3
+    // =========================================================================
+
+    /// Strategy for generating subdirectory names (safe filesystem characters).
+    fn subdir_name_strategy() -> impl Strategy<Value = String> {
+        "[a-z][a-z0-9_-]{0,10}".prop_map(|s| s)
+    }
+
+    /// Strategy for generating random absolute paths that are unlikely to exist.
+    fn nonexistent_absolute_path_strategy() -> impl Strategy<Value = PathBuf> {
+        "[a-z]{4,8}".prop_flat_map(|seg1| {
+            "[a-z]{4,8}".prop_map(move |seg2| {
+                PathBuf::from(format!(
+                    "/nonexistent_beachead_test_{}/{}",
+                    seg1, seg2
+                ))
+            })
+        })
+    }
+
+    /// Strategy for generating relative paths (no leading slash).
+    fn relative_path_strategy() -> impl Strategy<Value = PathBuf> {
+        "[a-z]{1,6}(/[a-z]{1,6}){0,3}".prop_map(|s| PathBuf::from(s))
+    }
+
+    proptest! {
+        /// **Validates: Requirements 7.1, 7.3**
+        ///
+        /// Property: existing absolute paths are accepted by validate_path.
+        /// Creates a tempdir and generates subdirectories within it, then
+        /// asserts validate_path returns Ok for each.
+        #[test]
+        fn prop_existing_paths_accepted(
+            subdir in subdir_name_strategy()
+        ) {
+            let tmp = TempDir::new().unwrap();
+            let dir_path = tmp.path().join(&subdir);
+            fs::create_dir_all(&dir_path).unwrap();
+
+            let result = WorkspaceManager::validate_path(&dir_path);
+            prop_assert!(
+                result.is_ok(),
+                "Expected existing path {:?} to be accepted, got: {:?}",
+                dir_path,
+                result
+            );
+        }
+
+        /// **Validates: Requirements 7.1, 7.3**
+        ///
+        /// Property: non-existing absolute paths are rejected by validate_path.
+        /// Generates random absolute paths that don't exist on the filesystem
+        /// and asserts validate_path returns an error.
+        #[test]
+        fn prop_nonexistent_paths_rejected(
+            path in nonexistent_absolute_path_strategy()
+        ) {
+            // Ensure the path truly doesn't exist
+            prop_assume!(!path.exists());
+
+            let result = WorkspaceManager::validate_path(&path);
+            prop_assert!(
+                result.is_err(),
+                "Expected non-existing path {:?} to be rejected",
+                path
+            );
+            match result.unwrap_err() {
+                OrchestratorError::WorkspaceNotFound(_) => {}
+                other => prop_assert!(
+                    false,
+                    "Expected WorkspaceNotFound error, got: {:?}",
+                    other
+                ),
+            }
+        }
+
+        /// **Validates: Requirements 7.1, 7.3**
+        ///
+        /// Property: relative paths are always rejected by validate_path,
+        /// regardless of whether they happen to resolve to existing directories.
+        #[test]
+        fn prop_relative_paths_rejected(
+            path in relative_path_strategy()
+        ) {
+            let result = WorkspaceManager::validate_path(&path);
+            prop_assert!(
+                result.is_err(),
+                "Expected relative path {:?} to be rejected",
+                path
+            );
+            match result.unwrap_err() {
+                OrchestratorError::WorkspaceNotFound(_) => {}
+                other => prop_assert!(
+                    false,
+                    "Expected WorkspaceNotFound error, got: {:?}",
+                    other
+                ),
+            }
+        }
     }
 }
