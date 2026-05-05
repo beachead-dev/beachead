@@ -447,6 +447,46 @@ pub fn list_persona_mcp_servers(
     Ok(servers)
 }
 
+// --- Persona Helper Operations ---
+
+pub fn persona_name_exists(
+    conn: &Connection,
+    name: &str,
+    exclude_id: Option<&PersonaId>,
+) -> Result<bool, OrchestratorError> {
+    let exists: bool = match exclude_id {
+        Some(id) => conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM personas WHERE name = ?1 AND id != ?2",
+                params![name, id.0],
+                |row| row.get(0),
+            )
+            .map_err(|e| OrchestratorError::Database(e.to_string()))?,
+        None => conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM personas WHERE name = ?1",
+                params![name],
+                |row| row.get(0),
+            )
+            .map_err(|e| OrchestratorError::Database(e.to_string()))?,
+    };
+    Ok(exists)
+}
+
+pub fn count_active_sessions_for_persona(
+    conn: &Connection,
+    persona_id: &PersonaId,
+) -> Result<i64, OrchestratorError> {
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sessions WHERE persona_id = ?1 AND status IN ('running', 'starting')",
+            params![persona_id.0],
+            |row| row.get(0),
+        )
+        .map_err(|e| OrchestratorError::Database(e.to_string()))?;
+    Ok(count)
+}
+
 // --- Session Operations ---
 
 pub fn insert_session(conn: &Connection, session: &Session) -> Result<(), OrchestratorError> {
@@ -500,6 +540,45 @@ pub fn get_session(conn: &Connection, id: &SessionId) -> Result<Session, Orchest
         }
         other => OrchestratorError::Database(other.to_string()),
     })
+}
+
+pub fn update_session_status(
+    conn: &Connection,
+    id: &SessionId,
+    status: &SessionStatus,
+    error_message: Option<&str>,
+) -> Result<(), OrchestratorError> {
+    let now = Utc::now();
+    let rows = conn.execute(
+        "UPDATE sessions SET status = ?1, error_message = ?2, updated_at = ?3 WHERE id = ?4",
+        params![status.to_string(), error_message, now.to_rfc3339(), id.0],
+    )?;
+    if rows == 0 {
+        return Err(OrchestratorError::NotFound(format!(
+            "Session not found: {}",
+            id.0
+        )));
+    }
+    Ok(())
+}
+
+pub fn update_session_sandbox_id(
+    conn: &Connection,
+    id: &SessionId,
+    sandbox_id: &str,
+) -> Result<(), OrchestratorError> {
+    let now = Utc::now();
+    let rows = conn.execute(
+        "UPDATE sessions SET sandbox_id = ?1, updated_at = ?2 WHERE id = ?3",
+        params![sandbox_id, now.to_rfc3339(), id.0],
+    )?;
+    if rows == 0 {
+        return Err(OrchestratorError::NotFound(format!(
+            "Session not found: {}",
+            id.0
+        )));
+    }
+    Ok(())
 }
 
 pub fn list_sessions(conn: &Connection) -> Result<Vec<Session>, OrchestratorError> {

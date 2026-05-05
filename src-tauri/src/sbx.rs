@@ -165,6 +165,11 @@ impl SbxCli {
         Self { sbx_path }
     }
 
+    /// Get the path to the sbx binary.
+    pub fn path(&self) -> &Path {
+        &self.sbx_path
+    }
+
     /// Resolve the `sbx` binary location from the system PATH.
     /// Works across Linux, macOS, and Windows.
     pub fn resolve_from_path() -> Result<PathBuf, OrchestratorError> {

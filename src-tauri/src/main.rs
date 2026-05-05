@@ -15,6 +15,7 @@ pub mod sbx;
 #[cfg(test)]
 mod sbx_property_tests;
 mod server;
+pub mod session_manager;
 mod types;
 pub mod workspace_manager;
 
