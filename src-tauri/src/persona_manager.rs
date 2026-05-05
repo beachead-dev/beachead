@@ -1295,5 +1295,61 @@ mod tests {
                 all_names, kept_names, &all_names[..actual_remove]
             );
         }
+
+        // Property 12: MCP server URL validation
+        // **Validates: Requirements 10.6**
+        //
+        // For any well-formed URL (http:// or https:// scheme with a non-empty host,
+        // optional port, optional path), validate_mcp_url accepts it.
+        // For any malformed string (missing scheme, wrong scheme, empty host, empty
+        // string, random strings), validate_mcp_url rejects it.
+
+        #[test]
+        fn prop_wellformed_urls_accepted(
+            scheme in prop_oneof![Just("http"), Just("https")],
+            host in "[a-z][a-z0-9]{0,15}(\\.[a-z]{2,6}){0,2}",
+            port in proptest::option::of(1024u16..65535),
+            path in proptest::option::of("/[a-z0-9/]{1,20}"),
+        ) {
+            let url = match (port, path) {
+                (Some(p), Some(ref pa)) => format!("{}://{}:{}{}", scheme, host, p, pa),
+                (Some(p), None) => format!("{}://{}:{}", scheme, host, p),
+                (None, Some(ref pa)) => format!("{}://{}{}", scheme, host, pa),
+                (None, None) => format!("{}://{}", scheme, host),
+            };
+            prop_assert!(
+                validate_mcp_url(&url).is_ok(),
+                "Expected well-formed URL to be accepted: {}",
+                url
+            );
+        }
+
+        #[test]
+        fn prop_malformed_urls_rejected(
+            malformed in prop_oneof![
+                // Missing scheme entirely: random alphanumeric string
+                "[a-z][a-z0-9]{2,20}",
+                // Wrong scheme (ftp)
+                Just("ftp://".to_string()).prop_flat_map(|s| {
+                    "[a-z]{3,10}".prop_map(move |host| format!("{}{}", s, host))
+                }),
+                // Wrong scheme (ws)
+                Just("ws://".to_string()).prop_flat_map(|s| {
+                    "[a-z]{3,10}".prop_map(move |host| format!("{}{}", s, host))
+                }),
+                // http:// with empty host
+                Just("http://".to_string()),
+                // https:// with empty host
+                Just("https://".to_string()),
+                // Empty string
+                Just("".to_string()),
+            ],
+        ) {
+            prop_assert!(
+                validate_mcp_url(&malformed).is_err(),
+                "Expected malformed URL to be rejected: {}",
+                malformed
+            );
+        }
     }
 }
