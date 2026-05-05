@@ -117,14 +117,19 @@ proptest! {
         prop_assert_eq!(kit_count, args.kit_paths.len());
     }
 
-    /// Property 7: Workspace mount is always present with -v flag.
+    /// Property 7: Workspace path is always present as a positional argument.
     #[test]
     fn run_command_contains_workspace_mount(args in sbx_run_args_strategy()) {
         let cmd = SbxCli::build_run_args(&args);
         let workspace_str = args.workspace.to_string_lossy().to_string();
 
-        let has_mount = cmd.windows(2).any(|w| w[0] == "-v" && w[1] == workspace_str);
-        prop_assert!(has_mount, "Missing -v workspace mount");
+        // Workspace should appear as a positional arg (not preceded by -v)
+        let has_workspace = cmd.iter().any(|a| a == &workspace_str);
+        prop_assert!(has_workspace, "Missing workspace path in command");
+
+        // Should NOT have -v flag
+        let has_v = cmd.iter().any(|a| a == "-v");
+        prop_assert!(!has_v, "Should not use -v flag for workspace mount");
     }
 
     /// Property 7: Template flag is present only when template is Some.

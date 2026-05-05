@@ -343,7 +343,7 @@ impl SbxCli {
     /// Constructs the command with support for:
     /// - Multiple `--kit` flags
     /// - `-t` template flag
-    /// - `-v` workspace mount
+    /// - workspace path as positional argument
     /// - `--` separator followed by agent CLI args
     pub async fn run(&self, args: &SbxRunArgs) -> Result<String, OrchestratorError> {
         let mut cmd_args: Vec<String> = Vec::new();
@@ -351,15 +351,11 @@ impl SbxCli {
         // Agent identifier
         cmd_args.push(args.agent.clone());
 
-        // Kit paths
+        // Kit paths (flags must come before positional args)
         for kit_path in &args.kit_paths {
             cmd_args.push("--kit".to_string());
             cmd_args.push(kit_path.to_string_lossy().to_string());
         }
-
-        // Workspace mount
-        cmd_args.push("-v".to_string());
-        cmd_args.push(args.workspace.to_string_lossy().to_string());
 
         // Optional name
         if let Some(name) = &args.name {
@@ -372,6 +368,9 @@ impl SbxCli {
             cmd_args.push("-t".to_string());
             cmd_args.push(template.clone());
         }
+
+        // Workspace path (positional argument after agent and flags)
+        cmd_args.push(args.workspace.to_string_lossy().to_string());
 
         // Agent args after separator
         if !args.agent_args.is_empty() {
@@ -402,9 +401,6 @@ impl SbxCli {
             cmd_args.push(kit_path.to_string_lossy().to_string());
         }
 
-        cmd_args.push("-v".to_string());
-        cmd_args.push(args.workspace.to_string_lossy().to_string());
-
         if let Some(name) = &args.name {
             cmd_args.push("--name".to_string());
             cmd_args.push(name.clone());
@@ -414,6 +410,9 @@ impl SbxCli {
             cmd_args.push("-t".to_string());
             cmd_args.push(template.clone());
         }
+
+        // Workspace path as positional argument
+        cmd_args.push(args.workspace.to_string_lossy().to_string());
 
         let output = self.exec_command_owned("create", &cmd_args).await?;
         if !output.success {
@@ -998,9 +997,6 @@ impl SbxCli {
             cmd_args.push(kit_path.to_string_lossy().to_string());
         }
 
-        cmd_args.push("-v".to_string());
-        cmd_args.push(args.workspace.to_string_lossy().to_string());
-
         if let Some(name) = &args.name {
             cmd_args.push("--name".to_string());
             cmd_args.push(name.clone());
@@ -1010,6 +1006,9 @@ impl SbxCli {
             cmd_args.push("-t".to_string());
             cmd_args.push(template.clone());
         }
+
+        // Workspace as positional argument
+        cmd_args.push(args.workspace.to_string_lossy().to_string());
 
         if !args.agent_args.is_empty() {
             cmd_args.push("--".to_string());
