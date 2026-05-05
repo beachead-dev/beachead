@@ -10,6 +10,7 @@ mod db_property_tests;
 mod error;
 pub mod kit_generator;
 pub mod persona_manager;
+pub mod pty_bridge;
 pub mod sbx;
 #[cfg(test)]
 mod sbx_property_tests;
