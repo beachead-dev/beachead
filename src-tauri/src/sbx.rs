@@ -1087,33 +1087,114 @@ fn parse_port_output(output: &str) -> Vec<PortMapping> {
 }
 
 /// Parse `sbx policy ls` text output into a PolicyState.
+/// Parse `sbx policy ls` text output into a PolicyState.
+///
+/// The output format is a table:
+/// NAME                TYPE      ORIGIN   DECISION   STATUS   RESOURCES
+/// default-ai-services network   local    allow      active   **.chatgpt.com:443
+///                                                            api.anthropic.com:443
+///                                                            ...
+///
+/// Each rule has a NAME, and RESOURCES can span multiple indented lines.
 fn parse_policy_text(output: &str) -> PolicyState {
-    let mut default_policy = "balanced".to_string();
+    // Determine default policy from the rule names present
+    // If "default-*" rules exist, the policy is "balanced"
+    // If no rules exist, we can't determine — assume balanced
+    let has_default_rules = output.contains("default-");
+    let default_policy = if has_default_rules {
+        "balanced".to_string()
+    } else if output.trim().is_empty() || output.contains("No policies") {
+        "deny-all".to_string()
+    } else {
+        "balanced".to_string()
+    };
+
     let mut rules = Vec::new();
+    let mut current_name: Option<String> = None;
+    let mut current_decision: Option<String> = None;
+    let mut current_resources: Vec<String> = Vec::new();
 
     for line in output.lines() {
-        let line = line.trim();
-        if line.is_empty() {
+        // Skip header line
+        if line.starts_with("NAME") || line.trim().is_empty() {
+            // If we have a pending rule, save it before processing empty line
+            if let (Some(name), Some(decision)) = (&current_name, &current_decision) {
+                if !current_resources.is_empty() {
+                    for resource in &current_resources {
+                        rules.push(PolicyRule {
+                            id: Some(name.clone()),
+                            action: decision.clone(),
+                            target: resource.clone(),
+                        });
+                    }
+                }
+            }
+            if line.starts_with("NAME") {
+                current_name = None;
+                current_decision = None;
+                current_resources = Vec::new();
+                continue;
+            }
+            if line.trim().is_empty() && current_name.is_some() {
+                // End of current rule's resources
+                current_name = None;
+                current_decision = None;
+                current_resources = Vec::new();
+            }
             continue;
         }
-        // Look for default policy indicator
-        if line.to_lowercase().contains("default") {
-            if line.to_lowercase().contains("allow") {
-                default_policy = "allow".to_string();
-            } else if line.to_lowercase().contains("deny") {
-                default_policy = "deny".to_string();
-            } else if line.to_lowercase().contains("balanced") {
-                default_policy = "balanced".to_string();
+
+        // Check if this is a new rule line (starts with non-whitespace)
+        let trimmed = line.trim_start();
+        let leading_spaces = line.len() - trimmed.len();
+
+        if leading_spaces == 0 && !line.starts_with(' ') {
+            // New rule line — save previous if any
+            if let (Some(name), Some(decision)) = (&current_name, &current_decision) {
+                if !current_resources.is_empty() {
+                    for resource in &current_resources {
+                        rules.push(PolicyRule {
+                            id: Some(name.clone()),
+                            action: decision.clone(),
+                            target: resource.clone(),
+                        });
+                    }
+                }
+            }
+
+            // Parse the new rule line columns
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            // Expected: NAME TYPE ORIGIN DECISION STATUS RESOURCE...
+            if parts.len() >= 6 {
+                current_name = Some(parts[0].to_string());
+                current_decision = Some(parts[3].to_string()); // DECISION column
+                current_resources = vec![parts[5..].join(" ")];
+            } else if parts.len() >= 4 {
+                current_name = Some(parts[0].to_string());
+                current_decision = Some(parts[3].to_string());
+                current_resources = Vec::new();
+            } else {
+                current_name = None;
+                current_decision = None;
+                current_resources = Vec::new();
+            }
+        } else {
+            // Continuation line (indented) — additional resource for current rule
+            let resource = line.trim().to_string();
+            if !resource.is_empty() {
+                current_resources.push(resource);
             }
         }
-        // Look for rule lines (heuristic: lines with "allow" or "deny" and a target)
-        if (line.starts_with("allow") || line.starts_with("deny")) && line.contains(' ') {
-            let parts: Vec<&str> = line.splitn(3, ' ').collect();
-            if parts.len() >= 2 {
+    }
+
+    // Don't forget the last rule
+    if let (Some(name), Some(decision)) = (&current_name, &current_decision) {
+        if !current_resources.is_empty() {
+            for resource in &current_resources {
                 rules.push(PolicyRule {
-                    id: None,
-                    action: parts[0].to_string(),
-                    target: parts[1..].join(" "),
+                    id: Some(name.clone()),
+                    action: decision.clone(),
+                    target: resource.clone(),
                 });
             }
         }
