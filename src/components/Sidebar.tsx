@@ -1,9 +1,9 @@
 import { NavLink } from "react-router-dom";
 
 const navItems = [
+  { to: "/sessions", label: "Sessions" },
   { to: "/personas", label: "Personas" },
   { to: "/agents", label: "Agents" },
-  { to: "/sessions", label: "Sessions" },
   { to: "/policies", label: "Policies" },
   { to: "/settings", label: "System Settings" },
 ];
