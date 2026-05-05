@@ -359,6 +359,83 @@ mod tests {
     }
 
     // =========================================================================
+    // Property-Based Tests — Property 10: File upload routing
+    // Validates: Requirements 4.9, 4.11
+    // =========================================================================
+
+    /// Strategy for generating relative path segments for files inside a workspace.
+    fn inside_file_path_strategy() -> impl Strategy<Value = Vec<String>> {
+        proptest::collection::vec("[a-z][a-z0-9_]{0,8}".prop_map(|s| s), 1..=4)
+    }
+
+    proptest! {
+        /// **Validates: Requirements 4.9, 4.11**
+        ///
+        /// Property: files inside the workspace directory are correctly identified
+        /// as inside, meaning they would be routed to `<workspace>/.beachead/uploads/`.
+        #[test]
+        fn prop_inside_workspace_files_routed_to_uploads(
+            segments in inside_file_path_strategy()
+        ) {
+            let workspace = TempDir::new().unwrap();
+            // Build a file path inside the workspace
+            let mut file_path = workspace.path().to_path_buf();
+            for seg in &segments {
+                file_path.push(seg);
+            }
+            // Create the parent directories and file so canonicalize works
+            if let Some(parent) = file_path.parent() {
+                fs::create_dir_all(parent).unwrap();
+            }
+            fs::write(&file_path, "test content").unwrap();
+
+            let is_inside = WorkspaceManager::is_path_inside_workspace(
+                &file_path,
+                workspace.path(),
+            );
+            prop_assert!(
+                is_inside,
+                "File {:?} should be inside workspace {:?}",
+                file_path,
+                workspace.path()
+            );
+        }
+
+        /// **Validates: Requirements 4.9, 4.11**
+        ///
+        /// Property: files outside the workspace directory are correctly identified
+        /// as outside, meaning they would be routed to `sbx cp`.
+        #[test]
+        fn prop_outside_workspace_files_routed_to_sbx_cp(
+            segments in inside_file_path_strategy()
+        ) {
+            let workspace = TempDir::new().unwrap();
+            let other_dir = TempDir::new().unwrap();
+            // Build a file path inside other_dir (outside workspace)
+            let mut file_path = other_dir.path().to_path_buf();
+            for seg in &segments {
+                file_path.push(seg);
+            }
+            // Create the parent directories and file so canonicalize works
+            if let Some(parent) = file_path.parent() {
+                fs::create_dir_all(parent).unwrap();
+            }
+            fs::write(&file_path, "test content").unwrap();
+
+            let is_inside = WorkspaceManager::is_path_inside_workspace(
+                &file_path,
+                workspace.path(),
+            );
+            prop_assert!(
+                !is_inside,
+                "File {:?} should be outside workspace {:?} (routed to sbx cp)",
+                file_path,
+                workspace.path()
+            );
+        }
+    }
+
+    // =========================================================================
     // Property-Based Tests — Property 20: Workspace path validation
     // Validates: Requirements 7.1, 7.3
     // =========================================================================
