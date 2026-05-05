@@ -60,4 +60,20 @@ export async function del<T>(path: string): Promise<T> {
   return handleResponse<T>(response);
 }
 
-export const api = { get, post, put, del };
+export async function getText(path: string): Promise<string> {
+  const response = await fetch(`${BASE_URL}${path}`, {
+    method: "GET",
+  });
+  if (!response.ok) {
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch {
+      body = await response.text();
+    }
+    throw new ApiError(response.status, response.statusText, body);
+  }
+  return response.text();
+}
+
+export const api = { get, getText, post, put, del };

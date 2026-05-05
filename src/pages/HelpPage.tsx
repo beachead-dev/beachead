@@ -30,7 +30,7 @@ export function HelpPage() {
     setError(null);
 
     api
-      .get<string>(`/api/system/help/${activeTopic}`)
+      .getText(`/api/system/help/${activeTopic}`)
       .then((data) => {
         if (!cancelled) {
           setContent(data);
