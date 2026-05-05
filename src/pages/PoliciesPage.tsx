@@ -29,6 +29,7 @@ export function PoliciesPage() {
   const [error, setError] = useState<string | null>(null);
   const [ruleAction, setRuleAction] = useState("allow");
   const [ruleTarget, setRuleTarget] = useState("");
+  const [ruleSearch, setRuleSearch] = useState("");
   const [sandboxFilter, setSandboxFilter] = useState("");
   const [view, setView] = useState<"rules" | "log">("rules");
 
@@ -180,6 +181,15 @@ export function PoliciesPage() {
 
           <div className="rule-list">
             <h3>Active Rules</h3>
+            <div className="rule-search">
+              <input
+                type="text"
+                placeholder="Search rules by target..."
+                value={ruleSearch}
+                onChange={(e) => setRuleSearch(e.target.value)}
+                aria-label="Search policy rules"
+              />
+            </div>
             {policyState.rules.length === 0 ? (
               <p className="empty-state">No custom rules configured.</p>
             ) : (
@@ -192,7 +202,9 @@ export function PoliciesPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {policyState.rules.map((rule, i) => (
+                  {policyState.rules
+                    .filter((rule) => !ruleSearch || rule.target.toLowerCase().includes(ruleSearch.toLowerCase()))
+                    .map((rule, i) => (
                     <tr key={rule.id || i}>
                       <td><span className={`badge badge-${rule.action}`}>{rule.action}</span></td>
                       <td><code>{rule.target}</code></td>
