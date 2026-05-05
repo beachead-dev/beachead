@@ -3,26 +3,71 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
+use crate::agent_manager::AgentManager;
+use crate::credential_manager::CredentialManager;
 use crate::error::OrchestratorError;
+use crate::kit_generator::KitGenerator;
 use crate::persona_manager::PersonaManager;
+use crate::policy_manager::PolicyManager;
+use crate::pty_bridge::PtyBridge;
+use crate::sbx::SbxCli;
+use crate::session_manager::SessionManager;
+use crate::system_manager::SystemManager;
+use crate::template_manager::TemplateManager;
 
 /// Shared application state holding all manager instances.
-/// Managers will be added as they are implemented in subsequent tasks.
+///
+/// Managers that depend on `SbxCli` are wrapped in `Option` because
+/// sbx may not be installed on the host system. Route handlers must
+/// check availability and return an appropriate error if None.
 #[derive(Clone)]
 pub struct AppState {
     pub persona_manager: Arc<PersonaManager>,
-    // Additional managers will be added in later tasks:
-    // pub agent_manager: Arc<AgentManager>,
-    // pub session_manager: Arc<SessionManager>,
-    // pub credential_manager: Arc<CredentialManager>,
-    // pub policy_manager: Arc<PolicyManager>,
-    // pub template_manager: Arc<TemplateManager>,
-    // pub system_manager: Arc<SystemManager>,
+    pub agent_manager: Arc<AgentManager>,
+    pub credential_manager: Option<Arc<CredentialManager>>,
+    pub session_manager: Option<Arc<SessionManager>>,
+    pub policy_manager: Option<Arc<PolicyManager>>,
+    pub template_manager: Option<Arc<TemplateManager>>,
+    pub system_manager: Option<Arc<SystemManager>>,
+    pub sbx: Option<Arc<SbxCli>>,
+    pub pty_bridge: Arc<PtyBridge>,
+    pub kit_generator: Arc<KitGenerator>,
 }
 
 impl AppState {
-    pub fn new(persona_manager: Arc<PersonaManager>) -> Self {
-        Self { persona_manager }
+    /// Helper to get credential_manager or return an error.
+    pub fn require_credential_manager(&self) -> Result<&Arc<CredentialManager>, OrchestratorError> {
+        self.credential_manager.as_ref().ok_or_else(|| {
+            OrchestratorError::SbxError("sbx CLI is not available. Install Docker Sandboxes to use this feature.".to_string())
+        })
+    }
+
+    /// Helper to get session_manager or return an error.
+    pub fn require_session_manager(&self) -> Result<&Arc<SessionManager>, OrchestratorError> {
+        self.session_manager.as_ref().ok_or_else(|| {
+            OrchestratorError::SbxError("sbx CLI is not available. Install Docker Sandboxes to use this feature.".to_string())
+        })
+    }
+
+    /// Helper to get policy_manager or return an error.
+    pub fn require_policy_manager(&self) -> Result<&Arc<PolicyManager>, OrchestratorError> {
+        self.policy_manager.as_ref().ok_or_else(|| {
+            OrchestratorError::SbxError("sbx CLI is not available. Install Docker Sandboxes to use this feature.".to_string())
+        })
+    }
+
+    /// Helper to get template_manager or return an error.
+    pub fn require_template_manager(&self) -> Result<&Arc<TemplateManager>, OrchestratorError> {
+        self.template_manager.as_ref().ok_or_else(|| {
+            OrchestratorError::SbxError("sbx CLI is not available. Install Docker Sandboxes to use this feature.".to_string())
+        })
+    }
+
+    /// Helper to get system_manager or return an error.
+    pub fn require_system_manager(&self) -> Result<&Arc<SystemManager>, OrchestratorError> {
+        self.system_manager.as_ref().ok_or_else(|| {
+            OrchestratorError::SbxError("sbx CLI is not available. Install Docker Sandboxes to use this feature.".to_string())
+        })
     }
 }
 
@@ -35,9 +80,7 @@ async fn health() -> &'static str {
 fn dirs_data_path() -> PathBuf {
     let base = std::env::var("XDG_DATA_HOME")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            dirs_home().join(".local").join("share")
-        });
+        .unwrap_or_else(|_| dirs_home().join(".local").join("share"));
     base.join("beachead")
 }
 
@@ -53,10 +96,60 @@ fn dirs_home() -> PathBuf {
 pub async fn start_server(
     _app_handle: tauri::AppHandle,
 ) -> Result<(), OrchestratorError> {
-    let db_path = dirs_data_path().join("beachead.db");
+    let data_path = dirs_data_path();
+    std::fs::create_dir_all(&data_path).ok();
+
+    let db_path = data_path.join("beachead.db");
     let db = Arc::new(crate::db::Database::open(&db_path)?);
-    let persona_manager = Arc::new(PersonaManager::new(db));
-    let state = AppState::new(persona_manager);
+
+    // Initialize SbxCli — may not be available if sbx is not installed
+    let sbx: Option<Arc<SbxCli>> = match SbxCli::new() {
+        Ok(cli) => Some(Arc::new(cli)),
+        Err(e) => {
+            eprintln!("sbx CLI not available: {}. Sandbox features disabled.", e);
+            None
+        }
+    };
+
+    // Core managers (always available)
+    let persona_manager = Arc::new(PersonaManager::new(db.clone()));
+    let agent_manager = Arc::new(AgentManager::new(db.clone(), sbx.clone()));
+    let pty_bridge = Arc::new(PtyBridge::new());
+    let kit_base_dir = data_path.join("kits");
+    std::fs::create_dir_all(&kit_base_dir).ok();
+    let kit_generator = Arc::new(KitGenerator::new(kit_base_dir));
+
+    // sbx-dependent managers (None if sbx not available)
+    let credential_manager = sbx.as_ref().map(|s| Arc::new(CredentialManager::new(s.clone())));
+    let policy_manager = sbx.as_ref().map(|s| Arc::new(PolicyManager::new(s.clone())));
+    let template_manager = sbx.as_ref().map(|s| Arc::new(TemplateManager::new(s.clone())));
+    let system_manager = sbx.as_ref().map(|s| Arc::new(SystemManager::new(s.clone())));
+    let session_manager = sbx.as_ref().map(|s| {
+        Arc::new(SessionManager::new(
+            db.clone(),
+            s.clone(),
+            kit_generator.clone(),
+            pty_bridge.clone(),
+        ))
+    });
+
+    // Seed built-in agents
+    if let Err(e) = agent_manager.seed_builtin_agents() {
+        eprintln!("Warning: failed to seed built-in agents: {}", e);
+    }
+
+    let state = AppState {
+        persona_manager,
+        agent_manager,
+        credential_manager,
+        session_manager,
+        policy_manager,
+        template_manager,
+        system_manager,
+        sbx,
+        pty_bridge,
+        kit_generator,
+    };
 
     // CORS configured for localhost-only access
     let cors = CorsLayer::new()
@@ -71,7 +164,7 @@ pub async fn start_server(
 
     let app = Router::new()
         .route("/api/health", get(health))
-        // Additional routes will be added in task 16
+        .merge(crate::routes::build_router())
         .layer(cors)
         .with_state(state);
 
