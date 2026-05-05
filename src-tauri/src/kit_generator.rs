@@ -579,6 +579,73 @@ mod tests {
         }
 
         proptest! {
+            /// **Validates: Requirements 3.10**
+            ///
+            /// Property 9: Kit directory cleanup on session removal
+            /// For any session with generated kit directories, cleanup removes them
+            /// from the filesystem, and cleanup is idempotent.
+            #[test]
+            fn prop_kit_directory_cleanup_on_removal(
+                names in prop_vec(arb_persona_name(), 1..5),
+                memory_enabled in any::<bool>(),
+            ) {
+                let tmp = TempDir::new().unwrap();
+                let generator = KitGenerator::new(tmp.path().to_path_buf());
+
+                // Generate kit directories for each persona name
+                let mut kit_paths = Vec::new();
+                for name in &names {
+                    let persona = Persona {
+                        id: PersonaId("prop-cleanup-id".to_string()),
+                        name: name.clone(),
+                        agent_type_id: AgentTypeId("agent-prop".to_string()),
+                        workspace_path: PathBuf::from("/tmp/workspace"),
+                        memory_enabled,
+                        agent_cli_args: vec![],
+                        mcp_servers: vec![],
+                        created_at: Utc::now(),
+                        updated_at: Utc::now(),
+                    };
+
+                    let kit_path = generator.generate(&persona, None).unwrap();
+                    // Verify kit directory was created
+                    prop_assert!(
+                        kit_path.exists(),
+                        "Kit directory should exist after generate(): {:?}",
+                        kit_path
+                    );
+                    prop_assert!(
+                        kit_path.join("spec.yaml").exists(),
+                        "spec.yaml should exist in kit directory"
+                    );
+                    kit_paths.push(kit_path);
+                }
+
+                // Cleanup each kit directory (simulating session removal)
+                for kit_path in &kit_paths {
+                    generator.cleanup(kit_path).unwrap();
+                }
+
+                // Assert: all kit directories are deleted from filesystem
+                for kit_path in &kit_paths {
+                    prop_assert!(
+                        !kit_path.exists(),
+                        "Kit directory should NOT exist after cleanup: {:?}",
+                        kit_path
+                    );
+                }
+
+                // Assert: cleanup is idempotent — calling again doesn't error
+                for kit_path in &kit_paths {
+                    let result = generator.cleanup(kit_path);
+                    prop_assert!(
+                        result.is_ok(),
+                        "Cleanup on already-cleaned path should not error: {:?}",
+                        result
+                    );
+                }
+            }
+
             #[test]
             fn prop_kit_generation_completeness(
                 name in arb_persona_name(),
