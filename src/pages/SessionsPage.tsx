@@ -34,6 +34,24 @@ interface SessionTab {
   personaName: string;
 }
 
+/** Extract a clean sandbox name from potentially garbage stored value */
+function extractSandboxName(sandboxId: string | null): string {
+  if (!sandboxId) return "";
+  // If it's a single line with no newlines, it's likely clean
+  if (!sandboxId.includes("\n") && sandboxId.length < 80) {
+    return sandboxId;
+  }
+  // Look for "Created sandbox 'NAME'" pattern
+  const createdMatch = sandboxId.match(/Created sandbox '([^']+)'/);
+  if (createdMatch && createdMatch[1]) return createdMatch[1];
+  // Look for "sbx run NAME" pattern
+  const runMatch = sandboxId.match(/sbx run (\S+)/);
+  if (runMatch && runMatch[1]) return runMatch[1];
+  // Fall back to first non-empty short line
+  const lines = sandboxId.split("\n").map((l) => l.trim()).filter((l) => l.length > 0 && l.length < 60);
+  return lines[lines.length - 1] || sandboxId.slice(0, 20) + "…";
+}
+
 export function SessionsPage() {
   const [personas, setPersonas] = useState<Persona[]>([]);
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -235,7 +253,7 @@ export function SessionsPage() {
               .map((session) => (
                 <div key={session.id} className="stopped-session-item">
                   <span className="stopped-session-name">
-                    {session.sandbox_id || session.id}
+                    {extractSandboxName(session.sandbox_id) || session.id.slice(0, 8)}
                   </span>
                   <div className="stopped-session-actions">
                     <button
