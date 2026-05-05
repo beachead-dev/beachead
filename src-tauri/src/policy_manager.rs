@@ -314,7 +314,7 @@ exit 1
     #[tokio::test]
     async fn test_remove_rule_success() {
         let script = r#"#!/bin/sh
-if [ "$1" = "policy" ] && [ "$2" = "rm" ] && [ "$3" = "rule-123" ]; then
+if [ "$1" = "policy" ] && [ "$2" = "rm" ] && [ "$3" = "network" ] && [ "$4" = "--id" ] && [ "$5" = "rule-123" ]; then
     exit 0
 fi
 exit 1
@@ -347,7 +347,7 @@ exit 0
     #[tokio::test]
     async fn test_remove_rule_cli_failure() {
         let script = r#"#!/bin/sh
-if [ "$1" = "policy" ] && [ "$2" = "rm" ]; then
+if [ "$1" = "policy" ] && [ "$2" = "rm" ] && [ "$3" = "network" ]; then
     echo "error: rule not found" >&2
     exit 1
 fi
@@ -356,6 +356,20 @@ exit 1
         let (mgr, _dir) = create_test_manager(script);
         let result = mgr.remove_rule("nonexistent").await;
         assert!(matches!(result, Err(OrchestratorError::SbxError(_))));
+    }
+
+    #[tokio::test]
+    async fn test_remove_rule_strips_local_prefix() {
+        let script = r#"#!/bin/sh
+if [ "$1" = "policy" ] && [ "$2" = "rm" ] && [ "$3" = "network" ] && [ "$4" = "--id" ] && [ "$5" = "5fa4ef3f-009e-4ffb-8812-1ca77e211eff" ]; then
+    exit 0
+fi
+exit 1
+"#;
+        let (mgr, _dir) = create_test_manager(script);
+        // Pass with "local:" prefix — should be stripped
+        let result = mgr.remove_rule("local:5fa4ef3f-009e-4ffb-8812-1ca77e211eff").await;
+        assert!(result.is_ok());
     }
 
     #[tokio::test]

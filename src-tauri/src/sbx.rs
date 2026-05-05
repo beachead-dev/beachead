@@ -732,13 +732,15 @@ impl SbxCli {
         Ok(())
     }
 
-    /// Remove a policy rule: `sbx policy rm <rule_id>`
+    /// Remove a policy rule: `sbx policy rm network --id <rule_id>`
     pub async fn policy_remove_rule(
         &self,
         rule_id: &str,
     ) -> Result<(), OrchestratorError> {
+        // Strip "local:" prefix if present — sbx expects just the UUID
+        let id = rule_id.strip_prefix("local:").unwrap_or(rule_id);
         let output = self
-            .exec_multi_command(&["policy", "rm"], &[rule_id])
+            .exec_multi_command(&["policy", "rm", "network"], &["--id", id])
             .await?;
         if !output.success {
             return Err(OrchestratorError::SbxError(format!(
