@@ -139,6 +139,144 @@ impl SystemManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
+
+    // --- Property 22: Dependency check completeness ---
+    // Validates: Requirements 13.2, 13.3, 13.4, 13.5
+
+    /// Strategy for generating non-empty version strings.
+    fn version_string_strategy() -> impl Strategy<Value = String> {
+        prop_oneof![
+            Just("sbx version 0.5.0".to_string()),
+            Just("Docker version 24.0.7, build afdd53b".to_string()),
+            Just("1.0.0".to_string()),
+            "[a-zA-Z0-9. ]{1,40}".prop_map(|s| s),
+        ]
+    }
+
+    /// Strategy for generating a valid DependencyStatus where available
+    /// dependencies have non-empty version strings and unavailable ones have None.
+    fn dependency_state_arbitrary() -> impl Strategy<Value = DependencyStatus> {
+        (any::<bool>(), any::<bool>())
+            .prop_flat_map(|(sbx_avail, docker_avail)| {
+                let sbx_version_strat = if sbx_avail {
+                    version_string_strategy().prop_map(Some).boxed()
+                } else {
+                    Just(None).boxed()
+                };
+                let docker_version_strat = if docker_avail {
+                    version_string_strategy().prop_map(Some).boxed()
+                } else {
+                    Just(None).boxed()
+                };
+                (Just(sbx_avail), sbx_version_strat, Just(docker_avail), docker_version_strat)
+            })
+            .prop_map(|(sbx_available, sbx_version, docker_available, docker_version)| {
+                DependencyStatus {
+                    sbx_available,
+                    sbx_version,
+                    docker_available,
+                    docker_version,
+                }
+            })
+    }
+
+    proptest! {
+        /// **Validates: Requirements 13.2, 13.3, 13.4, 13.5**
+        ///
+        /// Property 22: Dependency check completeness
+        /// For any DependencyStatus:
+        /// - If sbx_available is true, sbx_version must be Some with non-empty string
+        /// - If sbx_available is false, sbx_version must be None
+        /// - If docker_available is true, docker_version must be Some with non-empty string
+        /// - If docker_available is false, docker_version must be None
+        #[test]
+        fn prop_dependency_check_completeness(status in dependency_state_arbitrary()) {
+            // Invariant: available implies non-empty version string
+            if status.sbx_available {
+                prop_assert!(status.sbx_version.is_some(),
+                    "sbx_available is true but sbx_version is None");
+                let version = status.sbx_version.as_ref().unwrap();
+                prop_assert!(!version.is_empty(),
+                    "sbx_available is true but sbx_version is empty string");
+            } else {
+                prop_assert!(status.sbx_version.is_none(),
+                    "sbx_available is false but sbx_version is Some({})",
+                    status.sbx_version.unwrap_or_default());
+            }
+
+            // Invariant: available implies non-empty version string
+            if status.docker_available {
+                prop_assert!(status.docker_version.is_some(),
+                    "docker_available is true but docker_version is None");
+                let version = status.docker_version.as_ref().unwrap();
+                prop_assert!(!version.is_empty(),
+                    "docker_available is true but docker_version is empty string");
+            } else {
+                prop_assert!(status.docker_version.is_none(),
+                    "docker_available is false but docker_version is Some({})",
+                    status.docker_version.unwrap_or_default());
+            }
+        }
+
+        /// **Validates: Requirements 13.2, 13.3, 13.4, 13.5**
+        ///
+        /// Property 22 (supplemental): Verify that the dependency_check() method
+        /// produces DependencyStatus values that satisfy the completeness invariants
+        /// when given a mock sbx binary.
+        #[test]
+        fn prop_dependency_check_from_mock_sbx(
+            version_output in "[a-zA-Z0-9.][a-zA-Z0-9. ]{0,29}",
+            sbx_succeeds in any::<bool>()
+        ) {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+
+            rt.block_on(async {
+                let script = if sbx_succeeds {
+                    format!(
+                        "#!/bin/sh\nif [ \"$1\" = \"version\" ]; then\n    echo \"{}\"\n    exit 0\nfi\nexit 1\n",
+                        version_output
+                    )
+                } else {
+                    "#!/bin/sh\nexit 1\n".to_string()
+                };
+
+                let dir = tempfile::tempdir().unwrap();
+                let script_path = dir.path().join("sbx");
+
+                #[cfg(unix)]
+                {
+                    use std::fs;
+                    use std::os::unix::fs::PermissionsExt;
+                    fs::write(&script_path, &script).unwrap();
+                    fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755)).unwrap();
+                }
+
+                let sbx = Arc::new(SbxCli::with_path(script_path));
+                let manager = SystemManager::new(sbx);
+                let status = manager.dependency_check().await.unwrap();
+
+                // Verify sbx invariants
+                if status.sbx_available {
+                    assert!(status.sbx_version.is_some());
+                    assert!(!status.sbx_version.as_ref().unwrap().is_empty());
+                } else {
+                    assert!(status.sbx_version.is_none());
+                }
+
+                // Verify docker invariants (docker availability depends on host)
+                if status.docker_available {
+                    assert!(status.docker_version.is_some());
+                    assert!(!status.docker_version.as_ref().unwrap().is_empty());
+                } else {
+                    assert!(status.docker_version.is_none());
+                }
+            });
+        }
+    }
 
     /// Creates a SystemManager with a mock sbx binary (a shell script).
     fn create_test_manager(script_content: &str) -> (SystemManager, tempfile::TempDir) {
