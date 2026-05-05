@@ -96,8 +96,8 @@ pub enum PolicyDefault {
 impl std::fmt::Display for PolicyDefault {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Allow => write!(f, "allow"),
-            Self::Deny => write!(f, "deny"),
+            Self::Allow => write!(f, "allow-all"),
+            Self::Deny => write!(f, "deny-all"),
             Self::Balanced => write!(f, "balanced"),
         }
     }
@@ -604,14 +604,14 @@ impl SbxCli {
         Ok(mappings)
     }
 
-    /// Publish a port for a sandbox: `sbx ports --publish <port_spec> <sandbox_id>`
+    /// Publish a port for a sandbox: `sbx ports <sandbox_id> --publish <port_spec>`
     pub async fn ports_publish(
         &self,
         sandbox_id: &str,
         port_spec: &str,
     ) -> Result<PortMapping, OrchestratorError> {
         let output = self
-            .exec_command("ports", &["--publish", port_spec, sandbox_id])
+            .exec_command("ports", &[sandbox_id, "--publish", port_spec])
             .await?;
         if !output.success {
             return Err(OrchestratorError::SbxError(format!(
@@ -629,14 +629,14 @@ impl SbxCli {
         })
     }
 
-    /// Unpublish a port for a sandbox: `sbx ports --unpublish <port_spec> <sandbox_id>`
+    /// Unpublish a port for a sandbox: `sbx ports <sandbox_id> --unpublish <port_spec>`
     pub async fn ports_unpublish(
         &self,
         sandbox_id: &str,
         port_spec: &str,
     ) -> Result<(), OrchestratorError> {
         let output = self
-            .exec_command("ports", &["--unpublish", port_spec, sandbox_id])
+            .exec_command("ports", &[sandbox_id, "--unpublish", port_spec])
             .await?;
         if !output.success {
             return Err(OrchestratorError::SbxError(format!(
@@ -720,32 +720,32 @@ impl SbxCli {
         Ok(())
     }
 
-    /// Remove a policy rule: `sbx policy remove <rule_id>`
+    /// Remove a policy rule: `sbx policy rm <rule_id>`
     pub async fn policy_remove_rule(
         &self,
         rule_id: &str,
     ) -> Result<(), OrchestratorError> {
         let output = self
-            .exec_multi_command(&["policy", "remove"], &[rule_id])
+            .exec_multi_command(&["policy", "rm"], &[rule_id])
             .await?;
         if !output.success {
             return Err(OrchestratorError::SbxError(format!(
-                "sbx policy remove failed: {}",
+                "sbx policy rm failed: {}",
                 output.stderr.trim()
             )));
         }
         Ok(())
     }
 
-    /// Get policy traffic log: `sbx policy log [--sandbox <id>] [--limit <n>]`
+    /// Get policy traffic log: `sbx policy log [SANDBOX] [--limit <n>]`
     pub async fn policy_log(
         &self,
         sandbox_id: Option<&str>,
         limit: Option<u32>,
     ) -> Result<Vec<PolicyLogEntry>, OrchestratorError> {
         let mut args: Vec<String> = Vec::new();
+        // Sandbox is a positional argument (comes before flags)
         if let Some(id) = sandbox_id {
-            args.push("--sandbox".to_string());
             args.push(id.to_string());
         }
         if let Some(n) = limit {

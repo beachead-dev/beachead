@@ -84,7 +84,7 @@ impl PolicyManager {
 
     /// Get the policy traffic log.
     ///
-    /// Invokes `sbx policy log [--sandbox <id>] [--limit <n>]`.
+    /// Invokes `sbx policy log [SANDBOX] [--limit <n>]`.
     pub async fn get_log(
         &self,
         sandbox_id: Option<&str>,
@@ -181,7 +181,7 @@ exit 1
     #[tokio::test]
     async fn test_set_default_allow() {
         let script = r#"#!/bin/sh
-if [ "$1" = "policy" ] && [ "$2" = "set-default" ] && [ "$3" = "allow" ]; then
+if [ "$1" = "policy" ] && [ "$2" = "set-default" ] && [ "$3" = "allow-all" ]; then
     exit 0
 fi
 exit 1
@@ -194,7 +194,7 @@ exit 1
     #[tokio::test]
     async fn test_set_default_deny() {
         let script = r#"#!/bin/sh
-if [ "$1" = "policy" ] && [ "$2" = "set-default" ] && [ "$3" = "deny" ]; then
+if [ "$1" = "policy" ] && [ "$2" = "set-default" ] && [ "$3" = "deny-all" ]; then
     exit 0
 fi
 exit 1
@@ -314,7 +314,7 @@ exit 1
     #[tokio::test]
     async fn test_remove_rule_success() {
         let script = r#"#!/bin/sh
-if [ "$1" = "policy" ] && [ "$2" = "remove" ] && [ "$3" = "rule-123" ]; then
+if [ "$1" = "policy" ] && [ "$2" = "rm" ] && [ "$3" = "rule-123" ]; then
     exit 0
 fi
 exit 1
@@ -347,7 +347,7 @@ exit 0
     #[tokio::test]
     async fn test_remove_rule_cli_failure() {
         let script = r#"#!/bin/sh
-if [ "$1" = "policy" ] && [ "$2" = "remove" ]; then
+if [ "$1" = "policy" ] && [ "$2" = "rm" ]; then
     echo "error: rule not found" >&2
     exit 1
 fi
@@ -379,7 +379,7 @@ exit 1
     #[tokio::test]
     async fn test_get_log_with_sandbox_filter() {
         let script = r#"#!/bin/sh
-if [ "$1" = "policy" ] && [ "$2" = "log" ] && [ "$3" = "--sandbox" ] && [ "$4" = "test-sbx" ]; then
+if [ "$1" = "policy" ] && [ "$2" = "log" ] && [ "$3" = "test-sbx" ]; then
     echo '[{"timestamp":"2024-01-01T00:00:00Z","sandbox":"test-sbx","host":"example.com","action":"denied","proxy":"http","rule":null,"reason":"default deny"}]'
     exit 0
 fi
@@ -410,7 +410,7 @@ exit 1
     #[tokio::test]
     async fn test_get_log_with_sandbox_and_limit() {
         let script = r#"#!/bin/sh
-if [ "$1" = "policy" ] && [ "$2" = "log" ] && [ "$3" = "--sandbox" ] && [ "$4" = "sbx-1" ] && [ "$5" = "--limit" ] && [ "$6" = "5" ]; then
+if [ "$1" = "policy" ] && [ "$2" = "log" ] && [ "$3" = "sbx-1" ] && [ "$4" = "--limit" ] && [ "$5" = "5" ]; then
     echo '[]'
     exit 0
 fi
