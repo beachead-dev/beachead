@@ -26,6 +26,7 @@ pub mod workspace_manager;
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let handle = app.handle().clone();
             // Start the Axum HTTP server alongside the Tauri app

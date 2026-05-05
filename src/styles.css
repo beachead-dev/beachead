@@ -299,6 +299,20 @@ body {
   gap: 0.5rem;
 }
 
+.input-with-button {
+  display: flex;
+  gap: 0.5rem;
+  align-items: stretch;
+}
+
+.input-with-button input {
+  flex: 1;
+}
+
+.input-with-button .btn {
+  white-space: nowrap;
+}
+
 .form-group input[type="text"],
 .form-group input[type="password"],
 .form-group select {

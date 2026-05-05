@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
+import { open } from "@tauri-apps/plugin-dialog";
 import { api } from "../lib/api";
 
 interface McpServer {
@@ -345,15 +346,30 @@ export function PersonasPage() {
 
           <div className="form-group">
             <label htmlFor="persona-workspace">Workspace Path *</label>
-            <input
-              id="persona-workspace"
-              type="text"
-              value={formWorkspace}
-              onChange={(e) => setFormWorkspace(e.target.value)}
-              placeholder="/path/to/workspace"
-              required
-              aria-required="true"
-            />
+            <div className="input-with-button">
+              <input
+                id="persona-workspace"
+                type="text"
+                value={formWorkspace}
+                onChange={(e) => setFormWorkspace(e.target.value)}
+                placeholder="/path/to/workspace"
+                required
+                aria-required="true"
+              />
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={async () => {
+                  const selected = await open({ directory: true, multiple: false });
+                  if (selected) {
+                    setFormWorkspace(selected as string);
+                  }
+                }}
+                aria-label="Browse for workspace folder"
+              >
+                Browse
+              </button>
+            </div>
           </div>
 
           <div className="form-group form-group-inline">
