@@ -15,6 +15,7 @@ pub mod sbx;
 mod sbx_property_tests;
 mod server;
 mod types;
+pub mod workspace_manager;
 
 fn main() {
     tauri::Builder::default()
