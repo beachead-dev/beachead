@@ -1142,16 +1142,28 @@ fn parse_template_ls_text(output: &str) -> Vec<TemplateInfo> {
     let mut templates = Vec::new();
     for line in output.lines() {
         let line = line.trim();
-        if line.is_empty() || line.starts_with("TAG") || line.contains("---") {
+        if line.is_empty()
+            || line.starts_with("TAG")
+            || line.contains("---")
+            || line.contains("No template")
+            || line.contains("no template")
+            || line.contains("not found")
+            || line.contains("found.")
+            || line.ends_with("found")
+        {
             continue;
         }
         let parts: Vec<&str> = line.split_whitespace().collect();
         if let Some(tag) = parts.first() {
-            templates.push(TemplateInfo {
-                tag: tag.to_string(),
-                size: parts.get(1).map(|s| s.to_string()),
-                created: parts.get(2..).map(|s| s.join(" ")),
-            });
+            // Skip lines that look like prose messages rather than template entries
+            // Template tags are typically short identifiers without spaces in the first token
+            if tag.len() > 0 && !tag.contains(' ') {
+                templates.push(TemplateInfo {
+                    tag: tag.to_string(),
+                    size: parts.get(1).map(|s| s.to_string()),
+                    created: parts.get(2..).map(|s| s.join(" ")),
+                });
+            }
         }
     }
     templates
