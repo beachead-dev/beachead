@@ -39,6 +39,8 @@ dashmap = "6"
 zeroize = { version = "1", features = ["derive"] }
 rand = "0.9"
 base64 = "0.22"
+aes-gcm = "0.10"
+argon2 = "0.5"
 
 # PTY
 portable-pty = "0.8"
