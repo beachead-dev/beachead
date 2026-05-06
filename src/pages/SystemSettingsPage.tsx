@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { api } from "../lib/api";
+import { ExportImport } from "../components/ExportImport";
 
 interface SbxVersion {
   version: string;
@@ -187,6 +188,8 @@ export function SystemSettingsPage() {
           </pre>
         )}
       </section>
+
+      <ExportImport />
     </div>
   );
 }

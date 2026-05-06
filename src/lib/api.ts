@@ -83,4 +83,23 @@ export async function getText(path: string): Promise<string> {
   return response.text();
 }
 
-export const api = { get, getText, post, put, del };
+export async function postForBlob(path: string, body?: unknown): Promise<Blob> {
+  const response = await fetch(`${BASE_URL}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    let errBody: unknown;
+    try {
+      errBody = JSON.parse(text);
+    } catch {
+      errBody = text;
+    }
+    throw new ApiError(response.status, response.statusText, errBody);
+  }
+  return response.blob();
+}
+
+export const api = { get, getText, post, postForBlob, put, del };
