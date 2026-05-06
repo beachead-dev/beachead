@@ -433,34 +433,46 @@ impl SessionManager {
                 }
             }
             _ => {
-                // Sandbox is stopped, missing, or in unknown state
-                let _ = self.db.with_conn(|conn| {
-                    db_ops::update_session_status(
-                        conn,
-                        session_id,
-                        &SessionStatus::Stopped,
-                        Some("Sandbox stopped or missing during recovery"),
-                    )
-                });
-
-                // Only attempt `sbx rm` if sandbox is truly missing (not found in ls).
-                // Stopped sandboxes should be preserved for user to resume.
                 if sandbox_status.is_none() {
-                    if let Err(e) = self.sbx.rm(&sandbox_id).await {
-                        eprintln!(
-                            "Recovery: sbx rm failed for sandbox {}: {}. Manual cleanup may be required.",
-                            sandbox_id, e
-                        );
-                    }
-                }
+                    // Sandbox is truly missing — remove the session record entirely
+                    let _ = self.db.with_conn(|conn| {
+                        conn.execute(
+                            "DELETE FROM sessions WHERE id = ?1",
+                            rusqlite::params![session_id.0],
+                        ).map_err(|e| OrchestratorError::Database(e.to_string()))?;
+                        Ok(())
+                    });
 
-                let reason = format!(
-                    "Sandbox {} is stopped or missing; session marked as stopped",
-                    sandbox_id
-                );
-                RecoveryResult::Failed {
-                    session_id: session_id.clone(),
-                    reason,
+                    // Attempt sbx rm cleanup (best-effort)
+                    let _ = self.sbx.rm(&sandbox_id).await;
+
+                    let reason = format!(
+                        "Sandbox {} not found; session removed",
+                        sandbox_id
+                    );
+                    RecoveryResult::Failed {
+                        session_id: session_id.clone(),
+                        reason,
+                    }
+                } else {
+                    // Sandbox exists but is stopped — mark session as stopped (resumable)
+                    let _ = self.db.with_conn(|conn| {
+                        db_ops::update_session_status(
+                            conn,
+                            session_id,
+                            &SessionStatus::Stopped,
+                            Some("Sandbox stopped during recovery"),
+                        )
+                    });
+
+                    let reason = format!(
+                        "Sandbox {} is stopped; session marked as stopped",
+                        sandbox_id
+                    );
+                    RecoveryResult::Failed {
+                        session_id: session_id.clone(),
+                        reason,
+                    }
                 }
             }
         }
