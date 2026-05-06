@@ -471,15 +471,26 @@ impl SbxCli {
             )));
         }
 
-        let sandboxes: Vec<SandboxInfo> = serde_json::from_str(&output.stdout)
-            .map_err(|e| {
-                OrchestratorError::SbxError(format!(
-                    "Failed to parse sbx ls JSON output: {}",
-                    e
-                ))
-            })?;
+        // sbx ls --json may return either:
+        // - A plain array: [{"name": "...", ...}, ...]
+        // - A wrapper object: {"sandboxes": [...]}
+        if let Ok(sandboxes) = serde_json::from_str::<Vec<SandboxInfo>>(&output.stdout) {
+            return Ok(sandboxes);
+        }
 
-        Ok(sandboxes)
+        // Try wrapper object format
+        #[derive(serde::Deserialize)]
+        struct SbxLsWrapper {
+            sandboxes: Vec<SandboxInfo>,
+        }
+        if let Ok(wrapper) = serde_json::from_str::<SbxLsWrapper>(&output.stdout) {
+            return Ok(wrapper.sandboxes);
+        }
+
+        Err(OrchestratorError::SbxError(format!(
+            "Failed to parse sbx ls JSON output: {}",
+            output.stdout.chars().take(200).collect::<String>()
+        )))
     }
 
     /// Execute an interactive command in a sandbox: `sbx exec -it <sandbox_id>`

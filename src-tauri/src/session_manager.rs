@@ -454,7 +454,28 @@ impl SessionManager {
         };
 
         // First check if the sandbox is still running via `sbx ls --json`
-        let sandbox_status = self.check_sandbox_status(&sandbox_id).await;
+        let sandbox_status = match self.check_sandbox_status(&sandbox_id).await {
+            Ok(status) => status,
+            Err(_) => {
+                // Can't query sbx ls — don't make destructive decisions
+                let reason = format!(
+                    "Could not verify sandbox {} status (sbx ls failed); leaving session as-is",
+                    sandbox_id
+                );
+                let _ = self.db.with_conn(|conn| {
+                    db_ops::update_session_status(
+                        conn,
+                        session_id,
+                        &SessionStatus::Stopped,
+                        Some(&reason),
+                    )
+                });
+                return RecoveryResult::Failed {
+                    session_id: session_id.clone(),
+                    reason,
+                };
+            }
+        };
 
         match sandbox_status.as_deref() {
             Some("running") => {
@@ -556,21 +577,20 @@ impl SessionManager {
     }
 
     /// Check the status of a sandbox via `sbx ls --json`.
-    /// Returns the status string if found, or None if the sandbox is not listed.
-    async fn check_sandbox_status(&self, sandbox_id: &str) -> Option<String> {
-        match self.sbx.ls_json().await {
-            Ok(sandboxes) => {
-                for sb in sandboxes {
-                    if sb.id.as_deref() == Some(sandbox_id)
-                        || sb.name.as_deref() == Some(sandbox_id)
-                    {
-                        return sb.status;
-                    }
-                }
-                None // sandbox not found in listing
+    /// Returns:
+    /// - Ok(Some(status)) if sandbox found
+    /// - Ok(None) if sandbox definitively not in the list
+    /// - Err if we couldn't query sbx ls (unreliable — don't act on this)
+    async fn check_sandbox_status(&self, sandbox_id: &str) -> Result<Option<String>, OrchestratorError> {
+        let sandboxes = self.sbx.ls_json().await?;
+        for sb in sandboxes {
+            if sb.id.as_deref() == Some(sandbox_id)
+                || sb.name.as_deref() == Some(sandbox_id)
+            {
+                return Ok(sb.status);
             }
-            Err(_) => None,
         }
+        Ok(None) // sandbox not found in listing
     }
 
     /// Upload a file to a session's workspace or sandbox.
