@@ -115,6 +115,7 @@ export function SessionsPage() {
     try {
       await api.post(`/api/sessions/${sessionId}/resume`);
       await fetchData();
+      setActiveTabId(sessionId);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to resume session");
     }
@@ -134,7 +135,7 @@ export function SessionsPage() {
     }
   };
 
-  const handleCloseTab = async (sessionId: string) => {
+  const handleStopSession = async (sessionId: string) => {
     try {
       await api.post(`/api/sessions/${sessionId}/stop`);
       setTabs((prev) => prev.filter((t) => t.session.id !== sessionId));
@@ -147,6 +148,30 @@ export function SessionsPage() {
       setError(e instanceof Error ? e.message : "Failed to stop session");
     }
   };
+
+  // Close tab = detach only (sandbox keeps running, just remove from active tabs)
+  const handleCloseTab = (sessionId: string) => {
+    setTabs((prev) => prev.filter((t) => t.session.id !== sessionId));
+    if (activeTabId === sessionId) {
+      const remaining = tabs.filter((t) => t.session.id !== sessionId);
+      setActiveTabId(remaining.length > 0 ? (remaining[0]?.session.id ?? null) : null);
+    }
+  };
+
+  // Reattach a detached (running but not tabbed) session
+  const handleReattach = (sessionId: string) => {
+    const session = sessions.find((s) => s.id === sessionId);
+    if (!session) return;
+    const personaName = personas.find((p) => p.id === session.persona_id)?.name || "Unknown";
+    setTabs((prev) => [...prev, { session, personaName }]);
+    setActiveTabId(sessionId);
+  };
+
+  // Detached sessions: running in backend but not in our tabs list
+  const detachedSessions = sessions.filter(
+    (s) => s.status === "running" && !tabs.some((t) => t.session.id === s.id)
+  );
+  const stoppedSessions = sessions.filter((s) => s.status === "stopped");
 
   if (loading) {
     return (
@@ -218,9 +243,17 @@ export function SessionsPage() {
             ))}
           </ul>
 
+          {/* Detached sessions — running but not tabbed */}
+          <DetachedSessionsSection
+            sessions={detachedSessions}
+            personas={personas}
+            onReattach={handleReattach}
+            onStop={handleStopSession}
+          />
+
           {/* Stopped sessions — collapsible section at bottom of sidebar */}
           <StoppedSessionsSection
-            sessions={sessions.filter((s) => s.status === "stopped")}
+            sessions={stoppedSessions}
             onResume={handleResumeSession}
             onRemove={handleRemoveSession}
           />
@@ -243,6 +276,62 @@ export function SessionsPage() {
           ))}
         </div>
       </div>
+    </div>
+  );
+}
+
+interface DetachedSessionsSectionProps {
+  sessions: Session[];
+  personas: Persona[];
+  onReattach: (id: string) => void;
+  onStop: (id: string) => void;
+}
+
+function DetachedSessionsSection({ sessions, personas, onReattach, onStop }: DetachedSessionsSectionProps) {
+  const [collapsed, setCollapsed] = useState(false);
+
+  if (sessions.length === 0) return null;
+
+  return (
+    <div className={`stopped-section ${collapsed ? "collapsed" : ""}`}>
+      <button
+        className="stopped-section-header"
+        onClick={() => setCollapsed(!collapsed)}
+        aria-expanded={!collapsed}
+        aria-label="Toggle detached sessions"
+      >
+        <span className={`caret ${collapsed ? "caret-right" : "caret-down"}`}>▸</span>
+        <span>Detached ({sessions.length})</span>
+      </button>
+      {!collapsed && (
+        <ul className="stopped-list">
+          {sessions.map((session) => (
+            <li key={session.id} className="stopped-list-item">
+              <span className="stopped-item-name">
+                {personas.find((p) => p.id === session.persona_id)?.name || extractSandboxName(session.sandbox_id)}
+              </span>
+              <div className="stopped-item-actions">
+                <button
+                  className="btn-icon"
+                  onClick={() => onReattach(session.id)}
+                  aria-label="Reattach"
+                  title="Reattach"
+                >
+                  ▶
+                </button>
+                <button
+                  className="btn-icon btn-icon-danger"
+                  onClick={() => onStop(session.id)}
+                  aria-label="Stop"
+                  title="Stop sandbox"
+                >
+                  ⏹
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
