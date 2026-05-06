@@ -282,3 +282,118 @@ Other:
 - Use `cargo tauri icon <source.png>` to auto-generate all required sizes from a single source
 - Sidebar logo should degrade gracefully at narrow widths (show icon-only below ~140px)
 - Ensure sufficient contrast on both light and dark backgrounds
+
+---
+
+## Integrations
+
+### Git Integration Panel
+
+**Priority:** Low  
+**Effort:** Low  
+**Affected area:** New panel in SessionPanel, backend `sbx exec` calls
+
+**Description:** Add a "Git" tab alongside Terminal/Files/Ports in the session panel. Shows current branch, recent commits, and diff summary for the mounted workspace. Runs `git` commands inside the sandbox via `sbx exec` and displays formatted results.
+
+**Implementation:**
+- New `GitView` component in SessionPanel
+- Backend endpoint: `GET /api/sessions/{id}/git/status` → runs `sbx exec <sandbox> git status --porcelain`
+- Additional endpoints for log, diff, branch list
+- Display as formatted cards/tables, not raw terminal output
+
+---
+
+### Session Output Logging / Export
+
+**Priority:** Medium  
+**Effort:** Low  
+**Affected area:** `src-tauri/src/pty_bridge.rs`, new export endpoint
+
+**Description:** Save terminal output to a file (markdown or plain text) for documentation, review, or sharing. The broadcast channel already has all output flowing through it — just add a subscriber that writes to disk.
+
+**Implementation:**
+- Add an optional file-writing subscriber to the broadcast channel per session
+- Backend endpoint: `POST /api/sessions/{id}/export` → returns the saved transcript
+- Frontend: "Export" button in session panel that downloads the file
+- Format options: plain text (raw terminal), or stripped ANSI codes for clean markdown
+
+---
+
+### Desktop Notifications
+
+**Priority:** Low  
+**Effort:** Low  
+**Affected area:** Frontend + `@tauri-apps/plugin-notification`
+
+**Description:** System desktop notifications for key events: agent process exits, session stops unexpectedly, long-running task completes (detected by terminal going idle after activity).
+
+**Implementation:**
+- Install `tauri-plugin-notification`
+- Trigger notifications from the frontend when session status changes to "stopped" unexpectedly
+- Optional: detect terminal idle (no output for N seconds after sustained activity) as "task complete" heuristic
+- User preference to enable/disable in System Settings
+
+---
+
+### MCP Tool Marketplace / Registry
+
+**Priority:** Medium  
+**Effort:** Medium  
+**Affected area:** New UI section, persona MCP server management
+
+**Description:** A curated list of known MCP servers (filesystem, GitHub, Slack, databases, web search, etc.) that users can one-click add to a persona. Builds on existing additional MCP server entries per persona.
+
+**Implementation:**
+- Bundled JSON registry of known MCP servers with name, URL template, description, required auth
+- UI: browsable/searchable list in the persona form's MCP section
+- "Add to persona" button pre-fills the MCP server entry fields
+- Could later support fetching registry updates from a remote URL
+
+---
+
+### Session Quick Launch Presets
+
+**Priority:** Low  
+**Effort:** Low  
+**Affected area:** New DB table, session launcher UI
+
+**Description:** Save a persona + session name pattern + optional steering as a "quick launch" preset. One click to start a pre-configured session without going through the launcher form.
+
+**Implementation:**
+- New `presets` table: id, name, persona_id, session_name_template, steering
+- UI: "Save as preset" button after launching, preset list in session sidebar header
+- Session name template supports `{n}` for auto-incrementing number
+- Presets appear as quick-action buttons above the session list
+
+---
+
+### Multi-Workspace Mounts
+
+**Priority:** Medium  
+**Effort:** Low  
+**Affected area:** Persona form, kit generator, session manager
+
+**Description:** sbx supports multiple workspace paths as positional args (`sbx run agent /path1 /path2`). Currently we only support one. Allow personas to specify additional workspaces (read-only or read-write).
+
+**Implementation:**
+- Add `additional_workspaces` field to Persona (array of {path, read_only} objects)
+- Update persona form with dynamic list for extra workspaces
+- Session manager passes extra paths as positional args to `sbx create`
+- Append `:ro` suffix for read-only mounts per sbx docs
+
+---
+
+### Clipboard Bridge
+
+**Priority:** Low  
+**Effort:** Medium  
+**Affected area:** `src/pages/SessionsPage.tsx` (TerminalView), Tauri clipboard API
+
+**Description:** Bidirectional clipboard between host and terminal. xterm.js handles selection-to-clipboard natively, but pasting from host clipboard into the terminal needs explicit handling in Tauri's WebView.
+
+**Implementation:**
+- Install `@tauri-apps/plugin-clipboard-manager`
+- Override xterm.js paste handler to read from system clipboard via Tauri API
+- Add right-click context menu with Copy/Paste options
+- Handle Ctrl+Shift+V (Linux) and Cmd+V (macOS) keyboard shortcuts
+- Ensure binary data (non-UTF8) is handled gracefully
