@@ -46,12 +46,13 @@ impl KitGenerator {
         &self,
         persona: &Persona,
         mcp_config: Option<&McpConfig>,
+        sbx_agent: Option<&str>,
     ) -> Result<PathBuf, OrchestratorError> {
         let dir_name = format!("{}-{}", persona.name, uuid::Uuid::new_v4());
         let kit_dir = self.kit_base_dir.join(&dir_name);
         fs::create_dir_all(&kit_dir)?;
 
-        let spec_yaml = self.build_spec_yaml(persona, mcp_config);
+        let spec_yaml = self.build_spec_yaml(persona, mcp_config, sbx_agent);
         fs::write(kit_dir.join("spec.yaml"), spec_yaml)?;
 
         Ok(kit_dir)
@@ -66,7 +67,7 @@ impl KitGenerator {
     }
 
     /// Build the spec.yaml content for a persona's mixin kit.
-    fn build_spec_yaml(&self, persona: &Persona, mcp_config: Option<&McpConfig>) -> String {
+    fn build_spec_yaml(&self, persona: &Persona, mcp_config: Option<&McpConfig>, sbx_agent: Option<&str>) -> String {
         let mut yaml = String::new();
 
         // Header
@@ -90,7 +91,7 @@ impl KitGenerator {
         }
 
         // network.allowedDomains
-        let domains = self.collect_allowed_domains(persona, mcp_config);
+        let domains = self.collect_allowed_domains(persona, mcp_config, sbx_agent);
         if !domains.is_empty() {
             yaml.push_str("\nnetwork:\n");
             yaml.push_str("  allowedDomains:\n");
@@ -189,8 +190,15 @@ impl KitGenerator {
         &self,
         persona: &Persona,
         mcp_config: Option<&McpConfig>,
+        sbx_agent: Option<&str>,
     ) -> Vec<String> {
         let mut domains = Vec::new();
+
+        // Agent-specific required domains for auth/API access
+        if let Some(agent) = sbx_agent {
+            let agent_domains = required_domains_for_agent(agent);
+            domains.extend(agent_domains);
+        }
 
         // Memory MCP port
         if let Some(config) = mcp_config {
@@ -205,6 +213,22 @@ impl KitGenerator {
         }
 
         domains
+    }
+}
+
+/// Return required network domains for a given agent type.
+/// These are domains the agent needs for authentication or API access
+/// that may not be covered by the user's global policy.
+fn required_domains_for_agent(agent: &str) -> Vec<String> {
+    match agent {
+        "kiro" => vec!["**.kiro.dev:443".to_string()],
+        "claude" => vec!["api.anthropic.com:443".to_string()],
+        "codex" | "opencode" => vec!["**.openai.com:443".to_string()],
+        "copilot" => vec!["**.github.com:443".to_string(), "**.githubcopilot.com:443".to_string()],
+        "cursor" => vec!["**.cursor.sh:443".to_string(), "cursor.com:443".to_string()],
+        "gemini" => vec!["generativelanguage.googleapis.com:443".to_string()],
+        "droid" => vec!["**.factory.ai:443".to_string()],
+        _ => vec![],
     }
 }
 
@@ -284,7 +308,7 @@ mod tests {
         let generator = KitGenerator::new(tmp.path().to_path_buf());
         let persona = make_persona("test-agent", false, vec![]);
 
-        let kit_path = generator.generate(&persona, None).unwrap();
+        let kit_path = generator.generate(&persona, None, None).unwrap();
 
         assert!(kit_path.exists());
         assert!(kit_path.join("spec.yaml").exists());
@@ -313,7 +337,7 @@ mod tests {
             port: 9100,
         };
 
-        let kit_path = generator.generate(&persona, Some(&mcp_config)).unwrap();
+        let kit_path = generator.generate(&persona, Some(&mcp_config), None).unwrap();
         let content = fs::read_to_string(kit_path.join("spec.yaml")).unwrap();
 
         // Should have initFiles with MCP config
@@ -356,7 +380,7 @@ mod tests {
         ];
 
         let persona = make_persona("multi-mcp", false, mcp_servers);
-        let kit_path = generator.generate(&persona, None).unwrap();
+        let kit_path = generator.generate(&persona, None, None).unwrap();
         let content = fs::read_to_string(kit_path.join("spec.yaml")).unwrap();
 
         // Should have initFiles with MCP config
@@ -391,7 +415,7 @@ mod tests {
             port: 9200,
         };
 
-        let kit_path = generator.generate(&persona, Some(&mcp_config)).unwrap();
+        let kit_path = generator.generate(&persona, Some(&mcp_config), None).unwrap();
         let content = fs::read_to_string(kit_path.join("spec.yaml")).unwrap();
 
         // Both memory and custom-tool should be in mcpServers
@@ -414,7 +438,7 @@ mod tests {
         let generator = KitGenerator::new(tmp.path().to_path_buf());
         let persona = make_persona("cleanup-test", false, vec![]);
 
-        let kit_path = generator.generate(&persona, None).unwrap();
+        let kit_path = generator.generate(&persona, None, None).unwrap();
         assert!(kit_path.exists());
 
         generator.cleanup(&kit_path).unwrap();
@@ -437,8 +461,8 @@ mod tests {
         let generator = KitGenerator::new(tmp.path().to_path_buf());
         let persona = make_persona("unique-test", false, vec![]);
 
-        let path1 = generator.generate(&persona, None).unwrap();
-        let path2 = generator.generate(&persona, None).unwrap();
+        let path1 = generator.generate(&persona, None, None).unwrap();
+        let path2 = generator.generate(&persona, None, None).unwrap();
 
         assert_ne!(path1, path2);
         assert!(path1.exists());
@@ -480,7 +504,7 @@ mod tests {
         let generator = KitGenerator::new(tmp.path().to_path_buf());
         let persona = make_persona("desc-test", false, vec![]);
 
-        let kit_path = generator.generate(&persona, None).unwrap();
+        let kit_path = generator.generate(&persona, None, None).unwrap();
         let content = fs::read_to_string(kit_path.join("spec.yaml")).unwrap();
 
         assert!(content.contains("description: Auto-generated kit for persona desc-test"));
@@ -607,7 +631,7 @@ mod tests {
                         updated_at: Utc::now(),
                     };
 
-                    let kit_path = generator.generate(&persona, None).unwrap();
+                    let kit_path = generator.generate(&persona, None, None).unwrap();
                     // Verify kit directory was created
                     prop_assert!(
                         kit_path.exists(),
@@ -669,7 +693,7 @@ mod tests {
                 };
 
                 let kit_path = generator
-                    .generate(&persona, mcp_config.as_ref())
+                    .generate(&persona, mcp_config.as_ref(), None)
                     .unwrap();
 
                 let content = fs::read_to_string(kit_path.join("spec.yaml")).unwrap();

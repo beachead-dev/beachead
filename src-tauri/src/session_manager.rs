@@ -85,10 +85,13 @@ impl SessionManager {
         // 1. Get persona from DB
         let persona = self.db.with_conn(|conn| db_ops::get_persona(conn, persona_id))?;
 
-        // 2. Generate kit
-        let kit_path = self.kit_generator.generate(&persona, None)?;
+        // 2. Resolve agent identifier (needed for kit generation and sandbox creation)
+        let agent = self.resolve_agent_identifier(&persona)?;
 
-        // 3. Create session record in "starting" state
+        // 3. Generate kit (includes agent-specific network domains)
+        let kit_path = self.kit_generator.generate(&persona, None, Some(&agent))?;
+
+        // 4. Create session record in "starting" state
         let session_id = SessionId::new();
         let now = Utc::now();
         let session = Session {
@@ -103,10 +106,9 @@ impl SessionManager {
         };
         self.db.with_conn(|conn| db_ops::insert_session(conn, &session))?;
 
-        // 4. Build args and call sbx create (creates sandbox without attaching)
-        let agent = self.resolve_agent_identifier(&persona)?;
+        // 5. Build args and call sbx create (creates sandbox without attaching)
         let run_args = SbxRunArgs {
-            agent,
+            agent: agent.clone(),
             kit_paths: vec![kit_path.clone()],
             workspace: persona.workspace_path.clone(),
             name: None,
