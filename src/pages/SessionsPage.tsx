@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { api } from "../lib/api";
 import { useWebSocket, ReadyState } from "../hooks/useWebSocket";
+import { ResizeHandle } from "../components/ResizeHandle";
 import { useDropzone } from "react-dropzone";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -64,6 +65,7 @@ export function SessionsPage() {
   const initialLoadDone = useRef(false);
   // Track all sessions that have ever been opened as tabs — keeps their panels mounted
   const [mountedSessionIds, setMountedSessionIds] = useState<Set<string>>(new Set());
+  const sessionSidebarRef = useRef<HTMLDivElement>(null);
 
   const fetchData = useCallback(async () => {
     try {
@@ -311,7 +313,7 @@ export function SessionsPage() {
 
       <div className="session-tabs">
         {/* Vertical session sidebar */}
-        <div className="session-sidebar">
+        <div className="session-sidebar" ref={sessionSidebarRef}>
           <div className="session-sidebar-header">
             <button className="btn btn-primary btn-sm" onClick={() => setShowLauncher(true)} aria-label="Start new session">
               + New Session
@@ -355,6 +357,7 @@ export function SessionsPage() {
             onResume={handleResumeSession}
             onRemove={handleRemoveSession}
           />
+          <ResizeHandle targetRef={sessionSidebarRef} minWidth={120} maxWidth={300} />
         </div>
 
         {/* Main content: render panels for ALL ever-mounted sessions, hide inactive ones */}

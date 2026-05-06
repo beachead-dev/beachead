@@ -1,4 +1,6 @@
+import { useRef } from "react";
 import { NavLink } from "react-router-dom";
+import { ResizeHandle } from "./ResizeHandle";
 
 const navItems = [
   { to: "/sessions", label: "Sessions" },
@@ -9,8 +11,10 @@ const navItems = [
 ];
 
 export function Sidebar() {
+  const sidebarRef = useRef<HTMLElement>(null);
+
   return (
-    <nav className="sidebar" aria-label="Main navigation">
+    <nav className="sidebar" aria-label="Main navigation" ref={sidebarRef}>
       <div className="sidebar-header">
         <h1 className="sidebar-title">Beachead</h1>
       </div>
@@ -40,6 +44,7 @@ export function Sidebar() {
           Help
         </NavLink>
       </div>
+      <ResizeHandle targetRef={sidebarRef} minWidth={120} maxWidth={280} />
     </nav>
   );
 }
