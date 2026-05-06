@@ -217,6 +217,13 @@ export function SessionsPage() {
               </li>
             ))}
           </ul>
+
+          {/* Stopped sessions — collapsible section at bottom of sidebar */}
+          <StoppedSessionsSection
+            sessions={sessions.filter((s) => s.status === "stopped")}
+            onResume={handleResumeSession}
+            onRemove={handleRemoveSession}
+          />
         </div>
 
         {/* Main content: render ALL session panels, hide inactive ones */}
@@ -236,40 +243,60 @@ export function SessionsPage() {
           ))}
         </div>
       </div>
+    </div>
+  );
+}
 
-      {/* Stopped sessions section */}
-      {sessions.filter((s) => s.status === "stopped").length > 0 && (
-        <div className="stopped-sessions">
-          <h3>Stopped Sessions</h3>
-          <p className="hint">Stopped sandboxes retain their state and can be restarted.</p>
-          <div className="stopped-session-list">
-            {sessions
-              .filter((s) => s.status === "stopped")
-              .map((session) => (
-                <div key={session.id} className="stopped-session-item">
-                  <span className="stopped-session-name">
-                    {extractSandboxName(session.sandbox_id) || session.id.slice(0, 8)}
-                  </span>
-                  <div className="stopped-session-actions">
-                    <button
-                      className="btn btn-sm btn-primary"
-                      onClick={() => handleResumeSession(session.id)}
-                      aria-label="Resume session"
-                    >
-                      Resume
-                    </button>
-                    <button
-                      className="btn btn-sm btn-danger"
-                      onClick={() => handleRemoveSession(session.id)}
-                      aria-label="Remove session and sandbox"
-                    >
-                      Remove
-                    </button>
-                  </div>
-                </div>
-              ))}
-          </div>
-        </div>
+interface StoppedSessionsSectionProps {
+  sessions: Session[];
+  onResume: (id: string) => void;
+  onRemove: (id: string) => void;
+}
+
+function StoppedSessionsSection({ sessions, onResume, onRemove }: StoppedSessionsSectionProps) {
+  const [collapsed, setCollapsed] = useState(false);
+
+  if (sessions.length === 0) return null;
+
+  return (
+    <div className={`stopped-section ${collapsed ? "collapsed" : ""}`}>
+      <button
+        className="stopped-section-header"
+        onClick={() => setCollapsed(!collapsed)}
+        aria-expanded={!collapsed}
+        aria-label="Toggle stopped sessions"
+      >
+        <span className={`caret ${collapsed ? "caret-right" : "caret-down"}`}>▸</span>
+        <span>Stopped ({sessions.length})</span>
+      </button>
+      {!collapsed && (
+        <ul className="stopped-list">
+          {sessions.map((session) => (
+            <li key={session.id} className="stopped-list-item">
+              <span className="stopped-item-name">
+                {extractSandboxName(session.sandbox_id) || session.id.slice(0, 8)}
+              </span>
+              <div className="stopped-item-actions">
+                <button
+                  className="btn-icon"
+                  onClick={() => onResume(session.id)}
+                  aria-label="Resume"
+                  title="Resume"
+                >
+                  ▶
+                </button>
+                <button
+                  className="btn-icon btn-icon-danger"
+                  onClick={() => onRemove(session.id)}
+                  aria-label="Remove"
+                  title="Remove"
+                >
+                  ✕
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   );

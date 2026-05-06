@@ -662,6 +662,99 @@ body {
   min-width: 0;
 }
 
+/* Stopped sessions collapsible section in sidebar */
+.stopped-section {
+  border-top: 1px solid #e0e0e0;
+  margin-top: auto;
+}
+
+.stopped-section-header {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  width: 100%;
+  padding: 0.5rem 0.625rem;
+  border: none;
+  background: none;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #666;
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.stopped-section-header:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.caret {
+  display: inline-block;
+  font-size: 0.625rem;
+  transition: transform 0.15s;
+}
+
+.caret-down {
+  transform: rotate(90deg);
+}
+
+.caret-right {
+  transform: rotate(0deg);
+}
+
+.stopped-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 25vh;
+  overflow-y: auto;
+}
+
+.stopped-list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.375rem 0.625rem;
+  font-size: 0.75rem;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+.stopped-item-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #888;
+}
+
+.stopped-item-actions {
+  display: flex;
+  gap: 0.25rem;
+  flex-shrink: 0;
+}
+
+.btn-icon {
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 0.6875rem;
+  padding: 0.125rem 0.25rem;
+  border-radius: 0.25rem;
+  color: #6c63ff;
+}
+
+.btn-icon:hover {
+  background: rgba(108, 99, 255, 0.1);
+}
+
+.btn-icon-danger {
+  color: #e74c3c;
+}
+
+.btn-icon-danger:hover {
+  background: rgba(231, 76, 60, 0.1);
+}
+
 /* Sessions page layout */
 .sessions-page {
   display: flex;
@@ -1008,6 +1101,26 @@ body {
 
   .session-list-item.active {
     background: rgba(108, 99, 255, 0.18);
+  }
+
+  .stopped-section {
+    border-color: #2d3f6b;
+  }
+
+  .stopped-section-header {
+    color: #aaa;
+  }
+
+  .stopped-section-header:hover {
+    background: rgba(255, 255, 255, 0.05);
+  }
+
+  .stopped-item-name {
+    color: #999;
+  }
+
+  .stopped-list-item {
+    border-color: rgba(255, 255, 255, 0.05);
   }
 
   .alert-error {
