@@ -10,6 +10,7 @@ pub mod policy_manager;
 mod db_property_tests;
 mod error;
 pub mod kit_generator;
+pub mod mcp_container_manager;
 pub mod persona_manager;
 pub mod port_allocator;
 pub mod pty_bridge;
