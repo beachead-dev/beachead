@@ -397,3 +397,109 @@ Other:
 - Add right-click context menu with Copy/Paste options
 - Handle Ctrl+Shift+V (Linux) and Cmd+V (macOS) keyboard shortcuts
 - Ensure binary data (non-UTF8) is handled gracefully
+
+---
+
+## Project Operations
+
+### Licensing Model Decision
+
+**Priority:** High  
+**Effort:** Research + decision  
+**Affected area:** `LICENSE` file, README, website, distribution strategy
+
+**Description:** Research and decide on a licensing model for Beachead. Options to evaluate:
+
+| Model | Pros | Cons |
+|-------|------|------|
+| **MIT/Apache 2.0 (fully open)** | Community contributions, trust, adoption | No revenue, competitors can fork |
+| **AGPL** | Copyleft protects against SaaS competitors | Scares away corporate users |
+| **BSL (Business Source License)** | Open source after delay, commercial license for immediate use | Complex, less community goodwill |
+| **Dual license (open + commercial)** | Free for individuals, paid for enterprise | Enforcement overhead, CLA needed |
+| **Source-available (non-OSI)** | Visible code, controlled distribution | Not "open source", limits contributions |
+| **Closed source (binary only)** | Full control, simple monetization | No community, trust issues for security tool |
+| **Donationware (open + "buy me a coffee")** | Goodwill, low friction | Unreliable revenue |
+
+**Decision factors:**
+- Target audience (individual devs vs enterprise teams)
+- Revenue goals (hobby project vs sustainable business)
+- Dependency on Docker Sandboxes (sbx is proprietary — limits commercial viability?)
+- Community contribution value vs IP protection
+- Competitor landscape
+
+**Action items:**
+1. Research what similar tools use (Warp, Zed, Cursor, Continue.dev)
+2. Decide on model
+3. Add LICENSE file
+4. Update README with license section
+5. If dual-license: draft CLA for contributors
+
+---
+
+### Build Process and CI/CD
+
+**Priority:** High  
+**Effort:** Medium  
+**Affected area:** New CI config files, release automation
+
+**Description:** Set up automated build, test, and release pipeline. Decide on hosting (GitHub, AWS CodeCommit, or both).
+
+**Options to evaluate:**
+
+| Platform | Pros | Cons |
+|----------|------|------|
+| **GitHub Actions** | Free for open source, marketplace actions for Tauri, community standard | Costs for private repos, Microsoft-owned |
+| **AWS CodeCommit + CodePipeline** | Already in AWS ecosystem, private by default | Less community tooling, more setup |
+| **Both** (mirror) | GitHub for community/CI, CodeCommit for private/backup | Maintenance of two remotes |
+
+**Pipeline stages needed:**
+1. **PR checks:** `cargo test`, `cargo clippy`, `npx tsc --noEmit`, `npx vitest run`
+2. **Build matrix:** Linux x86_64, macOS x86_64, macOS ARM64, Windows x86_64
+3. **Release:** Tag-triggered, builds all platforms, uploads artifacts
+4. **Signing:** Code signing for macOS (.dmg) and Windows (.msi)
+
+**Tauri-specific:**
+- Use `tauri-apps/tauri-action` GitHub Action for cross-platform builds
+- macOS requires Apple Developer certificate for notarization
+- Windows requires code signing certificate for SmartScreen trust
+- Linux builds need the webkit2gtk dev packages in CI
+
+**Action items:**
+1. Decide on primary hosting platform
+2. Set up CI config (`.github/workflows/ci.yml` or `buildspec.yml`)
+3. Configure release workflow with artifact upload
+4. Set up code signing (if distributing publicly)
+5. Document the build/release process in CONTRIBUTING.md
+
+---
+
+### Website (beachead.net)
+
+**Priority:** Medium  
+**Effort:** Medium  
+**Affected area:** External — new web project
+
+**Description:** Create a public-facing website at beachead.net for the application. Hosting on AWS Amplify (or similar static hosting).
+
+**Expected content:**
+- **Landing page:** Hero section with tagline, key features, screenshot/demo
+- **Download page:** Platform-specific download links (.deb, .AppImage, .dmg, .msi)
+- **Documentation:** Mirror of in-app help content (or link to GitHub docs)
+- **Getting started guide:** Prerequisites, install, first session walkthrough
+- **Changelog:** Release notes per version
+- **About/Contact:** Project info, maintainer, links to repo
+
+**Technical stack options:**
+| Option | Pros | Cons |
+|--------|------|------|
+| **AWS Amplify + Next.js/Astro** | Serverless, scales, custom domain easy | AWS costs (minimal for static) |
+| **GitHub Pages + Hugo/Jekyll** | Free, simple, auto-deploys from repo | Limited to static, no server functions |
+| **Cloudflare Pages + Astro** | Free tier generous, fast CDN, easy DNS | Another vendor account |
+
+**Action items:**
+1. Choose static site generator (Astro recommended — modern, fast, markdown-friendly)
+2. Set up AWS Amplify with beachead.net domain
+3. Design landing page (can reuse README content as starting point)
+4. Set up auto-deploy from a `website/` directory or separate repo
+5. Add download links once CI/CD produces release artifacts
+6. Set up analytics (privacy-respecting: Plausible or Fathom)
