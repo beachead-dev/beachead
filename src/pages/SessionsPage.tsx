@@ -545,7 +545,15 @@ function TerminalView({ sessionId }: { sessionId: string }) {
     });
     const fitAddon = new FitAddon();
     const webLinksAddon = new WebLinksAddon((_event, uri) => {
-      shellOpen(uri).catch((err: unknown) => console.error("Failed to open URL:", err));
+      // Security: only allow http/https schemes
+      if (!uri.startsWith("http://") && !uri.startsWith("https://")) {
+        console.warn("Blocked non-http URL from terminal:", uri);
+        return;
+      }
+      // Confirm before opening external URL (agent controls terminal output)
+      if (window.confirm(`Open in browser?\n\n${uri}`)) {
+        shellOpen(uri).catch((err: unknown) => console.error("Failed to open URL:", err));
+      }
     });
 
     term.loadAddon(fitAddon);
