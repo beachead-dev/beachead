@@ -59,6 +59,8 @@ export function SessionsPage() {
   const [selectedPersonaId, setSelectedPersonaId] = useState("");
   const [launching, setLaunching] = useState(false);
   const initialLoadDone = useRef(false);
+  // Track all sessions that have ever been opened as tabs — keeps their panels mounted
+  const [mountedSessionIds, setMountedSessionIds] = useState<Set<string>>(new Set());
 
   const fetchData = useCallback(async () => {
     try {
@@ -82,6 +84,7 @@ export function SessionsPage() {
             personaName: personaList.find((p) => p.id === session.persona_id)?.name || "Unknown",
           }))
         );
+        setMountedSessionIds(new Set(activeSessions.map((s) => s.id)));
         if (activeSessions.length > 0 && !activeTabId) {
           setActiveTabId(activeSessions[0]?.id ?? null);
         }
@@ -120,6 +123,7 @@ export function SessionsPage() {
       if (newSession) {
         const personaName = personaList.find((p) => p.id === newSession.persona_id)?.name || "Unknown";
         setTabs((prev) => [...prev, { session: newSession, personaName }]);
+        setMountedSessionIds((prev) => new Set([...prev, newSession.id]));
       }
       setActiveTabId(resp.session_id);
     } catch (e) {
@@ -147,6 +151,7 @@ export function SessionsPage() {
           if (prev.some((t) => t.session.id === sessionId)) return prev;
           return [...prev, { session: resumed, personaName }];
         });
+        setMountedSessionIds((prev) => new Set([...prev, sessionId]));
       }
       setActiveTabId(sessionId);
     } catch (e) {
@@ -163,6 +168,12 @@ export function SessionsPage() {
           setActiveTabId(remaining.length > 0 ? remaining[0]!.session.id : null);
         }
         return remaining;
+      });
+      // Remove from mounted panels
+      setMountedSessionIds((prev) => {
+        const next = new Set(prev);
+        next.delete(sessionId);
+        return next;
       });
       // Refresh sessions list
       const sessionList = await api.get<Session[]>("/api/sessions");
@@ -181,6 +192,12 @@ export function SessionsPage() {
           setActiveTabId(remaining.length > 0 ? remaining[0]!.session.id : null);
         }
         return remaining;
+      });
+      // Remove from mounted panels (terminal is dead after stop)
+      setMountedSessionIds((prev) => {
+        const next = new Set(prev);
+        next.delete(sessionId);
+        return next;
       });
       // Refresh sessions list
       const sessionList = await api.get<Session[]>("/api/sessions");
@@ -210,6 +227,7 @@ export function SessionsPage() {
       if (prev.some((t) => t.session.id === sessionId)) return prev;
       return [...prev, { session, personaName }];
     });
+    setMountedSessionIds((prev) => new Set([...prev, sessionId]));
     setActiveTabId(sessionId);
   };
 
@@ -305,21 +323,24 @@ export function SessionsPage() {
           />
         </div>
 
-        {/* Main content: render ALL session panels, hide inactive ones */}
+        {/* Main content: render panels for ALL ever-mounted sessions, hide inactive ones */}
         <div className="session-main">
-          {tabs.length === 0 && (
+          {tabs.length === 0 && !Array.from(mountedSessionIds).some((id) => id === activeTabId) && (
             <div style={{ padding: "1.5rem" }}>
               <p className="empty-state">No active sessions. Start a new session to begin.</p>
             </div>
           )}
-          {tabs.map((tab) => (
-            <div
-              key={tab.session.id}
-              style={{ display: activeTabId === tab.session.id ? "flex" : "none", flexDirection: "column", flex: 1, height: "100%" }}
-            >
-              <SessionPanel sessionId={tab.session.id} sandboxId={tab.session.sandbox_id} />
-            </div>
-          ))}
+          {Array.from(mountedSessionIds).map((sessionId) => {
+            const session = sessions.find((s) => s.id === sessionId);
+            return (
+              <div
+                key={sessionId}
+                style={{ display: activeTabId === sessionId ? "flex" : "none", flexDirection: "column", flex: 1, height: "100%" }}
+              >
+                <SessionPanel sessionId={sessionId} sandboxId={session?.sandbox_id || null} />
+              </div>
+            );
+          })}
         </div>
       </div>
     </div>
