@@ -6,6 +6,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { open as shellOpen } from "@tauri-apps/plugin-shell";
+import { ask } from "@tauri-apps/plugin-dialog";
 import "@xterm/xterm/css/xterm.css";
 
 interface Persona {
@@ -551,9 +552,12 @@ function TerminalView({ sessionId }: { sessionId: string }) {
         return;
       }
       // Confirm before opening external URL (agent controls terminal output)
-      if (window.confirm(`Open in browser?\n\n${uri}`)) {
-        shellOpen(uri).catch((err: unknown) => console.error("Failed to open URL:", err));
-      }
+      ask(`Open in browser?\n\n${uri}`, { title: "Open Link", kind: "info" })
+        .then((confirmed) => {
+          if (confirmed) {
+            shellOpen(uri).catch((err: unknown) => console.error("Failed to open URL:", err));
+          }
+        });
     });
 
     term.loadAddon(fitAddon);
