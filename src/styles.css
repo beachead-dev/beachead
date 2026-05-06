@@ -606,7 +606,9 @@ body {
   display: flex;
   flex-direction: column;
   overflow-y: auto;
+  overflow-x: hidden;
   position: relative;
+  padding-bottom: 0.5rem;
 }
 
 /* Resize handles for draggable panel edges */
