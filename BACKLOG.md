@@ -227,3 +227,26 @@ Deferred improvements, bug fixes, and future features for implementation.
 - Model size vs accuracy tradeoffs for local inference
 - Privacy implications of cloud transcription
 - Integration point: inject as terminal input? As a separate chat panel? As MCP tool input?
+
+
+---
+
+## Design / Branding
+
+### Custom Application Icons and Title Graphics
+
+**Priority:** Medium  
+**Affected area:** `src-tauri/icons/`, `src/components/Sidebar.tsx`, `index.html`, `src-tauri/tauri.conf.json`
+
+**Description:** Replace the default Tauri placeholder icons and the text-only "Beachead" title in the sidebar header with custom branded graphics. Includes app icon (taskbar, dock, window title bar), sidebar logo/wordmark, and installer icons.
+
+**Files to update:**
+- `src-tauri/icons/` — All icon sizes (32x32, 128x128, 128x128@2x, icon.icns, icon.ico)
+- `src/components/Sidebar.tsx` — Replace `<h1>Beachead</h1>` with logo image or styled wordmark
+- `index.html` — Update `<title>` and favicon if applicable
+- `src-tauri/tauri.conf.json` — Window title references
+
+**Considerations:**
+- Need icon in multiple formats/sizes for cross-platform (PNG, ICO, ICNS)
+- Sidebar logo should work at narrow widths (icon-only when sidebar is small?)
+- Dark mode variant if logo uses colors that don't work on dark backgrounds
