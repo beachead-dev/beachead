@@ -349,7 +349,73 @@ impl SessionManager {
             results.push(result);
         }
 
+        // Also clean up stopped sessions whose sandboxes no longer exist
+        self.cleanup_orphaned_stopped_sessions().await;
+
         results
+    }
+
+    /// Remove stopped session records whose sandboxes no longer exist in sbx ls.
+    async fn cleanup_orphaned_stopped_sessions(&self) {
+        let stopped_sessions = match self.db.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, persona_id, sandbox_id, kit_path, status, error_message, created_at, updated_at \
+                 FROM sessions WHERE status = 'stopped'"
+            )?;
+            let sessions = stmt.query_map([], |row| {
+                let kit_path_str: Option<String> = row.get(3)?;
+                let status_str: String = row.get(4)?;
+                let created_str: String = row.get(6)?;
+                let updated_str: String = row.get(7)?;
+                Ok(Session {
+                    id: SessionId(row.get(0)?),
+                    persona_id: PersonaId(row.get(1)?),
+                    sandbox_id: row.get(2)?,
+                    kit_path: kit_path_str.map(std::path::PathBuf::from),
+                    status: status_str.parse().unwrap_or(SessionStatus::Stopped),
+                    error_message: row.get(5)?,
+                    created_at: chrono::DateTime::parse_from_rfc3339(&created_str)
+                        .unwrap().with_timezone(&chrono::Utc),
+                    updated_at: chrono::DateTime::parse_from_rfc3339(&updated_str)
+                        .unwrap().with_timezone(&chrono::Utc),
+                })
+            })?.collect::<Result<Vec<_>, _>>()?;
+            Ok(sessions)
+        }) {
+            Ok(sessions) => sessions,
+            Err(_) => return,
+        };
+
+        for session in stopped_sessions {
+            if let Some(ref sandbox_id) = session.sandbox_id {
+                let sandbox_name = crate::sbx::extract_sandbox_name(sandbox_id);
+                if sandbox_name.is_empty() {
+                    // No valid sandbox name — remove orphan
+                    let _ = self.db.with_conn(|conn| {
+                        conn.execute("DELETE FROM sessions WHERE id = ?1", rusqlite::params![session.id.0])
+                            .map_err(|e| OrchestratorError::Database(e.to_string()))?;
+                        Ok(())
+                    });
+                    continue;
+                }
+                let status = self.check_sandbox_status(&sandbox_name).await;
+                if status.is_none() {
+                    // Sandbox gone — delete session record
+                    let _ = self.db.with_conn(|conn| {
+                        conn.execute("DELETE FROM sessions WHERE id = ?1", rusqlite::params![session.id.0])
+                            .map_err(|e| OrchestratorError::Database(e.to_string()))?;
+                        Ok(())
+                    });
+                }
+            } else {
+                // No sandbox_id at all — remove orphan
+                let _ = self.db.with_conn(|conn| {
+                    conn.execute("DELETE FROM sessions WHERE id = ?1", rusqlite::params![session.id.0])
+                        .map_err(|e| OrchestratorError::Database(e.to_string()))?;
+                    Ok(())
+                });
+            }
+        }
     }
 
     /// Attempt to recover a single session.
@@ -1289,11 +1355,10 @@ esac
         assert!(matches!(&results[0], RecoveryResult::Failed { session_id, reason }
             if session_id.0 == "session-no-sbx" && reason.contains("No sandbox_id")));
 
-        // Verify session was marked as stopped
-        let session = db
-            .with_conn(|conn| db_ops::get_session(conn, &SessionId("session-no-sbx".to_string())))
-            .unwrap();
-        assert_eq!(session.status, SessionStatus::Stopped);
+        // Session with no sandbox_id should be cleaned up (deleted from DB)
+        let session_result = db
+            .with_conn(|conn| db_ops::get_session(conn, &SessionId("session-no-sbx".to_string())));
+        assert!(session_result.is_err(), "Session with no sandbox_id should be deleted");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
