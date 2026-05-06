@@ -4,11 +4,18 @@ use std::sync::Arc;
 use axum::extract::ws::{Message, WebSocket};
 use dashmap::DashMap;
 use futures_util::{SinkExt, StreamExt};
-use portable_pty::{native_pty_system, Child, CommandBuilder, PtySize};
+use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use tokio::sync::Mutex;
 
 use crate::error::OrchestratorError;
 use crate::types::SessionId;
+
+/// Resize control message sent from frontend via WebSocket.
+#[derive(serde::Deserialize)]
+struct ResizeMessage {
+    rows: u16,
+    cols: u16,
+}
 
 /// Status of a PTY session.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,6 +29,7 @@ pub struct PtySession {
     pub child: Mutex<Box<dyn Child + Send + Sync>>,
     pub writer: Mutex<Box<dyn Write + Send>>,
     pub reader: Mutex<Box<dyn Read + Send>>,
+    pub master: Mutex<Box<dyn MasterPty + Send>>,
     pub status: Mutex<PtySessionStatus>,
 }
 
@@ -89,6 +97,7 @@ impl PtyBridge {
             child: Mutex::new(child),
             writer: Mutex::new(writer),
             reader: Mutex::new(reader),
+            master: Mutex::new(pair.master),
             status: Mutex::new(PtySessionStatus::Running),
         });
 
@@ -110,6 +119,28 @@ impl PtyBridge {
         writer
             .write_all(data)
             .map_err(|e| OrchestratorError::PtyError(format!("Failed to write to PTY: {}", e)))?;
+        Ok(())
+    }
+
+    /// Resize the PTY for the given session.
+    pub fn resize(&self, session_id: &SessionId, rows: u16, cols: u16) -> Result<(), OrchestratorError> {
+        let session = self
+            .sessions
+            .get(session_id)
+            .ok_or_else(|| {
+                OrchestratorError::PtyError(format!("No PTY session for {}", session_id))
+            })?;
+
+        let session = session.clone();
+        let master = session.master.blocking_lock();
+        master
+            .resize(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .map_err(|e| OrchestratorError::PtyError(format!("Failed to resize PTY: {}", e)))?;
         Ok(())
     }
 
@@ -186,6 +217,7 @@ impl PtyBridge {
 
         // Task 2: WebSocket -> PTY stdin
         let writer_session = session.clone();
+        let resize_session = session.clone();
         let _ws_to_pty_handle = tokio::spawn(async move {
             while let Some(Ok(msg)) = ws_receiver.next().await {
                 match msg {
@@ -199,12 +231,30 @@ impl PtyBridge {
                         .await;
                     }
                     Message::Text(text) => {
-                        let ws = writer_session.clone();
-                        let _ = tokio::task::spawn_blocking(move || {
-                            let mut writer = ws.writer.blocking_lock();
-                            let _ = writer.write_all(text.as_bytes());
-                        })
-                        .await;
+                        // Check for resize control message: starts with \x01
+                        if text.starts_with('\x01') {
+                            let json_str = &text[1..];
+                            if let Ok(resize) = serde_json::from_str::<ResizeMessage>(json_str) {
+                                let rs = resize_session.clone();
+                                let _ = tokio::task::spawn_blocking(move || {
+                                    let master = rs.master.blocking_lock();
+                                    let _ = master.resize(PtySize {
+                                        rows: resize.rows,
+                                        cols: resize.cols,
+                                        pixel_width: 0,
+                                        pixel_height: 0,
+                                    });
+                                })
+                                .await;
+                            }
+                        } else {
+                            let ws = writer_session.clone();
+                            let _ = tokio::task::spawn_blocking(move || {
+                                let mut writer = ws.writer.blocking_lock();
+                                let _ = writer.write_all(text.as_bytes());
+                            })
+                            .await;
+                        }
                     }
                     Message::Close(_) => {
                         break;

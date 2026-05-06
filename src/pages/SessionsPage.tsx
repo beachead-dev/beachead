@@ -557,8 +557,19 @@ function TerminalView({ sessionId }: { sessionId: string }) {
     terminalRef.current = term;
     fitAddonRef.current = fitAddon;
 
-    const handleResize = () => fitAddon.fit();
+    const handleResize = () => {
+      fitAddon.fit();
+      // Send resize control message to backend (protocol: \x01 + JSON)
+      const { rows, cols } = term;
+      sendMessageRef.current(`\x01${JSON.stringify({ rows, cols })}`);
+    };
     window.addEventListener("resize", handleResize);
+
+    // Send initial size after terminal opens
+    setTimeout(() => {
+      const { rows, cols } = term;
+      sendMessageRef.current(`\x01${JSON.stringify({ rows, cols })}`);
+    }, 100);
 
     return () => {
       window.removeEventListener("resize", handleResize);
