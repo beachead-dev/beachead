@@ -5,7 +5,7 @@ use axum::extract::ws::{Message, WebSocket};
 use dashmap::DashMap;
 use futures_util::{SinkExt, StreamExt};
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
-use tokio::sync::Mutex;
+use tokio::sync::{broadcast, Mutex};
 
 use crate::error::OrchestratorError;
 use crate::types::SessionId;
@@ -25,12 +25,17 @@ pub enum PtySessionStatus {
 }
 
 /// Holds the PTY process state for a single session.
+///
+/// The reader task runs for the lifetime of the PTY process (started in `spawn()`).
+/// It sends output to a broadcast channel that multiple WebSocket connections can
+/// subscribe to. This allows detach/reattach without losing the reader.
 pub struct PtySession {
     pub child: Mutex<Box<dyn Child + Send + Sync>>,
     pub writer: Mutex<Box<dyn Write + Send>>,
-    pub reader: Mutex<Box<dyn Read + Send>>,
     pub master: Mutex<Box<dyn MasterPty + Send>>,
     pub status: Mutex<PtySessionStatus>,
+    /// Broadcast sender for PTY output. WebSocket connections subscribe to this.
+    pub output_tx: broadcast::Sender<Vec<u8>>,
 }
 
 /// Manages PTY sessions for terminal I/O relay.
@@ -49,8 +54,8 @@ impl PtyBridge {
 
     /// Spawn a new PTY process for the given session.
     ///
-    /// The command and args are used to build the process (e.g., "sbx", &["exec", "-it", "<id>"]).
-    /// Returns an error if the session already exists or the PTY cannot be created.
+    /// Starts the PTY reader task immediately. Output is buffered in a broadcast
+    /// channel (capacity 1024) until a WebSocket subscribes via `attach_ws()`.
     pub fn spawn(
         &self,
         session_id: SessionId,
@@ -93,12 +98,37 @@ impl PtyBridge {
             .take_writer()
             .map_err(|e| OrchestratorError::PtyError(format!("Failed to take writer: {}", e)))?;
 
+        // Broadcast channel for PTY output (capacity 1024 messages)
+        let (output_tx, _) = broadcast::channel::<Vec<u8>>(1024);
+
         let session = Arc::new(PtySession {
             child: Mutex::new(child),
             writer: Mutex::new(writer),
-            reader: Mutex::new(reader),
             master: Mutex::new(pair.master),
             status: Mutex::new(PtySessionStatus::Running),
+            output_tx: output_tx.clone(),
+        });
+
+        // Start the PTY reader task — runs for the lifetime of the PTY process.
+        // Reads from PTY stdout and broadcasts to all subscribers.
+        let reader_session = session.clone();
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 4096];
+            let mut reader = reader;
+            loop {
+                match reader.read(&mut buf) {
+                    Ok(0) => break, // EOF — process exited
+                    Ok(n) => {
+                        let data = buf[..n].to_vec();
+                        // Send to broadcast — if no subscribers, data is dropped (ok)
+                        let _ = reader_session.output_tx.send(data);
+                    }
+                    Err(_) => break,
+                }
+            }
+            // Mark session as stopped when PTY process exits
+            let mut status = reader_session.status.blocking_lock();
+            *status = PtySessionStatus::Stopped;
         });
 
         self.sessions.insert(session_id, session);
@@ -146,11 +176,10 @@ impl PtyBridge {
 
     /// Attach a WebSocket to the PTY session for bidirectional I/O relay.
     ///
-    /// Spawns two tokio tasks:
-    /// - One reads from the PTY (blocking, wrapped in spawn_blocking) and sends to WebSocket.
-    /// - One reads from WebSocket and writes to PTY stdin.
-    ///
-    /// Both tasks run until the WebSocket closes or the PTY process exits.
+    /// Subscribes to the PTY output broadcast channel and relays to the WebSocket.
+    /// Multiple WebSocket connections can attach to the same session simultaneously.
+    /// When the WebSocket disconnects, the subscription is dropped but the PTY
+    /// reader keeps running — allowing reattach without data loss.
     pub async fn attach_ws(
         &self,
         session_id: &SessionId,
@@ -166,64 +195,41 @@ impl PtyBridge {
 
         let (mut ws_sender, mut ws_receiver) = ws.split();
 
-        // Clone session for the reader task
-        let reader_session = session.clone();
-        let session_id_clone = session_id.clone();
+        // Subscribe to the PTY output broadcast
+        let mut output_rx = session.output_tx.subscribe();
 
-        // Task 1: PTY stdout -> WebSocket
-        // portable-pty uses synchronous I/O, so we use spawn_blocking for the read loop
-        let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(64);
-
-        let _reader_handle = tokio::task::spawn_blocking(move || {
-            let mut buf = [0u8; 4096];
+        // Task 1: PTY output (broadcast) -> WebSocket
+        let ws_forward_handle = tokio::spawn(async move {
             loop {
-                let mut reader = reader_session.reader.blocking_lock();
-                match reader.read(&mut buf) {
-                    Ok(0) => {
-                        // EOF — process exited
-                        break;
-                    }
-                    Ok(n) => {
-                        let data = buf[..n].to_vec();
-                        drop(reader); // release lock before sending
-                        if tx.blocking_send(data).is_err() {
-                            // Receiver dropped (WebSocket closed)
-                            break;
+                match output_rx.recv().await {
+                    Ok(data) => {
+                        let text = String::from_utf8_lossy(&data).into_owned();
+                        if ws_sender.send(Message::Text(text.into())).await.is_err() {
+                            break; // WebSocket closed
                         }
                     }
-                    Err(_) => {
+                    Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                        // Output was produced faster than we could relay — some was lost
+                        eprintln!("PTY output lagged, skipped {} messages", skipped);
+                        continue;
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        // PTY reader exited (process ended)
                         break;
                     }
                 }
             }
-            // Mark session as stopped when PTY exits
-            let mut status = reader_session.status.blocking_lock();
-            *status = PtySessionStatus::Stopped;
-        });
-
-        // Forward PTY output to WebSocket
-        let ws_forward_handle = tokio::spawn(async move {
-            while let Some(data) = rx.recv().await {
-                // Send as Text since terminal output is UTF-8 text
-                // (xterm.js expects string data)
-                let text = String::from_utf8_lossy(&data).into_owned();
-                if ws_sender.send(Message::Text(text.into())).await.is_err() {
-                    break;
-                }
-            }
-            // Close the WebSocket when PTY output ends
             let _ = ws_sender.close().await;
         });
 
-        // Task 2: WebSocket -> PTY stdin
+        // Task 2: WebSocket -> PTY stdin + resize
         let writer_session = session.clone();
         let resize_session = session.clone();
-        let _ws_to_pty_handle = tokio::spawn(async move {
+        tokio::spawn(async move {
             while let Some(Ok(msg)) = ws_receiver.next().await {
                 match msg {
                     Message::Binary(data) => {
                         let ws = writer_session.clone();
-                        // Write to PTY in a blocking context since the writer holds a lock
                         let _ = tokio::task::spawn_blocking(move || {
                             let mut writer = ws.writer.blocking_lock();
                             let _ = writer.write_all(&data);
@@ -231,7 +237,6 @@ impl PtyBridge {
                         .await;
                     }
                     Message::Text(text) => {
-                        // Check for resize control message: starts with \x01
                         if text.starts_with('\x01') {
                             let json_str = &text[1..];
                             if let Ok(resize) = serde_json::from_str::<ResizeMessage>(json_str) {
@@ -256,30 +261,12 @@ impl PtyBridge {
                             .await;
                         }
                     }
-                    Message::Close(_) => {
-                        break;
-                    }
+                    Message::Close(_) => break,
                     _ => {}
                 }
             }
-            // When WebSocket closes, abort the forward task
+            // WebSocket closed — abort the forward task
             ws_forward_handle.abort();
-        });
-
-        // Mark session as stopped when the session_id's process exits
-        let exit_session = session.clone();
-        let exit_session_id = session_id_clone;
-        tokio::spawn(async move {
-            // Poll for child exit
-            loop {
-                let status = exit_session.status.lock().await;
-                if *status == PtySessionStatus::Stopped {
-                    break;
-                }
-                drop(status);
-                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-            }
-            let _ = exit_session_id; // used for logging if needed
         });
 
         Ok(())
@@ -329,20 +316,14 @@ mod tests {
         let bridge = PtyBridge::new();
         let session_id = SessionId("test-session-1".to_string());
 
-        // Spawn a simple command
         bridge
             .spawn(session_id.clone(), "echo", &["hello"])
             .expect("spawn should succeed");
 
         assert_eq!(bridge.session_count(), 1);
-
-        // Give the process a moment to run
         std::thread::sleep(std::time::Duration::from_millis(200));
 
-        // Kill the session
         bridge.kill(&session_id).expect("kill should succeed");
-
-        // Session should be removed
         assert_eq!(bridge.session_count(), 0);
     }
 
@@ -358,7 +339,6 @@ mod tests {
         let result = bridge.spawn(session_id.clone(), "sleep", &["10"]);
         assert!(result.is_err());
 
-        // Clean up
         bridge.kill(&session_id).expect("kill should succeed");
     }
 
@@ -376,7 +356,6 @@ mod tests {
         let bridge = PtyBridge::new();
         let session_id = SessionId("test-write".to_string());
 
-        // Use cat which reads stdin — on unix this works; on windows use a different command
         #[cfg(unix)]
         let (cmd, args): (&str, &[&str]) = ("cat", &[]);
         #[cfg(windows)]
@@ -386,11 +365,9 @@ mod tests {
             .spawn(session_id.clone(), cmd, args)
             .expect("spawn should succeed");
 
-        // Write some data
         let result = bridge.write(&session_id, b"hello\n");
         assert!(result.is_ok());
 
-        // Clean up
         bridge.kill(&session_id).expect("kill should succeed");
     }
 
@@ -408,22 +385,18 @@ mod tests {
         let bridge = PtyBridge::new();
         let session_id = SessionId("test-status".to_string());
 
-        // No session yet
         assert!(bridge.session_status(&session_id).is_none());
 
         bridge
             .spawn(session_id.clone(), "sleep", &["10"])
             .expect("spawn should succeed");
 
-        // Should be running
         assert_eq!(
             bridge.session_status(&session_id),
             Some(PtySessionStatus::Running)
         );
 
         bridge.kill(&session_id).expect("kill should succeed");
-
-        // After kill, session is removed from the map
         assert!(bridge.session_status(&session_id).is_none());
     }
 }
