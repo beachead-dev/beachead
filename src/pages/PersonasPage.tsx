@@ -39,6 +39,14 @@ interface SecretStatus {
   configured: boolean;
 }
 
+interface McpContainer {
+  id: string;
+  persona_id: string | null;
+  container_id: string | null;
+  port: number;
+  status: string;
+}
+
 interface McpEntry {
   name: string;
   url: string;
@@ -50,6 +58,7 @@ export function PersonasPage() {
   const [personas, setPersonas] = useState<Persona[]>([]);
   const [agents, setAgents] = useState<AgentType[]>([]);
   const [secrets, setSecrets] = useState<SecretStatus[]>([]);
+  const [mcpContainers, setMcpContainers] = useState<McpContainer[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
@@ -69,14 +78,16 @@ export function PersonasPage() {
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
-      const [personaList, agentList, secretList] = await Promise.all([
+      const [personaList, agentList, secretList, containerList] = await Promise.all([
         api.get<Persona[]>("/api/personas"),
         api.get<AgentType[]>("/api/agents"),
         api.get<SecretStatus[]>("/api/secrets"),
+        api.get<McpContainer[]>("/api/mcp-containers"),
       ]);
       setPersonas(personaList);
       setAgents(agentList);
       setSecrets(secretList);
+      setMcpContainers(containerList);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load data");
@@ -227,6 +238,11 @@ export function PersonasPage() {
     );
   };
 
+  const getContainerStatus = (persona: Persona): McpContainer | undefined => {
+    if (!persona.memory_enabled) return undefined;
+    return mcpContainers.find((c) => c.persona_id === persona.id);
+  };
+
   if (loading) {
     return (
       <div>
@@ -282,7 +298,19 @@ export function PersonasPage() {
                   <dt>Workspace</dt>
                   <dd><code>{persona.workspace_path}</code></dd>
                   <dt>Memory</dt>
-                  <dd>{persona.memory_enabled ? "Enabled" : "Disabled"}</dd>
+                  <dd>
+                    {persona.memory_enabled ? "Enabled" : "Disabled"}
+                    {persona.memory_enabled && (() => {
+                      const container = getContainerStatus(persona);
+                      if (!container) return null;
+                      return (
+                        <span className="card-meta" style={{ display: "inline-flex", marginTop: 0, marginLeft: "0.5rem" }}>
+                          <span className={`status-indicator status-${container.status}`} />
+                          {container.status}
+                        </span>
+                      );
+                    })()}
+                  </dd>
                   {persona.mcp_servers.length > 0 && (
                     <>
                       <dt>MCP Servers</dt>
