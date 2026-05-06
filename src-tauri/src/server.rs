@@ -5,7 +5,9 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 
 use crate::agent_manager::AgentManager;
 use crate::credential_manager::CredentialManager;
+use crate::db::Database;
 use crate::error::OrchestratorError;
+use crate::export_import_manager::ExportImportManager;
 use crate::kit_generator::KitGenerator;
 use crate::persona_manager::PersonaManager;
 use crate::policy_manager::PolicyManager;
@@ -29,6 +31,8 @@ pub struct AppState {
     pub policy_manager: Option<Arc<PolicyManager>>,
     pub template_manager: Option<Arc<TemplateManager>>,
     pub system_manager: Option<Arc<SystemManager>>,
+    pub export_import_manager: Arc<ExportImportManager>,
+    pub db: Arc<Database>,
     pub sbx: Option<Arc<SbxCli>>,
     pub pty_bridge: Arc<PtyBridge>,
     pub kit_generator: Arc<KitGenerator>,
@@ -138,6 +142,9 @@ pub async fn start_server(
         eprintln!("Warning: failed to seed built-in agents: {}", e);
     }
 
+    // Export/Import manager
+    let export_import_manager = Arc::new(ExportImportManager::new(db.clone()));
+
     // Spawn session recovery as a non-blocking background task (Req 5.1–5.7)
     if let Some(ref sm) = session_manager {
         let sm_clone = sm.clone();
@@ -170,6 +177,8 @@ pub async fn start_server(
         policy_manager,
         template_manager,
         system_manager,
+        export_import_manager,
+        db,
         sbx,
         pty_bridge,
         kit_generator,

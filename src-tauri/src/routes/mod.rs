@@ -1,4 +1,6 @@
 pub mod agents;
+pub mod export_import;
+pub mod mcp_containers;
 pub mod personas;
 pub mod policies;
 pub mod sandboxes;
@@ -22,4 +24,6 @@ pub fn build_router() -> Router<AppState> {
         .merge(policies::router())
         .merge(templates::router())
         .merge(system::router())
+        .merge(export_import::router())
+        .merge(mcp_containers::router())
 }

@@ -89,6 +89,14 @@ impl SessionManager {
         let agent = self.resolve_agent_identifier(&persona)?;
 
         // 3. Generate kit (includes agent-specific network domains)
+        // TODO: Phase 2 — If persona.memory_enabled is true, look up the MCP container
+        // for this persona to get port and bearer_token, then construct a McpConfig:
+        //   let mcp_config = if persona.memory_enabled {
+        //       // Query mcp_containers table for this persona_id
+        //       // McpConfig { url: format!("http://host.docker.internal:{}", container.port),
+        //       //             bearer_token: container.bearer_token, port: container.port }
+        //       Some(mcp_config)
+        //   } else { None };
         let kit_path = self.kit_generator.generate(&persona, None, Some(&agent))?;
 
         // 4. Create session record in "starting" state
