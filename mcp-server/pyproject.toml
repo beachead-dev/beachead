@@ -4,23 +4,33 @@ version = "0.1.0"
 description = "RAG-based long-term memory MCP server for Beachead personas"
 requires-python = ">=3.10"
 dependencies = [
-    "mcp>=1.0.0",
+    "mcp[cli]>=1.0.0",
     "sentence-transformers>=2.2.0",
     "faiss-cpu>=1.7.0",
     "httpx>=0.25.0",
     "uvicorn>=0.24.0",
     "starlette>=0.36.0",
+    "numpy>=1.24.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0.0",
+    "pytest-asyncio>=0.23.0",
     "hypothesis>=6.0.0",
+    "httpx>=0.25.0",
 ]
+
+[project.scripts]
+beachead-memory-mcp = "beachead_memory_mcp.server:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.build.targets.wheel]
+packages = ["src/beachead_memory_mcp"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+asyncio_mode = "auto"
