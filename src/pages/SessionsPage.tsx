@@ -409,7 +409,7 @@ function DetachedSessionsSection({ sessions, personas, onReattach, onStop }: Det
           {sessions.map((session) => (
             <li key={session.id} className="stopped-list-item">
               <span className="stopped-item-name">
-                {personas.find((p) => p.id === session.persona_id)?.name || extractSandboxName(session.sandbox_id)}
+                {extractSandboxName(session.sandbox_id) || personas.find((p) => p.id === session.persona_id)?.name || session.id.slice(0, 8)}
               </span>
               <div className="stopped-item-actions">
                 <button
