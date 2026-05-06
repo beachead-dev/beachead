@@ -107,6 +107,34 @@ export function SessionsPage() {
     fetchData();
   }, [fetchData]);
 
+  // Re-fetch after a delay to catch recovery status changes.
+  // Recovery runs async on startup and may update session statuses after our initial fetch.
+  useEffect(() => {
+    const timer = setTimeout(async () => {
+      try {
+        const sessionList = await api.get<Session[]>("/api/sessions");
+        setSessions(sessionList);
+        // Remove tabs for sessions that are no longer running
+        setTabs((prev) => {
+          const stillRunning = prev.filter((t) =>
+            sessionList.some((s) => s.id === t.session.id && (s.status === "running" || s.status === "starting"))
+          );
+          if (stillRunning.length < prev.length && activeTabId) {
+            const activeStillExists = stillRunning.some((t) => t.session.id === activeTabId);
+            if (!activeStillExists) {
+              setActiveTabId(stillRunning.length > 0 ? stillRunning[0]!.session.id : null);
+            }
+          }
+          return stillRunning;
+        });
+      } catch {
+        // Ignore — non-critical reconciliation
+      }
+    }, 3000);
+    return () => clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleLaunch = async () => {
     if (!selectedPersonaId) return;
     setLaunching(true);
