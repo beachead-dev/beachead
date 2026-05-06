@@ -108,7 +108,19 @@ export function SessionsPage() {
       });
       setShowLauncher(false);
       setSelectedPersonaId("");
-      await fetchData();
+      // Refresh sessions list
+      const [personaList, sessionList] = await Promise.all([
+        api.get<Persona[]>("/api/personas"),
+        api.get<Session[]>("/api/sessions"),
+      ]);
+      setPersonas(personaList);
+      setSessions(sessionList);
+      // Add the new session to tabs
+      const newSession = sessionList.find((s) => s.id === resp.session_id);
+      if (newSession) {
+        const personaName = personaList.find((p) => p.id === newSession.persona_id)?.name || "Unknown";
+        setTabs((prev) => [...prev, { session: newSession, personaName }]);
+      }
       setActiveTabId(resp.session_id);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to start session");
@@ -120,7 +132,22 @@ export function SessionsPage() {
   const handleResumeSession = async (sessionId: string) => {
     try {
       await api.post(`/api/sessions/${sessionId}/resume`);
-      await fetchData();
+      // Refresh sessions list
+      const [personaList, sessionList] = await Promise.all([
+        api.get<Persona[]>("/api/personas"),
+        api.get<Session[]>("/api/sessions"),
+      ]);
+      setPersonas(personaList);
+      setSessions(sessionList);
+      // Add the resumed session to tabs
+      const resumed = sessionList.find((s) => s.id === sessionId);
+      if (resumed) {
+        const personaName = personaList.find((p) => p.id === resumed.persona_id)?.name || "Unknown";
+        setTabs((prev) => {
+          if (prev.some((t) => t.session.id === sessionId)) return prev;
+          return [...prev, { session: resumed, personaName }];
+        });
+      }
       setActiveTabId(sessionId);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to resume session");
@@ -130,12 +157,16 @@ export function SessionsPage() {
   const handleRemoveSession = async (sessionId: string) => {
     try {
       await api.del(`/api/sessions/${sessionId}`);
-      setTabs((prev) => prev.filter((t) => t.session.id !== sessionId));
-      if (activeTabId === sessionId) {
-        const remaining = tabs.filter((t) => t.session.id !== sessionId);
-        setActiveTabId(remaining.length > 0 ? (remaining[0]?.session.id ?? null) : null);
-      }
-      await fetchData();
+      setTabs((prev) => {
+        const remaining = prev.filter((t) => t.session.id !== sessionId);
+        if (activeTabId === sessionId) {
+          setActiveTabId(remaining.length > 0 ? remaining[0]!.session.id : null);
+        }
+        return remaining;
+      });
+      // Refresh sessions list
+      const sessionList = await api.get<Session[]>("/api/sessions");
+      setSessions(sessionList);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to remove session");
     }
@@ -144,12 +175,16 @@ export function SessionsPage() {
   const handleStopSession = async (sessionId: string) => {
     try {
       await api.post(`/api/sessions/${sessionId}/stop`);
-      setTabs((prev) => prev.filter((t) => t.session.id !== sessionId));
-      if (activeTabId === sessionId) {
-        const remaining = tabs.filter((t) => t.session.id !== sessionId);
-        setActiveTabId(remaining.length > 0 ? (remaining[0]?.session.id ?? null) : null);
-      }
-      await fetchData();
+      setTabs((prev) => {
+        const remaining = prev.filter((t) => t.session.id !== sessionId);
+        if (activeTabId === sessionId) {
+          setActiveTabId(remaining.length > 0 ? remaining[0]!.session.id : null);
+        }
+        return remaining;
+      });
+      // Refresh sessions list
+      const sessionList = await api.get<Session[]>("/api/sessions");
+      setSessions(sessionList);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to stop session");
     }
@@ -157,11 +192,13 @@ export function SessionsPage() {
 
   // Close tab = detach only (sandbox keeps running, just remove from active tabs)
   const handleCloseTab = (sessionId: string) => {
-    setTabs((prev) => prev.filter((t) => t.session.id !== sessionId));
-    if (activeTabId === sessionId) {
-      const remaining = tabs.filter((t) => t.session.id !== sessionId);
-      setActiveTabId(remaining.length > 0 ? (remaining[0]?.session.id ?? null) : null);
-    }
+    setTabs((prev) => {
+      const remaining = prev.filter((t) => t.session.id !== sessionId);
+      if (activeTabId === sessionId) {
+        setActiveTabId(remaining.length > 0 ? remaining[0]!.session.id : null);
+      }
+      return remaining;
+    });
   };
 
   // Reattach a detached (running but not tabbed) session
@@ -169,7 +206,10 @@ export function SessionsPage() {
     const session = sessions.find((s) => s.id === sessionId);
     if (!session) return;
     const personaName = personas.find((p) => p.id === session.persona_id)?.name || "Unknown";
-    setTabs((prev) => [...prev, { session, personaName }]);
+    setTabs((prev) => {
+      if (prev.some((t) => t.session.id === sessionId)) return prev;
+      return [...prev, { session, personaName }];
+    });
     setActiveTabId(sessionId);
   };
 
