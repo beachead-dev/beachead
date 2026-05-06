@@ -516,6 +516,7 @@ mod tests {
         use super::*;
         use proptest::prelude::*;
         use proptest::collection::vec as prop_vec;
+        use std::collections::HashSet;
 
         /// **Validates: Requirements 3.1, 10.4, 10.5, 18.1–18.7**
         ///
@@ -674,11 +675,18 @@ mod tests {
             fn prop_kit_generation_completeness(
                 name in arb_persona_name(),
                 memory_enabled in any::<bool>(),
-                mcp_servers in prop_vec(arb_persona_mcp_server(), 0..5),
+                mcp_servers_raw in prop_vec(arb_persona_mcp_server(), 0..5),
                 mcp_config in arb_mcp_config(),
             ) {
                 let tmp = TempDir::new().unwrap();
                 let generator = KitGenerator::new(tmp.path().to_path_buf());
+
+                // Deduplicate MCP servers by name since JSON maps can't have duplicate keys
+                let mut seen_names = HashSet::new();
+                let mcp_servers: Vec<PersonaMcpServer> = mcp_servers_raw
+                    .into_iter()
+                    .filter(|s| seen_names.insert(s.name.clone()))
+                    .collect();
 
                 let persona = Persona {
                     id: PersonaId("prop-test-id".to_string()),

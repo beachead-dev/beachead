@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc ff02ea1cecfa7f17cb4315e875309f968ca7620a9997b5c3d79495da478dd65f # shrinks to args = SbxRunArgs { agent: "claude", kit_paths: [], workspace: "/home/user/project", name: None, template: None, agent_args: ["-v"] }
