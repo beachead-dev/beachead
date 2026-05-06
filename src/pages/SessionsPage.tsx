@@ -58,6 +58,7 @@ export function SessionsPage() {
   const [showLauncher, setShowLauncher] = useState(false);
   const [selectedPersonaId, setSelectedPersonaId] = useState("");
   const [launching, setLaunching] = useState(false);
+  const initialLoadDone = useRef(false);
 
   const fetchData = useCallback(async () => {
     try {
@@ -69,17 +70,21 @@ export function SessionsPage() {
       setPersonas(personaList);
       setSessions(sessionList);
 
-      const activeSessions = sessionList.filter(
-        (s) => s.status === "running" || s.status === "starting"
-      );
-      setTabs(
-        activeSessions.map((session) => ({
-          session,
-          personaName: personaList.find((p) => p.id === session.persona_id)?.name || "Unknown",
-        }))
-      );
-      if (activeSessions.length > 0 && !activeTabId) {
-        setActiveTabId(activeSessions[0]?.id ?? null);
+      // Only auto-populate tabs on initial load
+      if (!initialLoadDone.current) {
+        initialLoadDone.current = true;
+        const activeSessions = sessionList.filter(
+          (s) => s.status === "running" || s.status === "starting"
+        );
+        setTabs(
+          activeSessions.map((session) => ({
+            session,
+            personaName: personaList.find((p) => p.id === session.persona_id)?.name || "Unknown",
+          }))
+        );
+        if (activeSessions.length > 0 && !activeTabId) {
+          setActiveTabId(activeSessions[0]?.id ?? null);
+        }
       }
       setError(null);
     } catch (e) {
@@ -87,7 +92,8 @@ export function SessionsPage() {
     } finally {
       setLoading(false);
     }
-  }, [activeTabId]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     fetchData();
