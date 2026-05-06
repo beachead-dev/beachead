@@ -57,6 +57,7 @@ export function SessionsPage() {
   const [error, setError] = useState<string | null>(null);
   const [showLauncher, setShowLauncher] = useState(false);
   const [selectedPersonaId, setSelectedPersonaId] = useState("");
+  const [sessionName, setSessionName] = useState("");
   const [launching, setLaunching] = useState(false);
   const initialLoadDone = useRef(false);
   // Track all sessions that have ever been opened as tabs — keeps their panels mounted
@@ -106,11 +107,26 @@ export function SessionsPage() {
     if (!selectedPersonaId) return;
     setLaunching(true);
     try {
+      // Sanitize session name: only letters, numbers, hyphens, periods, plus signs
+      const personaName = personas.find((p) => p.id === selectedPersonaId)?.name || "session";
+      let name = sessionName.trim();
+      if (name) {
+        // Strip invalid characters per sbx --name constraints
+        name = name.replace(/[^a-zA-Z0-9.\-+]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+      }
+      if (!name) {
+        // Generate random tag: persona-name + 6 random hex chars
+        const tag = Math.random().toString(16).slice(2, 8);
+        name = `${personaName}-${tag}`.replace(/[^a-zA-Z0-9.\-+]/g, "-").toLowerCase();
+      }
+
       const resp = await api.post<{ session_id: string; ws_url: string }>("/api/sessions", {
         persona_id: selectedPersonaId,
+        name,
       });
       setShowLauncher(false);
       setSelectedPersonaId("");
+      setSessionName("");
       // Refresh sessions list
       const [personaList, sessionList] = await Promise.all([
         api.get<Persona[]>("/api/personas"),
@@ -266,8 +282,24 @@ export function SessionsPage() {
               ))}
             </select>
           </div>
+          <div className="form-group">
+            <label htmlFor="launch-name">Session Name (optional)</label>
+            <input
+              id="launch-name"
+              type="text"
+              value={sessionName}
+              onChange={(e) => setSessionName(e.target.value)}
+              placeholder="Leave blank for auto-generated name"
+              maxLength={63}
+              pattern="[a-zA-Z0-9.\-+]*"
+              aria-describedby="launch-name-hint"
+            />
+            <small id="launch-name-hint" className="meta-label">
+              Letters, numbers, hyphens, periods only. Auto-generated if blank.
+            </small>
+          </div>
           <div className="form-actions">
-            <button className="btn" onClick={() => setShowLauncher(false)}>Cancel</button>
+            <button className="btn" onClick={() => { setShowLauncher(false); setSessionName(""); }}>Cancel</button>
             <button className="btn btn-primary" onClick={handleLaunch} disabled={!selectedPersonaId || launching}>
               {launching ? "Starting..." : "Start Session"}
             </button>

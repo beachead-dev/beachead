@@ -81,7 +81,7 @@ impl SessionManager {
     /// 7. Return Session with ws_url like "ws://127.0.0.1:9876/api/sessions/{id}/terminal"
     ///
     /// Requirements: 3.1–3.4, 3.7, 3.11, 3.12
-    pub async fn start(&self, persona_id: &PersonaId) -> Result<Session, OrchestratorError> {
+    pub async fn start(&self, persona_id: &PersonaId, name: Option<&str>) -> Result<Session, OrchestratorError> {
         // 1. Get persona from DB
         let persona = self.db.with_conn(|conn| db_ops::get_persona(conn, persona_id))?;
 
@@ -111,7 +111,7 @@ impl SessionManager {
             agent: agent.clone(),
             kit_paths: vec![kit_path.clone()],
             workspace: persona.workspace_path.clone(),
-            name: None,
+            name: name.map(|s| s.to_string()),
             template: None,
             agent_args: persona.agent_cli_args.clone(),
         };
@@ -762,7 +762,7 @@ esac
             pty_bridge.clone(),
         );
 
-        let session = manager.start(&persona_id).await.unwrap();
+        let session = manager.start(&persona_id, None).await.unwrap();
 
         assert_eq!(session.status, SessionStatus::Running);
         assert_eq!(session.persona_id, persona_id);
@@ -792,7 +792,7 @@ esac
 
         let manager = SessionManager::new(db.clone(), sbx, kit_generator, pty_bridge);
 
-        let result = manager.start(&persona_id).await;
+        let result = manager.start(&persona_id, None).await;
         assert!(result.is_err());
 
         match result.unwrap_err() {
@@ -820,7 +820,7 @@ esac
 
         let manager = SessionManager::new(db.clone(), sbx, kit_generator, pty_bridge);
 
-        let result = manager.start(&persona_id).await;
+        let result = manager.start(&persona_id, None).await;
         assert!(result.is_err());
 
         match result.unwrap_err() {
@@ -851,7 +851,7 @@ esac
         );
 
         // Start a session first
-        let session = manager.start(&persona_id).await.unwrap();
+        let session = manager.start(&persona_id, None).await.unwrap();
         assert_eq!(session.status, SessionStatus::Running);
 
         // Stop it
@@ -881,7 +881,7 @@ esac
         );
 
         // Start a session first
-        let session = manager.start(&persona_id).await.unwrap();
+        let session = manager.start(&persona_id, None).await.unwrap();
         let kit_path = session.kit_path.clone().unwrap();
         assert!(kit_path.exists());
 
@@ -919,7 +919,7 @@ esac
         assert!(sessions.is_empty());
 
         // Start a session
-        let session = manager.start(&persona_id).await.unwrap();
+        let session = manager.start(&persona_id, None).await.unwrap();
 
         // Should have one session
         let sessions = manager.list().unwrap();
@@ -950,7 +950,7 @@ esac
         );
 
         // Start a session
-        let session = manager.start(&persona_id).await.unwrap();
+        let session = manager.start(&persona_id, None).await.unwrap();
 
         // Upload a file (source inside workspace)
         let source = workspace_dir.path().join("myfile.txt");
@@ -987,7 +987,7 @@ esac
         );
 
         // Start a session
-        let session = manager.start(&persona_id).await.unwrap();
+        let session = manager.start(&persona_id, None).await.unwrap();
 
         // Upload a file from outside workspace (should use sbx cp)
         let other_dir = TempDir::new().unwrap();
@@ -1025,7 +1025,7 @@ esac
         );
 
         // Start and stop a session
-        let session = manager.start(&persona_id).await.unwrap();
+        let session = manager.start(&persona_id, None).await.unwrap();
         manager.stop(&session.id).await.unwrap();
 
         // Try to upload — should fail

@@ -31,7 +31,7 @@ async fn create_session(
     Json(req): Json<CreateSessionRequest>,
 ) -> Result<(StatusCode, Json<CreateSessionResponse>), OrchestratorError> {
     let mgr = state.require_session_manager()?;
-    let session = mgr.start(&req.persona_id).await?;
+    let session = mgr.start(&req.persona_id, req.name.as_deref()).await?;
     let ws_url = SessionManager::ws_url(&session.id);
     let response = CreateSessionResponse {
         session_id: session.id,

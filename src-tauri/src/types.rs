@@ -246,6 +246,7 @@ pub struct UpdateAgentRequest {
 #[derive(Debug, Deserialize)]
 pub struct CreateSessionRequest {
     pub persona_id: PersonaId,
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
