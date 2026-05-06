@@ -338,9 +338,12 @@ function TerminalView({ sessionId }: { sessionId: string }) {
   const fitAddonRef = useRef<FitAddon | null>(null);
   const wsUrl = `ws://127.0.0.1:9876/api/sessions/${sessionId}/terminal`;
   const { sendMessage, lastMessage, readyState, connect } = useWebSocket(wsUrl);
+  const sendMessageRef = useRef(sendMessage);
+  sendMessageRef.current = sendMessage;
 
+  // Create terminal once on mount — never dispose until unmount
   useEffect(() => {
-    if (!termRef.current) return;
+    if (!termRef.current || terminalRef.current) return;
 
     const term = new Terminal({
       cursorBlink: true,
@@ -357,12 +360,11 @@ function TerminalView({ sessionId }: { sessionId: string }) {
     fitAddon.fit();
 
     term.onData((data) => {
-      sendMessage(data);
+      sendMessageRef.current(data);
     });
 
     terminalRef.current = term;
     fitAddonRef.current = fitAddon;
-    connect();
 
     const handleResize = () => fitAddon.fit();
     window.addEventListener("resize", handleResize);
@@ -373,7 +375,14 @@ function TerminalView({ sessionId }: { sessionId: string }) {
       terminalRef.current = null;
       fitAddonRef.current = null;
     };
-  }, [sessionId, connect, sendMessage]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Connect WebSocket once on mount
+  useEffect(() => {
+    connect();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (lastMessage && terminalRef.current) {
