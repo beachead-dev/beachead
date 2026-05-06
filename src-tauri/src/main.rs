@@ -26,6 +26,7 @@ mod server;
 pub mod session_manager;
 pub mod system_manager;
 pub mod template_manager;
+pub mod token;
 mod types;
 pub mod workspace_manager;
 

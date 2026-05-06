@@ -20,6 +20,7 @@ use rusqlite::OptionalExtension;
 use crate::db::Database;
 use crate::error::OrchestratorError;
 use crate::port_allocator::PortAllocator;
+use crate::token;
 use crate::types::{McpContainerId, PersonaId};
 
 /// Container port inside the MCP server image.
@@ -120,7 +121,7 @@ impl McpContainerManager {
     /// record in the `mcp_containers` table.
     pub async fn create_container(&self, persona_id: PersonaId) -> Result<McpContainer, OrchestratorError> {
         let mcp_id = McpContainerId::new();
-        let bearer_token = uuid::Uuid::new_v4().to_string();
+        let bearer_token = token::generate_bearer_token();
         let volume_name = format!("beachead-memory-{}", persona_id.0);
         let now = Utc::now().to_rfc3339();
 
