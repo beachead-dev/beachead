@@ -329,7 +329,7 @@ export function SessionsPage() {
                 tabIndex={0}
               >
                 <span className={`status-indicator status-${tab.session.status}`} aria-label={tab.session.status} />
-                <span className="session-name">{tab.personaName}</span>
+                <span className="session-name">{extractSandboxName(tab.session.sandbox_id) || tab.personaName}</span>
                 <button
                   className="tab-close"
                   onClick={(e) => { e.stopPropagation(); handleCloseTab(tab.session.id); }}
