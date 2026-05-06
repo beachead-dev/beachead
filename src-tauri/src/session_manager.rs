@@ -357,6 +357,12 @@ impl SessionManager {
 
     /// Remove stopped session records whose sandboxes no longer exist in sbx ls.
     async fn cleanup_orphaned_stopped_sessions(&self) {
+        // First, get the list of all existing sandboxes. If this fails, skip cleanup entirely.
+        let existing_sandboxes = match self.sbx.ls_json().await {
+            Ok(sandboxes) => sandboxes,
+            Err(_) => return, // Can't verify — don't delete anything
+        };
+
         let stopped_sessions = match self.db.with_conn(|conn| {
             let mut stmt = conn.prepare(
                 "SELECT id, persona_id, sandbox_id, kit_path, status, error_message, created_at, updated_at \
@@ -398,9 +404,16 @@ impl SessionManager {
                     });
                     continue;
                 }
-                let status = self.check_sandbox_status(&sandbox_name).await;
-                if status.is_none() {
-                    // Sandbox gone — delete session record
+                // Check if ANY sandbox matches by name or id
+                let found = existing_sandboxes.iter().any(|sb| {
+                    sb.name.as_deref() == Some(&sandbox_name)
+                        || sb.id.as_deref() == Some(&sandbox_name)
+                        // Also try matching the raw sandbox_id in case extract_sandbox_name altered it
+                        || sb.name.as_deref() == Some(sandbox_id.as_str())
+                        || sb.id.as_deref() == Some(sandbox_id.as_str())
+                });
+                if !found {
+                    // Sandbox truly gone — delete session record
                     let _ = self.db.with_conn(|conn| {
                         conn.execute("DELETE FROM sessions WHERE id = ?1", rusqlite::params![session.id.0])
                             .map_err(|e| OrchestratorError::Database(e.to_string()))?;
@@ -427,13 +440,11 @@ impl SessionManager {
             Some(id) => id.clone(),
             None => {
                 let reason = "No sandbox_id recorded".to_string();
+                // No sandbox to verify — delete the orphaned session record
                 let _ = self.db.with_conn(|conn| {
-                    db_ops::update_session_status(
-                        conn,
-                        session_id,
-                        &SessionStatus::Stopped,
-                        Some(&reason),
-                    )
+                    conn.execute("DELETE FROM sessions WHERE id = ?1", rusqlite::params![session_id.0])
+                        .map_err(|e| OrchestratorError::Database(e.to_string()))?;
+                    Ok(())
                 });
                 return RecoveryResult::Failed {
                     session_id: session_id.clone(),
