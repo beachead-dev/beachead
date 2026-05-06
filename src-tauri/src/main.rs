@@ -24,6 +24,8 @@ mod sbx_property_tests;
 #[cfg(test)]
 mod mcp_container_property_tests;
 #[cfg(test)]
+mod export_import_property_tests;
+#[cfg(test)]
 mod token_property_tests;
 mod server;
 pub mod session_manager;

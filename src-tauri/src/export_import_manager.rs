@@ -277,17 +277,16 @@ impl ExportImportManager {
                             if let Some(existing) =
                                 existing_personas.iter().find(|p| p.name == persona.name)
                             {
-                                // Delete existing MCP servers first (cascade should handle this)
-                                let existing_mcps = db_ops::list_persona_mcp_servers(
-                                    conn,
-                                    &existing.id,
-                                )?;
-                                for mcp in &existing_mcps {
-                                    db_ops::delete_persona_mcp_server(conn, &mcp.id)?;
-                                }
-                                // We can't easily delete the persona due to FK constraints
-                                // on sessions, so we update in place
-                                // For simplicity, insert with new ID after removing old
+                                // Delete sessions referencing this persona (no cascade)
+                                conn.execute(
+                                    "DELETE FROM sessions WHERE persona_id = ?1",
+                                    rusqlite::params![existing.id.0],
+                                ).map_err(|e| OrchestratorError::Database(e.to_string()))?;
+                                // Delete the existing persona (MCP servers cascade)
+                                conn.execute(
+                                    "DELETE FROM personas WHERE id = ?1",
+                                    rusqlite::params![existing.id.0],
+                                ).map_err(|e| OrchestratorError::Database(e.to_string()))?;
                             }
                             // Insert the imported persona with a new ID
                             let mut imported = persona.clone();
@@ -470,7 +469,7 @@ impl ExportImportManager {
 /// Encrypt plaintext with AES-256-GCM using a key derived from password via Argon2id.
 ///
 /// Returns: [salt: 16 bytes][nonce: 12 bytes][ciphertext]
-fn encrypt_data(plaintext: &[u8], password: &str) -> Result<Vec<u8>, OrchestratorError> {
+pub(crate) fn encrypt_data(plaintext: &[u8], password: &str) -> Result<Vec<u8>, OrchestratorError> {
     // Generate random salt and nonce
     let mut salt = [0u8; SALT_LEN];
     let mut nonce_bytes = [0u8; NONCE_LEN];
@@ -502,7 +501,7 @@ fn encrypt_data(plaintext: &[u8], password: &str) -> Result<Vec<u8>, Orchestrato
 }
 
 /// Decrypt data that was encrypted with encrypt_data.
-fn decrypt_data(data: &[u8], password: &str) -> Result<Vec<u8>, OrchestratorError> {
+pub(crate) fn decrypt_data(data: &[u8], password: &str) -> Result<Vec<u8>, OrchestratorError> {
     let min_len = SALT_LEN + NONCE_LEN + 1; // At least 1 byte of ciphertext
     if data.len() < min_len {
         return Err(OrchestratorError::DecryptionFailed(
