@@ -22,6 +22,8 @@ mod port_allocator_property_tests;
 mod sbx_property_tests;
 #[cfg(test)]
 mod mcp_container_property_tests;
+#[cfg(test)]
+mod token_property_tests;
 mod server;
 pub mod session_manager;
 pub mod system_manager;
