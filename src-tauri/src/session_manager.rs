@@ -443,12 +443,15 @@ impl SessionManager {
                     )
                 });
 
-                // Attempt `sbx rm` cleanup
-                if let Err(e) = self.sbx.rm(&sandbox_id).await {
-                    eprintln!(
-                        "Recovery: sbx rm failed for sandbox {}: {}. Manual cleanup may be required.",
-                        sandbox_id, e
-                    );
+                // Only attempt `sbx rm` if sandbox is truly missing (not found in ls).
+                // Stopped sandboxes should be preserved for user to resume.
+                if sandbox_status.is_none() {
+                    if let Err(e) = self.sbx.rm(&sandbox_id).await {
+                        eprintln!(
+                            "Recovery: sbx rm failed for sandbox {}: {}. Manual cleanup may be required.",
+                            sandbox_id, e
+                        );
+                    }
                 }
 
                 let reason = format!(
