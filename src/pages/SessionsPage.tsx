@@ -480,7 +480,10 @@ function SessionPanel({ sessionId, sandboxId }: SessionPanelProps) {
         </button>
       </nav>
 
-      {panelView === "terminal" && <TerminalView sessionId={sessionId} />}
+      {/* Always render terminal (hidden when not active) to preserve content */}
+      <div style={{ display: panelView === "terminal" ? "flex" : "none", flex: 1, flexDirection: "column" }}>
+        <TerminalView sessionId={sessionId} />
+      </div>
       {panelView === "files" && <FileUploadView sessionId={sessionId} />}
       {panelView === "ports" && sandboxId && <PortManagerView sandboxId={sandboxId} />}
       {panelView === "ports" && !sandboxId && <p>No sandbox associated with this session.</p>}
