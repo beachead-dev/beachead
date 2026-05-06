@@ -37,17 +37,13 @@ interface SessionTab {
 /** Extract a clean sandbox name from potentially garbage stored value */
 function extractSandboxName(sandboxId: string | null): string {
   if (!sandboxId) return "";
-  // If it's a single line with no newlines, it's likely clean
   if (!sandboxId.includes("\n") && sandboxId.length < 80) {
     return sandboxId;
   }
-  // Look for "Created sandbox 'NAME'" pattern
   const createdMatch = sandboxId.match(/Created sandbox '([^']+)'/);
   if (createdMatch && createdMatch[1]) return createdMatch[1];
-  // Look for "sbx run NAME" pattern
   const runMatch = sandboxId.match(/sbx run (\S+)/);
   if (runMatch && runMatch[1]) return runMatch[1];
-  // Fall back to first non-empty short line
   const lines = sandboxId.split("\n").map((l) => l.trim()).filter((l) => l.length > 0 && l.length < 60);
   return lines[lines.length - 1] || sandboxId.slice(0, 20) + "…";
 }
@@ -73,7 +69,6 @@ export function SessionsPage() {
       setPersonas(personaList);
       setSessions(sessionList);
 
-      // Build tabs from running/starting sessions
       const activeSessions = sessionList.filter(
         (s) => s.status === "running" || s.status === "starting"
       );
@@ -118,7 +113,6 @@ export function SessionsPage() {
 
   const handleResumeSession = async (sessionId: string) => {
     try {
-      // Resume reattaches to the stopped sandbox
       await api.post(`/api/sessions/${sessionId}/resume`);
       await fetchData();
     } catch (e) {
@@ -141,7 +135,6 @@ export function SessionsPage() {
   };
 
   const handleCloseTab = async (sessionId: string) => {
-    // Close tab stops the session (sandbox preserved for restart)
     try {
       await api.post(`/api/sessions/${sessionId}/stop`);
       setTabs((prev) => prev.filter((t) => t.session.id !== sessionId));
@@ -166,16 +159,6 @@ export function SessionsPage() {
 
   return (
     <div className="sessions-page">
-      <div className="page-header">
-        <h2>Sessions</h2>
-        <div className="page-header-actions">
-          <button className="btn btn-primary" onClick={() => setShowLauncher(true)} aria-label="Start new session">
-            + New Session
-          </button>
-          <a href="/help" className="help-link" aria-label="Sessions help">?</a>
-        </div>
-      </div>
-
       {error && <div className="alert alert-error" role="alert">{error}</div>}
 
       {showLauncher && (
@@ -203,13 +186,19 @@ export function SessionsPage() {
         </div>
       )}
 
-      {tabs.length > 0 && (
-        <div className="session-tabs">
-          <div className="tab-bar" role="tablist" aria-label="Session tabs">
+      <div className="session-tabs">
+        {/* Vertical session sidebar */}
+        <div className="session-sidebar">
+          <div className="session-sidebar-header">
+            <button className="btn btn-primary btn-sm" onClick={() => setShowLauncher(true)} aria-label="Start new session">
+              + New Session
+            </button>
+          </div>
+          <ul className="session-list" role="tablist" aria-label="Session list">
             {tabs.map((tab) => (
-              <div
+              <li
                 key={tab.session.id}
-                className={`session-tab ${activeTabId === tab.session.id ? "active" : ""}`}
+                className={`session-list-item ${activeTabId === tab.session.id ? "active" : ""}`}
                 role="tab"
                 aria-selected={activeTabId === tab.session.id}
                 onClick={() => setActiveTabId(tab.session.id)}
@@ -217,7 +206,7 @@ export function SessionsPage() {
                 tabIndex={0}
               >
                 <span className={`status-indicator status-${tab.session.status}`} aria-label={tab.session.status} />
-                <span className="tab-label">{tab.personaName}</span>
+                <span className="session-name">{tab.personaName}</span>
                 <button
                   className="tab-close"
                   onClick={(e) => { e.stopPropagation(); handleCloseTab(tab.session.id); }}
@@ -225,22 +214,28 @@ export function SessionsPage() {
                 >
                   ✕
                 </button>
-              </div>
+              </li>
             ))}
-          </div>
-
-          {activeTabId && (
-            <SessionPanel
-              sessionId={activeTabId}
-              sandboxId={tabs.find((t) => t.session.id === activeTabId)?.session.sandbox_id || null}
-            />
-          )}
+          </ul>
         </div>
-      )}
 
-      {tabs.length === 0 && !showLauncher && (
-        <p className="empty-state">No active sessions. Start a new session to begin.</p>
-      )}
+        {/* Main content: render ALL session panels, hide inactive ones */}
+        <div className="session-main">
+          {tabs.length === 0 && (
+            <div style={{ padding: "1.5rem" }}>
+              <p className="empty-state">No active sessions. Start a new session to begin.</p>
+            </div>
+          )}
+          {tabs.map((tab) => (
+            <div
+              key={tab.session.id}
+              style={{ display: activeTabId === tab.session.id ? "flex" : "none", flexDirection: "column", flex: 1, height: "100%" }}
+            >
+              <SessionPanel sessionId={tab.session.id} sandboxId={tab.session.sandbox_id} />
+            </div>
+          ))}
+        </div>
+      </div>
 
       {/* Stopped sessions section */}
       {sessions.filter((s) => s.status === "stopped").length > 0 && (
