@@ -3,7 +3,9 @@ import { NavLink } from "react-router-dom";
 import { ResizeHandle } from "./ResizeHandle";
 import { api } from "../lib/api";
 import logoDark from "../assets/logo-dark.png";
+import logoLight from "../assets/logo-light.png";
 import iconDark from "../assets/icon-dark.png";
+import iconLight from "../assets/icon-light.png";
 
 const navItems = [
   { to: "/sessions", label: "Sessions" },
@@ -28,6 +30,21 @@ function applyTheme(theme: Theme) {
 export function Sidebar() {
   const sidebarRef = useRef<HTMLElement>(null);
   const [theme, setTheme] = useState<Theme>("system");
+  const [systemDark, setSystemDark] = useState(
+    () => window.matchMedia("(prefers-color-scheme: dark)").matches
+  );
+
+  // Listen for OS theme changes
+  useEffect(() => {
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const handler = (e: MediaQueryListEvent) => setSystemDark(e.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, []);
+
+  const isDark = theme === "dark" || (theme === "system" && systemDark);
+  const logo = isDark ? logoDark : logoLight;
+  const icon = isDark ? iconDark : iconLight;
 
   // Load saved theme on mount
   useEffect(() => {
@@ -59,12 +76,12 @@ export function Sidebar() {
     <nav className="sidebar" aria-label="Main navigation" ref={sidebarRef}>
       <div className="sidebar-header">
         <img
-          src={logoDark}
+          src={logo}
           alt="Beachead"
           className="sidebar-logo"
         />
         <img
-          src={iconDark}
+          src={icon}
           alt="Beachead"
           className="sidebar-icon"
         />
