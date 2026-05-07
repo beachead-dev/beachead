@@ -52,6 +52,39 @@ When you start a session from a persona, the orchestrator:
 2. Launches a sandbox via `sbx run` with the generated kit applied
 3. Opens a terminal connection to the running agent
 
+## Memory Toggle
+
+Each persona can optionally enable long-term memory via the **Enable Memory**
+toggle in the persona form.
+
+When memory is enabled:
+
+- The orchestrator provisions a dedicated MCP container for the persona
+- A unique bearer token secures communication between the agent and its
+  memory server
+- The generated Persona Kit includes MCP configuration and network rules
+  so the agent can reach its memory server
+- The agent can use `memory_store`, `memory_query`, `memory_list`, and
+  `memory_delete` tools to persist and retrieve knowledge
+
+When memory is disabled, no MCP container is created and the agent has no
+access to long-term memory tools.
+
+## MCP Container Status
+
+If a persona has memory enabled, the Personas page displays the status of
+its MCP container:
+
+- **Running** — The memory server is healthy and accepting requests
+- **Starting** — The container is being created or restarted
+- **Stopped** — The container is not running (will restart on next
+  orchestrator launch)
+- **Error** — The container failed health checks; check Docker logs for
+  details
+
+The orchestrator performs periodic health checks on all MCP containers and
+automatically restarts any that fail.
+
 ## Tips
 
 - Use descriptive names that reflect the project or task

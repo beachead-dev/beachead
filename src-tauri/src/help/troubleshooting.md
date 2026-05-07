@@ -58,6 +58,59 @@
 - Restart Beachead to trigger automatic MCP container restart
 - Verify network policy allows access to `host.docker.internal:<port>`
 
+## MCP Container Failures
+
+**Symptom:** MCP container shows "Error" status or fails to start.
+
+**Solutions:**
+- Check Docker daemon is running: `docker info`
+- Inspect container logs: `docker logs beachead-mcp-<persona-name>`
+- Verify sufficient disk space for Docker volumes
+- Check that the allocated port is not blocked by a firewall or another
+  process: `lsof -i :<port>` (macOS/Linux) or `netstat -ano | findstr :<port>` (Windows)
+- Remove and recreate the container by disabling and re-enabling memory
+  on the persona
+- If the container repeatedly fails health checks, check Docker resource
+  limits (memory, CPU) in Docker Desktop settings
+
+## Port Allocation Failures
+
+**Symptom:** Error message indicating port exhaustion when enabling memory
+on a persona.
+
+**Solutions:**
+- Check how many MCP containers are running: `docker ps --filter name=beachead-mcp`
+- Release ports by disabling memory on personas that no longer need it
+- Verify the configured port range has available ports
+- Check for external processes occupying ports in the MCP range
+- Restart Beachead to reconcile port allocation state with actual
+  container status
+
+## Export and Import Errors
+
+**Symptom:** Export fails or produces a corrupted file.
+
+**Solutions:**
+- Ensure sufficient disk space for the export file
+- Verify write permissions to the target directory
+- If the export is interrupted, delete the partial file and retry
+
+**Symptom:** Import fails with a decryption error.
+
+**Solutions:**
+- Verify you are using the correct password (passwords are case-sensitive)
+- Ensure the export file has not been modified or truncated
+- If the file was transferred between machines, verify the transfer was
+  binary-safe (not text-mode FTP or email attachment corruption)
+
+**Symptom:** Import succeeds but personas show warning indicators.
+
+**Solutions:**
+- This is expected — secrets (API keys) are not included in exports
+- Navigate to the **Agents** page and configure the required credentials
+- Check that workspace paths referenced by imported personas exist on
+  this machine; update paths if needed
+
 ## General Tips
 
 - Run **System Settings > Diagnostics** for a comprehensive health check
