@@ -233,55 +233,7 @@ Deferred improvements, bug fixes, and future features for implementation.
 
 ## Design / Branding
 
-### Custom Application Icons and Title Graphics
-
-**Priority:** Medium  
-**Affected area:** `src-tauri/icons/`, `src/components/Sidebar.tsx`, `index.html`, `src-tauri/tauri.conf.json`
-
-**Description:** Replace the default Tauri placeholder icons and the text-only "Beachead" title in the sidebar header with custom branded graphics. Includes app icon (taskbar, dock, window title bar), sidebar logo/wordmark, and installer icons.
-
-**Required assets:**
-
-App icons (replace files in `src-tauri/icons/`):
-| File | Size | Format | Used by |
-|------|------|--------|---------|
-| `32x32.png` | 32×32 px | PNG | Windows taskbar, Linux tray |
-| `128x128.png` | 128×128 px | PNG | Linux app launcher, Tauri default |
-| `128x128@2x.png` | 256×256 px | PNG | HiDPI Linux |
-| `icon.ico` | Multi-size (16, 32, 48, 256) | ICO | Windows executable icon, taskbar |
-| `icon.icns` | Multi-size (16–1024) | ICNS | macOS dock, Finder, Spotlight |
-
-Additional recommended sizes for the ICO file:
-- 16×16, 24×24, 32×32, 48×48, 64×64, 256×256
-
-Additional recommended sizes for the ICNS file:
-- 16×16, 32×32, 64×64, 128×128, 256×256, 512×512, 1024×1024
-
-Sidebar logo:
-| Asset | Size | Format | Location |
-|-------|------|--------|----------|
-| Logo (full) | ~120×30 px | SVG or PNG | Sidebar header at normal width |
-| Logo (icon only) | ~24×24 px | SVG or PNG | Sidebar header when collapsed/narrow |
-| Logo (dark variant) | Same as above | SVG or PNG | If primary logo doesn't work on dark bg |
-
-Other:
-| Asset | Format | Location |
-|-------|--------|----------|
-| Favicon | 32×32 PNG or SVG | `index.html` `<link rel="icon">` |
-| Installer banner (optional) | 493×58 px BMP | Windows MSI installer header |
-| DMG background (optional) | 660×400 px PNG | macOS DMG window background |
-
-**Files to update:**
-- `src-tauri/icons/` — All icon files listed above
-- `src/components/Sidebar.tsx` — Replace `<h1>Beachead</h1>` with `<img>` logo
-- `index.html` — Update `<title>` and add favicon `<link>`
-- `src-tauri/tauri.conf.json` — Verify icon paths in `bundle.icon` array
-
-**Considerations:**
-- Source artwork should be at least 1024×1024 for downscaling
-- Use `cargo tauri icon <source.png>` to auto-generate all required sizes from a single source
-- Sidebar logo should degrade gracefully at narrow widths (show icon-only below ~140px)
-- Ensure sufficient contrast on both light and dark backgrounds
+*(No open items)*
 
 ---
 
@@ -503,3 +455,22 @@ Other:
 4. Set up auto-deploy from a `website/` directory or separate repo
 5. Add download links once CI/CD produces release artifacts
 6. Set up analytics (privacy-respecting: Plausible or Fathom)
+
+
+---
+
+## Completed
+
+### Custom Application Icons and Title Graphics
+
+**Completed:** 2026-05-06  
+**Affected area:** `src-tauri/icons/`, `src/components/Sidebar.tsx`, `index.html`, `src/styles.css`
+
+**What was done:**
+- Generated all Tauri app icon sizes from 1024×1024 source (`icon-light.png`) via `cargo tauri icon`
+- Replaced text-only `<h1>Beachead</h1>` in sidebar with branded logo images
+- Sidebar shows transparent worldmark (wide logo with name) when expanded, "BH" icon when collapsed (<140px)
+- Logo/icon switches between light and dark variants based on active theme (light/dark/system)
+- Added 32×32 favicon to `index.html`
+- Source assets stored in `assets/branding/` for future use
+- CSS container queries handle responsive logo/icon switching
