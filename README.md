@@ -8,8 +8,10 @@ Before using Beachead, install the following:
 
 | Dependency | Purpose | Install Guide |
 |-----------|---------|---------------|
-| **Docker Engine** | Container runtime for sandboxes | [docs.docker.com/engine/install](https://docs.docker.com/engine/install/) |
+| **Docker Engine** | Container runtime for sandboxes and memory MCP containers | [docs.docker.com/engine/install](https://docs.docker.com/engine/install/) |
 | **Docker Sandboxes (sbx)** | CLI for managing sandbox microVMs | [github.com/docker/sbx-releases](https://github.com/docker/sbx-releases/releases) |
+
+> **Note:** Docker Engine must be running for both sandbox sessions and per-persona memory features. Memory MCP containers are managed automatically via the Docker API (bollard crate).
 
 ### Installing sbx
 
@@ -83,6 +85,27 @@ The sandbox mounts your workspace at the same path, so the agent can read and mo
 2. View and modify global network access rules.
 3. Check the **Traffic Log** to see what network requests sandboxes are making.
 
+### 6. Per-Persona Memory
+
+Each persona can have long-term memory enabled, backed by a local MCP server running in a Docker container.
+
+1. When creating or editing a persona, toggle **Memory** on.
+2. The orchestrator automatically manages a dedicated memory container for that persona.
+3. Memory persists across sessions — the agent retains context from previous conversations.
+4. Memory data is stored in Docker volumes on your local machine.
+
+**Requirements:** Docker Engine must be running for memory features. The memory MCP container starts automatically when Beachead launches.
+
+### 7. Export and Import Memory
+
+You can export a persona's memory for backup or transfer, and import memory from a previous export.
+
+1. Navigate to the persona's detail view.
+2. Click **Export Memory** to download the memory data as a file.
+3. To restore or transfer memory, click **Import Memory** and select a previously exported file.
+
+Exported memory files contain the persona's vector store and metadata. They can be imported into the same or a different Beachead installation.
+
 ## Key Concepts
 
 | Term | Description |
@@ -93,6 +116,8 @@ The sandbox mounts your workspace at the same path, so the agent can read and mo
 | **Sandbox** | A Docker Sandbox microVM with hypervisor-level isolation |
 | **Kit** | A YAML config package applied to sandboxes at creation time |
 | **MCP** | Model Context Protocol — enables agents to use external tools |
+| **Memory** | Per-persona long-term context stored in a local MCP container |
+| **MCP Container** | A Docker container hosting a memory MCP server (managed via bollard) |
 | **Template** | A saved snapshot of a configured sandbox for reuse |
 | **Policy** | A global network access rule applied to all sandboxes |
 

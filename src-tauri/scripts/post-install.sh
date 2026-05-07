@@ -96,21 +96,40 @@ if [ "$DOCKER_OK" = true ]; then
     echo ""
 fi
 
+# --- Check Docker daemon is running (needed for MCP memory containers) ---
+if [ "$DOCKER_OK" = true ]; then
+    echo -e "${BOLD}Checking Docker daemon status...${NC}"
+    if docker info &>/dev/null; then
+        echo -e "  ${GREEN}✓${NC} Docker daemon is running"
+        echo "    Memory MCP containers will start automatically with Beachead."
+    else
+        echo -e "  ${YELLOW}!${NC} Docker daemon is not running"
+        echo "    Start Docker to use per-persona memory features."
+        echo "    Memory MCP containers require the Docker daemon to be active."
+    fi
+    echo ""
+fi
+
 # --- Summary ---
 echo ""
 echo -e "${BOLD}── Summary ──${NC}"
 echo ""
 if [ "$SBX_OK" = true ] && [ "$DOCKER_OK" = true ]; then
     echo -e "  ${GREEN}✓${NC} All dependencies found. Beachead is ready to use."
+    echo ""
+    echo "  Features available:"
+    echo "    • Sandbox agent sessions (sbx + Docker)"
+    echo "    • Per-persona memory (Docker containers via bollard)"
+    echo "    • Memory export/import"
 elif [ "$SBX_OK" = false ] && [ "$DOCKER_OK" = false ]; then
     echo -e "  ${YELLOW}!${NC} Both sbx and Docker are missing."
-    echo "    Install them to use sandbox features."
+    echo "    Install them to use sandbox and memory features."
 else
     if [ "$SBX_OK" = false ]; then
         echo -e "  ${YELLOW}!${NC} sbx CLI is missing. Install it to use sandbox features."
     fi
     if [ "$DOCKER_OK" = false ]; then
-        echo -e "  ${YELLOW}!${NC} Docker is missing. Install it to use sandbox features."
+        echo -e "  ${YELLOW}!${NC} Docker is missing. Install it to use sandbox and memory features."
     fi
 fi
 echo ""

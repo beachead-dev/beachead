@@ -94,21 +94,46 @@ if ($DockerOk) {
     Write-Host ""
 }
 
+# --- Check Docker daemon is running (needed for MCP memory containers) ---
+if ($DockerOk) {
+    Write-Host "Checking Docker daemon status..." -ForegroundColor White
+    try {
+        $null = & docker info 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "  [OK] Docker daemon is running" -ForegroundColor Green
+            Write-Host "    Memory MCP containers will start automatically with Beachead."
+        } else {
+            Write-Host "  [!] Docker daemon is not running" -ForegroundColor Yellow
+            Write-Host "    Start Docker to use per-persona memory features."
+            Write-Host "    Memory MCP containers require the Docker daemon to be active."
+        }
+    } catch {
+        Write-Host "  [!] Could not check Docker daemon status" -ForegroundColor Yellow
+        Write-Host "    Ensure Docker Desktop is running for memory features."
+    }
+    Write-Host ""
+}
+
 # --- Summary ---
 Write-Host ""
 Write-Host "-- Summary --" -ForegroundColor White
 Write-Host ""
 if ($SbxOk -and $DockerOk) {
     Write-Host "  [OK] All dependencies found. Beachead is ready to use." -ForegroundColor Green
+    Write-Host ""
+    Write-Host "  Features available:"
+    Write-Host "    - Sandbox agent sessions (sbx + Docker)"
+    Write-Host "    - Per-persona memory (Docker containers via bollard)"
+    Write-Host "    - Memory export/import"
 } elseif (-not $SbxOk -and -not $DockerOk) {
     Write-Host "  [!] Both sbx and Docker are missing." -ForegroundColor Yellow
-    Write-Host "    Install them to use sandbox features."
+    Write-Host "    Install them to use sandbox and memory features."
 } else {
     if (-not $SbxOk) {
         Write-Host "  [!] sbx CLI is missing. Install it to use sandbox features." -ForegroundColor Yellow
     }
     if (-not $DockerOk) {
-        Write-Host "  [!] Docker is missing. Install it to use sandbox features." -ForegroundColor Yellow
+        Write-Host "  [!] Docker is missing. Install it to use sandbox and memory features." -ForegroundColor Yellow
     }
 }
 Write-Host ""
