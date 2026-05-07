@@ -42,11 +42,28 @@ body {
   flex-shrink: 0;
   border-right: 1px solid #2d3f6b;
   position: relative;
+  container-name: sidebar;
+  container-type: inline-size;
 }
 
 .sidebar-header {
   padding: 1.25rem 1rem;
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sidebar-logo {
+  height: 32px;
+  width: auto;
+  display: block;
+}
+
+.sidebar-icon {
+  height: 24px;
+  width: 24px;
+  display: none;
 }
 
 .sidebar-title {
@@ -54,6 +71,16 @@ body {
   font-size: 1.25rem;
   font-weight: 600;
   letter-spacing: -0.02em;
+}
+
+/* Show icon-only when sidebar is narrow */
+@container sidebar (max-width: 139px) {
+  .sidebar-logo {
+    display: none;
+  }
+  .sidebar-icon {
+    display: block;
+  }
 }
 
 .sidebar-nav {

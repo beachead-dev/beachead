@@ -1,6 +1,8 @@
 import { useRef } from "react";
 import { NavLink } from "react-router-dom";
 import { ResizeHandle } from "./ResizeHandle";
+import logoDark from "../assets/logo-dark.png";
+import iconDark from "../assets/icon-dark.png";
 
 const navItems = [
   { to: "/sessions", label: "Sessions" },
@@ -16,7 +18,16 @@ export function Sidebar() {
   return (
     <nav className="sidebar" aria-label="Main navigation" ref={sidebarRef}>
       <div className="sidebar-header">
-        <h1 className="sidebar-title">Beachead</h1>
+        <img
+          src={logoDark}
+          alt="Beachead"
+          className="sidebar-logo"
+        />
+        <img
+          src={iconDark}
+          alt="Beachead"
+          className="sidebar-icon"
+        />
       </div>
       <ul className="sidebar-nav">
         {navItems.map((item) => (

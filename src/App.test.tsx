@@ -5,7 +5,7 @@ import App from "./App";
 describe("App", () => {
   it("renders the sidebar with navigation links", () => {
     render(<App />);
-    expect(screen.getByText("Beachead")).toBeInTheDocument();
+    expect(screen.getAllByAltText("Beachead").length).toBeGreaterThan(0);
     expect(screen.getByRole("link", { name: "Personas" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Agents" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Sessions" })).toBeInTheDocument();
@@ -16,8 +16,8 @@ describe("App", () => {
     ).toBeInTheDocument();
   });
 
-  it("navigates to personas page by default", () => {
+  it("navigates to sessions page by default", () => {
     render(<App />);
-    expect(screen.getByRole("heading", { name: "Personas" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Sessions" })).toBeInTheDocument();
   });
 });
