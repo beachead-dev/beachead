@@ -131,10 +131,15 @@ body {
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     color: #f6f6f6;
     background-color: #16213e;
   }
+}
+
+:root[data-theme="dark"] {
+  color: #f6f6f6;
+  background-color: #16213e;
 }
 
 /* Page header */
@@ -1377,4 +1382,176 @@ body {
   .help-markdown code {
     background: rgba(108, 99, 255, 0.15);
   }
+}
+
+/* Explicit dark theme via data-theme attribute */
+:root[data-theme="dark"] .card {
+  background: #1e2a4a;
+  border-color: #2d3f6b;
+}
+
+:root[data-theme="dark"] .btn {
+  background: #2d3f6b;
+  color: #f6f6f6;
+  border-color: #3d5080;
+}
+
+:root[data-theme="dark"] .btn:hover {
+  background: #3d5080;
+}
+
+:root[data-theme="dark"] .btn-primary {
+  background: #6c63ff;
+  border-color: #6c63ff;
+}
+
+:root[data-theme="dark"] .form-group input,
+:root[data-theme="dark"] .form-group select,
+:root[data-theme="dark"] .rule-form input,
+:root[data-theme="dark"] .rule-form select,
+:root[data-theme="dark"] .port-form input,
+:root[data-theme="dark"] .log-filter input,
+:root[data-theme="dark"] .secret-input-row input {
+  background-color: #1a1a2e;
+  color: #f6f6f6;
+  border-color: #3d5080;
+}
+
+:root[data-theme="dark"] .form-group select,
+:root[data-theme="dark"] .rule-form select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23f6f6f6' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+}
+
+:root[data-theme="dark"] .form-group select option,
+:root[data-theme="dark"] .rule-form select option {
+  background: #1a1a2e;
+  color: #f6f6f6;
+}
+
+:root[data-theme="dark"] .mcp-entry {
+  background: #1a1a2e;
+}
+
+:root[data-theme="dark"] .mcp-entry-fields input {
+  background: #16213e;
+  color: #f6f6f6;
+  border-color: #3d5080;
+}
+
+:root[data-theme="dark"] .modal {
+  background: #1e2a4a;
+  color: #f6f6f6;
+}
+
+:root[data-theme="dark"] .dropzone {
+  border-color: #3d5080;
+}
+
+:root[data-theme="dark"] .session-tab {
+  background: #1a1a2e;
+  border-color: #2d3f6b;
+}
+
+:root[data-theme="dark"] .session-tab.active {
+  background: #1e2a4a;
+}
+
+:root[data-theme="dark"] .session-sidebar {
+  background: #1a1a2e;
+  border-color: #2d3f6b;
+}
+
+:root[data-theme="dark"] .session-sidebar-header {
+  border-color: #2d3f6b;
+}
+
+:root[data-theme="dark"] .session-list-item:hover {
+  background: rgba(108, 99, 255, 0.12);
+}
+
+:root[data-theme="dark"] .session-list-item.active {
+  background: rgba(108, 99, 255, 0.18);
+}
+
+:root[data-theme="dark"] .stopped-section {
+  border-color: #2d3f6b;
+}
+
+:root[data-theme="dark"] .stopped-section-header {
+  color: #aaa;
+}
+
+:root[data-theme="dark"] .stopped-section-header:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+:root[data-theme="dark"] .stopped-item-name {
+  color: #999;
+}
+
+:root[data-theme="dark"] .stopped-list-item {
+  border-color: rgba(255, 255, 255, 0.05);
+}
+
+:root[data-theme="dark"] .alert-error {
+  background: #3d1f1f;
+  color: #f5c6cb;
+  border-color: #5c2a2a;
+}
+
+:root[data-theme="dark"] .alert-warning {
+  background: #3d3a1f;
+  color: #ffc107;
+  border-color: #5c5a2a;
+}
+
+:root[data-theme="dark"] .upload-result {
+  background: #1f3d2a;
+}
+
+:root[data-theme="dark"] .help-sidebar {
+  background: #1a1a2e;
+  border-color: #2d3f6b;
+}
+
+:root[data-theme="dark"] .help-sidebar-title {
+  color: #aaa;
+}
+
+:root[data-theme="dark"] .help-topic-btn {
+  color: #ccc;
+}
+
+:root[data-theme="dark"] .help-markdown code {
+  background: rgba(108, 99, 255, 0.15);
+}
+
+/* Theme toggle in sidebar */
+.theme-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+}
+
+.theme-toggle-btn {
+  border: none;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(246, 246, 246, 0.75);
+  padding: 0.375rem 0.625rem;
+  border-radius: 0.25rem;
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.theme-toggle-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+  color: #f6f6f6;
+}
+
+.theme-toggle-btn.active {
+  background: rgba(108, 99, 255, 0.4);
+  color: #f6f6f6;
 }

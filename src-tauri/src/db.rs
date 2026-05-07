@@ -152,6 +152,12 @@ static MIGRATIONS: &[Migration] = &[
         description: "Create Phase 3 shared memory tables",
         sql: MIGRATION_003_PHASE3_SHARED_MEMORY,
     },
+    // User settings (key-value store for preferences like theme)
+    Migration {
+        version: 4,
+        description: "Create user_settings table",
+        sql: MIGRATION_004_USER_SETTINGS,
+    },
 ];
 
 /// Migration 1: Phase 1 core tables (agent_types, personas, persona_mcp_servers, sessions)
@@ -243,6 +249,14 @@ CREATE TABLE persona_shared_memory (
 );
 ";
 
+/// Migration 4: User settings key-value store
+const MIGRATION_004_USER_SETTINGS: &str = "
+CREATE TABLE user_settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+";
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -253,7 +267,7 @@ mod tests {
 
         db.with_conn(|conn| {
             let version = get_current_version(conn)?;
-            assert_eq!(version, 3, "All migrations should have been applied");
+            assert_eq!(version, 4, "All migrations should have been applied");
             Ok(())
         })
         .unwrap();
@@ -434,7 +448,7 @@ mod tests {
         let db2 = Database::open(&db_path).expect("Second open should succeed");
         db2.with_conn(|conn| {
             let version = get_current_version(conn)?;
-            assert_eq!(version, 3);
+            assert_eq!(version, 4);
             Ok(())
         })
         .unwrap();

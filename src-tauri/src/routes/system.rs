@@ -1,10 +1,10 @@
 use axum::{
     extract::{Path, State},
     http::StatusCode,
-    routing::{get, post},
+    routing::{get, post, put},
     Json, Router,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::OrchestratorError;
 use crate::sbx::{DiagnoseResult, SbxVersion};
@@ -21,6 +21,8 @@ pub fn router() -> Router<AppState> {
         .route("/api/system/logout", post(logout))
         .route("/api/system/help/{topic}", get(help_topic))
         .route("/api/system/dependency-check", get(dependency_check))
+        .route("/api/system/settings/{key}", get(get_setting))
+        .route("/api/system/settings/{key}", put(set_setting))
 }
 
 /// GET /api/system/version — get the sbx CLI version.
@@ -116,6 +118,66 @@ async fn dependency_check(
     let mgr = state.require_system_manager()?;
     let status = mgr.dependency_check().await?;
     Ok(Json(status))
+}
+
+// --- User Settings ---
+
+#[derive(Debug, Serialize)]
+struct SettingResponse {
+    key: String,
+    value: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct SetSettingRequest {
+    value: String,
+}
+
+/// GET /api/system/settings/{key} — get a user setting by key.
+async fn get_setting(
+    State(state): State<AppState>,
+    Path(key): Path<String>,
+) -> Result<Json<SettingResponse>, OrchestratorError> {
+    let value = state.db.with_conn(|conn| {
+        let result: Option<String> = conn
+            .query_row(
+                "SELECT value FROM user_settings WHERE key = ?1",
+                rusqlite::params![key],
+                |row| row.get(0),
+            )
+            .ok();
+        Ok(result)
+    })?;
+
+    match value {
+        Some(v) => Ok(Json(SettingResponse { key, value: v })),
+        None => Err(OrchestratorError::NotFound(format!(
+            "Setting '{}' not found",
+            key
+        ))),
+    }
+}
+
+/// PUT /api/system/settings/{key} — set a user setting.
+async fn set_setting(
+    State(state): State<AppState>,
+    Path(key): Path<String>,
+    Json(req): Json<SetSettingRequest>,
+) -> Result<Json<SettingResponse>, OrchestratorError> {
+    state.db.with_conn(|conn| {
+        conn.execute(
+            "INSERT INTO user_settings (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            rusqlite::params![key, req.value],
+        )
+        .map_err(|e| OrchestratorError::Database(e.to_string()))?;
+        Ok(())
+    })?;
+
+    Ok(Json(SettingResponse {
+        key,
+        value: req.value,
+    }))
 }
 
 #[cfg(test)]
