@@ -343,7 +343,14 @@ export function SessionsPage() {
         {/* Vertical session sidebar */}
         <div className="session-sidebar" ref={sessionSidebarRef}>
           <div className="session-sidebar-header">
-            <button className="btn btn-primary btn-sm" onClick={() => setShowLauncher(true)} aria-label="Start new session">
+            <button className="btn btn-primary btn-sm" onClick={async () => {
+              // Re-fetch personas to pick up any newly created ones
+              try {
+                const personaList = await api.get<Persona[]>("/api/personas");
+                setPersonas(personaList);
+              } catch { /* use cached list */ }
+              setShowLauncher(true);
+            }} aria-label="Start new session">
               + New Session
             </button>
           </div>
