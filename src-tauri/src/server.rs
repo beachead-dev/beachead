@@ -9,8 +9,10 @@ use crate::db::Database;
 use crate::error::OrchestratorError;
 use crate::export_import_manager::ExportImportManager;
 use crate::kit_generator::KitGenerator;
+use crate::mcp_container_manager::McpContainerManager;
 use crate::persona_manager::PersonaManager;
 use crate::policy_manager::PolicyManager;
+use crate::port_allocator::PortAllocator;
 use crate::pty_bridge::PtyBridge;
 use crate::sbx::SbxCli;
 use crate::session_manager::SessionManager;
@@ -32,6 +34,7 @@ pub struct AppState {
     pub template_manager: Option<Arc<TemplateManager>>,
     pub system_manager: Option<Arc<SystemManager>>,
     pub export_import_manager: Arc<ExportImportManager>,
+    pub mcp_container_manager: Option<Arc<McpContainerManager>>,
     pub db: Arc<Database>,
     pub sbx: Option<Arc<SbxCli>>,
     pub pty_bridge: Arc<PtyBridge>,
@@ -145,6 +148,26 @@ pub async fn start_server(
     // Export/Import manager
     let export_import_manager = Arc::new(ExportImportManager::new(db.clone()));
 
+    // MCP Container Manager (requires Docker — optional)
+    let port_allocator = Arc::new(PortAllocator::new(db.clone(), 9100, 9199));
+    let mcp_container_manager = match McpContainerManager::new(db.clone(), port_allocator) {
+        Ok(mgr) => {
+            let mgr = Arc::new(mgr);
+            // Start all existing MCP containers on startup
+            let mgr_clone = mgr.clone();
+            tokio::spawn(async move {
+                if let Err(e) = mgr_clone.start_all().await {
+                    eprintln!("Warning: failed to start MCP containers: {}", e);
+                }
+            });
+            Some(mgr)
+        }
+        Err(e) => {
+            eprintln!("MCP Container Manager unavailable (Docker not accessible): {}", e);
+            None
+        }
+    };
+
     // Spawn session recovery as a non-blocking background task (Req 5.1–5.7)
     if let Some(ref sm) = session_manager {
         let sm_clone = sm.clone();
@@ -178,6 +201,7 @@ pub async fn start_server(
         template_manager,
         system_manager,
         export_import_manager,
+        mcp_container_manager,
         db,
         sbx,
         pty_bridge,
