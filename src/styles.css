@@ -46,6 +46,134 @@ body {
   container-type: inline-size;
 }
 
+/* Light mode sidebar */
+:root[data-theme="light"] .sidebar {
+  background-color: #f0f0f5;
+  color: #333;
+  border-right-color: #ddd;
+}
+
+:root[data-theme="light"] .sidebar-link {
+  color: #555;
+}
+
+:root[data-theme="light"] .sidebar-link:hover {
+  background-color: rgba(108, 99, 255, 0.06);
+  color: #333;
+}
+
+:root[data-theme="light"] .sidebar-link--active {
+  background-color: rgba(108, 99, 255, 0.1);
+  color: #6c63ff;
+}
+
+:root[data-theme="light"] .sidebar-header {
+  border-bottom-color: #ddd;
+}
+
+:root[data-theme="light"] .sidebar-footer {
+  border-top-color: #ddd;
+}
+
+:root[data-theme="light"] .sidebar-help-link {
+  color: #555;
+}
+
+:root[data-theme="light"] .sidebar-help-link:hover {
+  background-color: rgba(108, 99, 255, 0.08);
+  color: #333;
+}
+
+:root[data-theme="light"] .sidebar-help-link--active {
+  background-color: rgba(108, 99, 255, 0.12);
+  color: #6c63ff;
+}
+
+:root[data-theme="light"] .sidebar-help-icon {
+  background: rgba(108, 99, 255, 0.15);
+  color: #6c63ff;
+}
+
+:root[data-theme="light"] .theme-toggle-btn {
+  background: rgba(0, 0, 0, 0.05);
+  color: #666;
+}
+
+:root[data-theme="light"] .theme-toggle-btn:hover {
+  background: rgba(0, 0, 0, 0.1);
+  color: #333;
+}
+
+:root[data-theme="light"] .theme-toggle-btn.active {
+  background: rgba(108, 99, 255, 0.2);
+  color: #6c63ff;
+}
+
+/* Also apply light sidebar when system prefers light and no explicit theme set */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .sidebar {
+    background-color: #f0f0f5;
+    color: #333;
+    border-right-color: #ddd;
+  }
+
+  :root:not([data-theme="dark"]) .sidebar-link {
+    color: #555;
+  }
+
+  :root:not([data-theme="dark"]) .sidebar-link:hover {
+    background-color: rgba(108, 99, 255, 0.06);
+    color: #333;
+  }
+
+  :root:not([data-theme="dark"]) .sidebar-link--active {
+    background-color: rgba(108, 99, 255, 0.1);
+    color: #6c63ff;
+  }
+
+  :root:not([data-theme="dark"]) .sidebar-header {
+    border-bottom-color: #ddd;
+  }
+
+  :root:not([data-theme="dark"]) .sidebar-footer {
+    border-top-color: #ddd;
+  }
+
+  :root:not([data-theme="dark"]) .sidebar-help-link {
+    color: #555;
+  }
+
+  :root:not([data-theme="dark"]) .sidebar-help-link:hover {
+    background-color: rgba(108, 99, 255, 0.08);
+    color: #333;
+  }
+
+  :root:not([data-theme="dark"]) .sidebar-help-link--active {
+    background-color: rgba(108, 99, 255, 0.12);
+    color: #6c63ff;
+  }
+
+  :root:not([data-theme="dark"]) .sidebar-help-icon {
+    background: rgba(108, 99, 255, 0.15);
+    color: #6c63ff;
+  }
+
+  :root:not([data-theme="dark"]) .theme-toggle-btn {
+    background: rgba(0, 0, 0, 0.05);
+    color: #666;
+  }
+
+  :root:not([data-theme="dark"]) .theme-toggle-btn:hover {
+    background: rgba(0, 0, 0, 0.1);
+    color: #333;
+  }
+
+  :root:not([data-theme="dark"]) .theme-toggle-btn.active {
+    background: rgba(108, 99, 255, 0.2);
+    color: #6c63ff;
+  }
+}
+
 .sidebar-header {
   padding: 1.25rem 0.75rem;
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
