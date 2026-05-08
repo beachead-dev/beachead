@@ -721,7 +721,7 @@ impl SessionManager {
             match result {
                 Some((port, bearer_token, status)) if status == "running" => {
                     Ok(Some(McpConfig {
-                        url: format!("http://host.docker.internal:{}", port),
+                        url: format!("http://host.docker.internal:{}/sse", port),
                         bearer_token,
                         port,
                     }))

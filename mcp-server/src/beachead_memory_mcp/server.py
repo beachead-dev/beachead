@@ -12,12 +12,13 @@ and FAISS for vector similarity search.
 
 from __future__ import annotations
 
-import hmac
 import logging
 import os
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 from beachead_memory_mcp.embeddings import EmbeddingModel
 from beachead_memory_mcp.vector_store import VectorStore
@@ -30,10 +31,12 @@ BEARER_TOKEN = os.environ.get("BEACHEAD_BEARER_TOKEN", "")
 PORT = int(os.environ.get("BEACHEAD_PORT", "9100"))
 HOST = os.environ.get("BEACHEAD_HOST", "0.0.0.0")
 
-# Initialize the MCP server
+# Initialize the MCP server with configured host and port
 mcp = FastMCP(
     "beachead-memory",
     instructions="Long-term memory for Beachead personas via RAG",
+    host=HOST,
+    port=PORT,
 )
 
 # Lazy-initialized globals
@@ -61,23 +64,6 @@ def _get_vector_store() -> VectorStore:
         _vector_store = VectorStore(data_dir=DATA_DIR, dimension=model.dimension)
         logger.info("Vector store initialized at %s", DATA_DIR)
     return _vector_store
-
-
-def _validate_auth(token: str | None) -> bool:
-    """Validate bearer token using constant-time comparison.
-
-    Args:
-        token: The token to validate (None if not provided).
-
-    Returns:
-        True if valid, False otherwise.
-    """
-    if not BEARER_TOKEN:
-        # No token configured = auth disabled (development mode)
-        return True
-    if token is None:
-        return False
-    return hmac.compare_digest(token, BEARER_TOKEN)
 
 
 @mcp.tool()
@@ -222,41 +208,23 @@ def memory_delete(entry_id: str) -> dict:
         return {"id": entry_id.strip(), "status": "not_found"}
 
 
-def create_app():
-    """Create the Starlette ASGI application with auth middleware.
-
-    Returns the MCP server wrapped with bearer token authentication
-    and a health check endpoint.
-    """
-    from starlette.applications import Starlette
-    from starlette.responses import JSONResponse
-    from starlette.routing import Route
-
-    from beachead_memory_mcp.auth import BearerTokenMiddleware
-
-    async def health_check(request):
-        """Health check endpoint - returns server status."""
-        store = _get_vector_store()
-        return JSONResponse({
-            "status": "healthy",
-            "entries_count": store.count,
-            "model_dimension": _get_embedding_model().dimension,
-        })
-
-    # Create a Starlette app with health check
-    app = Starlette(
-        routes=[Route("/health", health_check, methods=["GET"])],
-    )
-
-    # Add bearer token auth middleware if token is configured
-    if BEARER_TOKEN:
-        app.add_middleware(BearerTokenMiddleware, expected_token=BEARER_TOKEN)
-
-    return app
+@mcp.custom_route("/health", methods=["GET"])
+async def health_check(request: Request) -> JSONResponse:
+    """Health check endpoint - returns server status."""
+    store = _get_vector_store()
+    return JSONResponse({
+        "status": "healthy",
+        "entries_count": store.count,
+        "model_dimension": _get_embedding_model().dimension,
+    })
 
 
 def main():
     """Run the MCP server with HTTP/SSE transport."""
+    import uvicorn
+
+    from beachead_memory_mcp.auth import BearerTokenMiddleware
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -266,8 +234,15 @@ def main():
     logger.info("Data directory: %s", DATA_DIR)
     logger.info("Auth: %s", "enabled" if BEARER_TOKEN else "disabled (no token configured)")
 
-    # Run the MCP server with SSE transport
-    mcp.run(transport="sse")
+    # Get the Starlette app from FastMCP and add bearer token auth middleware
+    app = mcp.sse_app()
+    if BEARER_TOKEN:
+        app.add_middleware(BearerTokenMiddleware, expected_token=BEARER_TOKEN)
+
+    config = uvicorn.Config(app, host=HOST, port=PORT, log_level="info")
+    server = uvicorn.Server(config)
+    import asyncio
+    asyncio.run(server.serve())
 
 
 if __name__ == "__main__":

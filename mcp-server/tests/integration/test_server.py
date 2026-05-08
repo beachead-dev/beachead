@@ -39,8 +39,8 @@ class TestHealthCheck:
 
         import beachead_memory_mcp.server as server_module
 
-        # Ensure the server module is initialized
-        app = server_module.create_app()
+        # Get the Starlette app from the FastMCP instance
+        app = server_module.mcp.sse_app()
         client = TestClient(app)
 
         response = client.get("/health")
