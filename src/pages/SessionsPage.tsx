@@ -1,6 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { api } from "../lib/api";
-import { useWebSocket, ReadyState } from "../hooks/useWebSocket";
 import { ResizeHandle } from "../components/ResizeHandle";
 import { useDropzone } from "react-dropzone";
 import { Terminal } from "@xterm/xterm";
@@ -567,12 +566,10 @@ function TerminalView({ sessionId }: { sessionId: string }) {
   const termRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
-  const wsUrl = `ws://127.0.0.1:9876/api/sessions/${sessionId}/terminal`;
-  const { sendMessage, lastMessage, readyState, connect } = useWebSocket(wsUrl);
-  const sendMessageRef = useRef(sendMessage);
-  sendMessageRef.current = sendMessage;
+  const wsRef = useRef<WebSocket | null>(null);
+  const [connected, setConnected] = useState(false);
 
-  // Create terminal once on mount — never dispose until unmount
+  // Create terminal and WebSocket on mount — bypass React state for I/O
   useEffect(() => {
     if (!termRef.current || terminalRef.current) return;
 
@@ -584,12 +581,10 @@ function TerminalView({ sessionId }: { sessionId: string }) {
     });
     const fitAddon = new FitAddon();
     const webLinksAddon = new WebLinksAddon((_event, uri) => {
-      // Security: only allow http/https schemes
       if (!uri.startsWith("http://") && !uri.startsWith("https://")) {
         console.warn("Blocked non-http URL from terminal:", uri);
         return;
       }
-      // Confirm before opening external URL (agent controls terminal output)
       ask(`Open in browser?\n\n${uri}`, { title: "Open Link", kind: "info" })
         .then((confirmed) => {
           if (confirmed) {
@@ -603,29 +598,64 @@ function TerminalView({ sessionId }: { sessionId: string }) {
     term.open(termRef.current);
     fitAddon.fit();
 
-    term.onData((data) => {
-      sendMessageRef.current(data);
-    });
-
     terminalRef.current = term;
     fitAddonRef.current = fitAddon;
 
+    // --- WebSocket: direct connection, no React state intermediary ---
+    const wsUrl = `ws://127.0.0.1:9876/api/sessions/${sessionId}/terminal`;
+    const ws = new WebSocket(wsUrl);
+    ws.binaryType = "arraybuffer";
+    wsRef.current = ws;
+
+    ws.onopen = () => {
+      setConnected(true);
+      // Send initial terminal size
+      const { rows, cols } = term;
+      ws.send(`\x01${JSON.stringify({ rows, cols })}`);
+    };
+
+    ws.onmessage = (event: MessageEvent) => {
+      // Write directly to xterm — no React render cycle involved
+      if (event.data instanceof ArrayBuffer) {
+        term.write(new Uint8Array(event.data));
+      } else {
+        term.write(event.data);
+      }
+    };
+
+    ws.onclose = () => {
+      setConnected(false);
+    };
+
+    ws.onerror = () => {
+      ws.close();
+    };
+
+    // Terminal input -> WebSocket
+    term.onData((data) => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(data);
+      }
+    });
+
+    // Handle resize
     const handleResize = () => {
       fitAddon.fit();
-      // Send resize control message to backend (protocol: \x01 + JSON)
-      const { rows, cols } = term;
-      sendMessageRef.current(`\x01${JSON.stringify({ rows, cols })}`);
+      if (ws.readyState === WebSocket.OPEN) {
+        const { rows, cols } = term;
+        ws.send(`\x01${JSON.stringify({ rows, cols })}`);
+      }
     };
     window.addEventListener("resize", handleResize);
 
-    // Send initial size after terminal opens
-    setTimeout(() => {
-      const { rows, cols } = term;
-      sendMessageRef.current(`\x01${JSON.stringify({ rows, cols })}`);
-    }, 100);
-
     return () => {
       window.removeEventListener("resize", handleResize);
+      ws.onopen = null;
+      ws.onmessage = null;
+      ws.onclose = null;
+      ws.onerror = null;
+      ws.close();
+      wsRef.current = null;
       term.dispose();
       terminalRef.current = null;
       fitAddonRef.current = null;
@@ -633,23 +663,11 @@ function TerminalView({ sessionId }: { sessionId: string }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Connect WebSocket once on mount
-  useEffect(() => {
-    connect();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    if (lastMessage && terminalRef.current) {
-      terminalRef.current.write(lastMessage.data);
-    }
-  }, [lastMessage]);
-
   return (
     <div className="terminal-container">
       <div className="terminal-status">
-        <span className={`status-dot ${readyState === ReadyState.OPEN ? "status-ok" : "status-missing"}`} />
-        <span>{readyState === ReadyState.OPEN ? "Connected" : "Disconnected"}</span>
+        <span className={`status-dot ${connected ? "status-ok" : "status-missing"}`} />
+        <span>{connected ? "Connected" : "Disconnected"}</span>
       </div>
       <div ref={termRef} className="terminal-view" aria-label="Terminal" role="application" />
     </div>

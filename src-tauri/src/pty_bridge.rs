@@ -198,13 +198,14 @@ impl PtyBridge {
         // Subscribe to the PTY output broadcast
         let mut output_rx = session.output_tx.subscribe();
 
-        // Task 1: PTY output (broadcast) -> WebSocket
+        // Task 1: PTY output (broadcast) -> WebSocket as binary frames.
+        // Binary avoids UTF-8 conversion issues with split multi-byte sequences
+        // and ANSI escape codes. xterm.js handles raw bytes natively.
         let ws_forward_handle = tokio::spawn(async move {
             loop {
                 match output_rx.recv().await {
                     Ok(data) => {
-                        let text = String::from_utf8_lossy(&data).into_owned();
-                        if ws_sender.send(Message::Text(text.into())).await.is_err() {
+                        if ws_sender.send(Message::Binary(data.into())).await.is_err() {
                             break; // WebSocket closed
                         }
                     }
