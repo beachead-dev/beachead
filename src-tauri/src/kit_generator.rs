@@ -67,7 +67,7 @@ impl KitGenerator {
     }
 
     /// Build the spec.yaml content for a persona's mixin kit.
-    fn build_spec_yaml(&self, persona: &Persona, mcp_config: Option<&McpConfig>, sbx_agent: Option<&str>) -> String {
+    fn build_spec_yaml(&self, persona: &Persona, mcp_config: Option<&McpConfig>, _sbx_agent: Option<&str>) -> String {
         let mut yaml = String::new();
 
         // Header
@@ -91,14 +91,15 @@ impl KitGenerator {
         }
 
         // network.allowedDomains
-        let domains = self.collect_allowed_domains(persona, mcp_config, sbx_agent);
-        if !domains.is_empty() {
-            yaml.push_str("\nnetwork:\n");
-            yaml.push_str("  allowedDomains:\n");
-            for domain in &domains {
-                yaml.push_str(&format!("    - \"{}\"\n", domain));
-            }
-        }
+        // NOTE: We intentionally do NOT emit network.allowedDomains in the kit.
+        // When present, it acts as a restrictive allowlist that blocks all other
+        // traffic. MCP containers on host.docker.internal are already reachable
+        // from sandboxes, and agent auth domains are handled by the default
+        // sandbox network policy. Emitting this section would block the agent
+        // from reaching APIs, package registries, etc. after authentication.
+        //
+        // If specific network restrictions are needed, use `sbx policy allow/deny`
+        // commands after sandbox creation instead.
 
         // memory field (if memory enabled)
         if persona.memory_enabled {
@@ -184,89 +185,7 @@ impl KitGenerator {
 
         Some(serde_json::to_string_pretty(&mcp_json).unwrap_or_default())
     }
-
-    /// Collect all network domains that need to be allowed for MCP servers.
-    fn collect_allowed_domains(
-        &self,
-        persona: &Persona,
-        mcp_config: Option<&McpConfig>,
-        sbx_agent: Option<&str>,
-    ) -> Vec<String> {
-        let mut domains = Vec::new();
-
-        // Agent-specific required domains for auth/API access
-        if let Some(agent) = sbx_agent {
-            let agent_domains = required_domains_for_agent(agent);
-            domains.extend(agent_domains);
-        }
-
-        // Memory MCP port
-        if let Some(config) = mcp_config {
-            domains.push(format!("127.0.0.1:{}", config.port));
-        }
-
-        // Additional MCP server ports
-        for mcp_server in &persona.mcp_servers {
-            if let Some(domain) = extract_host_port(&mcp_server.url) {
-                domains.push(domain);
-            }
-        }
-
-        domains
-    }
 }
-
-/// Return required network domains for a given agent type.
-/// These are domains the agent needs for authentication or API access
-/// that may not be covered by the user's global policy.
-fn required_domains_for_agent(agent: &str) -> Vec<String> {
-    match agent {
-        "kiro" => vec!["**.kiro.dev:443".to_string()],
-        "claude" => vec!["api.anthropic.com:443".to_string()],
-        "codex" | "opencode" => vec!["**.openai.com:443".to_string()],
-        "copilot" => vec!["**.github.com:443".to_string(), "**.githubcopilot.com:443".to_string()],
-        "cursor" => vec!["**.cursor.sh:443".to_string(), "cursor.com:443".to_string()],
-        "gemini" => vec!["generativelanguage.googleapis.com:443".to_string()],
-        "droid" => vec!["**.factory.ai:443".to_string()],
-        _ => vec![],
-    }
-}
-
-/// Extract host:port from a URL string for network allowedDomains.
-fn extract_host_port(url: &str) -> Option<String> {
-    // Determine scheme and strip it
-    let after_scheme = if url.starts_with("https://") {
-        &url[8..]
-    } else if url.starts_with("http://") {
-        &url[7..]
-    } else {
-        return None;
-    };
-
-    // Extract authority (before first '/')
-    let authority = after_scheme.split('/').next().unwrap_or("");
-    if authority.is_empty() {
-        return None;
-    }
-
-    // Check if there's an explicit port
-    if let Some(colon_pos) = authority.rfind(':') {
-        let host = &authority[..colon_pos];
-        let port_str = &authority[colon_pos + 1..];
-        if !host.is_empty() && port_str.parse::<u16>().is_ok() {
-            return Some(format!("{}:{}", host, port_str));
-        }
-    }
-
-    // No explicit port — use default for scheme
-    let default_port = if url.starts_with("https://") {
-        443
-    } else {
-        80
-    };
-    Some(format!("{}:{}", authority, default_port))
-}
-
 
 #[cfg(test)]
 mod tests {
@@ -348,10 +267,9 @@ mod tests {
         assert!(content.contains("host.docker.internal:9100/sse"));
         assert!(content.contains("Bearer secret-token-123"));
 
-        // Should have network allowedDomains
-        assert!(content.contains("network:"));
-        assert!(content.contains("allowedDomains:"));
-        assert!(content.contains("127.0.0.1:9100"));
+        // Should NOT have network allowedDomains (restrictive allowlist removed)
+        assert!(!content.contains("network:"));
+        assert!(!content.contains("allowedDomains:"));
 
         // Should have memory instructions
         assert!(content.contains("memory: |"));
@@ -393,10 +311,9 @@ mod tests {
         assert!(content.contains("tools"));
         assert!(content.contains("http://localhost:9090/sse"));
 
-        // Should have network allowedDomains for both servers
-        assert!(content.contains("network:"));
-        assert!(content.contains("localhost:8080"));
-        assert!(content.contains("localhost:9090"));
+        // Should NOT have network allowedDomains (restrictive allowlist removed)
+        assert!(!content.contains("network:"));
+        assert!(!content.contains("allowedDomains:"));
     }
 
     #[test]
@@ -424,9 +341,8 @@ mod tests {
         assert!(content.contains("host.docker.internal:9200/sse"));
         assert!(content.contains("http://localhost:7070/api"));
 
-        // Network should include both ports
-        assert!(content.contains("127.0.0.1:9200"));
-        assert!(content.contains("localhost:7070"));
+        // Should NOT have network allowedDomains (restrictive allowlist removed)
+        assert!(!content.contains("network:"));
 
         // Memory instructions present
         assert!(content.contains("memory: |"));
@@ -467,35 +383,6 @@ mod tests {
         assert_ne!(path1, path2);
         assert!(path1.exists());
         assert!(path2.exists());
-    }
-
-    #[test]
-    fn test_extract_host_port_with_port() {
-        assert_eq!(
-            extract_host_port("http://localhost:8080/path"),
-            Some("localhost:8080".to_string())
-        );
-    }
-
-    #[test]
-    fn test_extract_host_port_default_http() {
-        assert_eq!(
-            extract_host_port("http://example.com/path"),
-            Some("example.com:80".to_string())
-        );
-    }
-
-    #[test]
-    fn test_extract_host_port_default_https() {
-        assert_eq!(
-            extract_host_port("https://example.com/path"),
-            Some("example.com:443".to_string())
-        );
-    }
-
-    #[test]
-    fn test_extract_host_port_invalid_url() {
-        assert_eq!(extract_host_port("not-a-url"), None);
     }
 
     #[test]
@@ -782,41 +669,15 @@ mod tests {
                 }
 
                 // --- network.allowedDomains ---
-                if has_any_mcp {
-                    prop_assert!(
-                        content.contains("network:"),
-                        "Has MCP servers but missing network section"
-                    );
-                    prop_assert!(
-                        content.contains("allowedDomains:"),
-                        "Has MCP servers but missing allowedDomains"
-                    );
-
-                    // Memory MCP port in allowedDomains
-                    if let Some(ref config) = mcp_config {
-                        prop_assert!(
-                            content.contains(&format!("127.0.0.1:{}", config.port)),
-                            "McpConfig port {} not in allowedDomains",
-                            config.port
-                        );
-                    }
-
-                    // Each persona MCP server host:port in allowedDomains
-                    for server in &mcp_servers {
-                        if let Some(domain) = extract_host_port(&server.url) {
-                            prop_assert!(
-                                content.contains(&domain),
-                                "MCP server domain '{}' not in allowedDomains",
-                                domain
-                            );
-                        }
-                    }
-                } else {
-                    prop_assert!(
-                        !content.contains("network:"),
-                        "No MCP servers but network section present"
-                    );
-                }
+                // Network section should never be emitted (restrictive allowlist removed)
+                prop_assert!(
+                    !content.contains("network:"),
+                    "network: section should not be present in kit spec.yaml"
+                );
+                prop_assert!(
+                    !content.contains("allowedDomains:"),
+                    "allowedDomains: section should not be present in kit spec.yaml"
+                );
             }
         }
     }
