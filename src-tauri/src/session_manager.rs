@@ -8,11 +8,12 @@ use std::path::Path;
 use std::sync::Arc;
 
 use chrono::Utc;
+use rusqlite::OptionalExtension;
 
 use crate::db::Database;
 use crate::db_ops;
 use crate::error::OrchestratorError;
-use crate::kit_generator::KitGenerator;
+use crate::kit_generator::{KitGenerator, McpConfig};
 use crate::pty_bridge::PtyBridge;
 use crate::sbx::{SbxCli, SbxRunArgs};
 use crate::types::{
@@ -89,15 +90,13 @@ impl SessionManager {
         let agent = self.resolve_agent_identifier(&persona)?;
 
         // 3. Generate kit (includes agent-specific network domains)
-        // TODO: Phase 2 — If persona.memory_enabled is true, look up the MCP container
-        // for this persona to get port and bearer_token, then construct a McpConfig:
-        //   let mcp_config = if persona.memory_enabled {
-        //       // Query mcp_containers table for this persona_id
-        //       // McpConfig { url: format!("http://host.docker.internal:{}", container.port),
-        //       //             bearer_token: container.bearer_token, port: container.port }
-        //       Some(mcp_config)
-        //   } else { None };
-        let kit_path = self.kit_generator.generate(&persona, None, Some(&agent))?;
+        // If persona has memory enabled, look up the MCP container to inject config into the kit
+        let mcp_config = if persona.memory_enabled {
+            self.lookup_mcp_config(&persona.id)?
+        } else {
+            None
+        };
+        let kit_path = self.kit_generator.generate(&persona, mcp_config.as_ref(), Some(&agent))?;
 
         // 4. Create session record in "starting" state
         let session_id = SessionId::new();
@@ -698,6 +697,45 @@ impl SessionManager {
                     agent_type.name
                 ))
             })
+    }
+
+    /// Look up the MCP container for a persona and construct a McpConfig for kit generation.
+    /// Returns None if no container exists or the container is not running.
+    fn lookup_mcp_config(&self, persona_id: &PersonaId) -> Result<Option<McpConfig>, OrchestratorError> {
+        self.db.with_conn(|conn| {
+            let result: Option<(u16, String, String)> = conn
+                .query_row(
+                    "SELECT port, bearer_token, status FROM mcp_containers WHERE persona_id = ?1",
+                    rusqlite::params![persona_id.0],
+                    |row| {
+                        Ok((
+                            row.get::<_, i64>(0)? as u16,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                        ))
+                    },
+                )
+                .optional()
+                .map_err(|e| OrchestratorError::Database(e.to_string()))?;
+
+            match result {
+                Some((port, bearer_token, status)) if status == "running" => {
+                    Ok(Some(McpConfig {
+                        url: format!("http://host.docker.internal:{}", port),
+                        bearer_token,
+                        port,
+                    }))
+                }
+                Some((_, _, status)) => {
+                    eprintln!(
+                        "MCP container for persona {} exists but is not running (status: {})",
+                        persona_id.0, status
+                    );
+                    Ok(None)
+                }
+                None => Ok(None),
+            }
+        })
     }
 }
 
