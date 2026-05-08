@@ -131,14 +131,6 @@ pub async fn start_server(
     let policy_manager = sbx.as_ref().map(|s| Arc::new(PolicyManager::new(s.clone())));
     let template_manager = sbx.as_ref().map(|s| Arc::new(TemplateManager::new(s.clone())));
     let system_manager = sbx.as_ref().map(|s| Arc::new(SystemManager::new(s.clone())));
-    let session_manager = sbx.as_ref().map(|s| {
-        Arc::new(SessionManager::new(
-            db.clone(),
-            s.clone(),
-            kit_generator.clone(),
-            pty_bridge.clone(),
-        ))
-    });
 
     // Seed built-in agents
     if let Err(e) = agent_manager.seed_builtin_agents() {
@@ -149,13 +141,17 @@ pub async fn start_server(
     let export_import_manager = Arc::new(ExportImportManager::new(db.clone()));
 
     // MCP Container Manager (requires Docker — optional)
+    // Created before SessionManager so it can be passed as a dependency.
     let port_allocator = Arc::new(PortAllocator::new(db.clone(), 9100, 9199));
     let mcp_container_manager = match McpContainerManager::new(db.clone(), port_allocator) {
         Ok(mgr) => {
             let mgr = Arc::new(mgr);
-            // Start all existing MCP containers on startup
+            // Ensure the MCP image exists and start all existing containers on startup
             let mgr_clone = mgr.clone();
             tokio::spawn(async move {
+                if let Err(e) = mgr_clone.ensure_image_available().await {
+                    eprintln!("Warning: MCP image not available: {}", e);
+                }
                 if let Err(e) = mgr_clone.start_all().await {
                     eprintln!("Warning: failed to start MCP containers: {}", e);
                 }
@@ -167,6 +163,17 @@ pub async fn start_server(
             None
         }
     };
+
+    // Session manager depends on sbx and optionally on mcp_container_manager
+    let session_manager = sbx.as_ref().map(|s| {
+        Arc::new(SessionManager::new(
+            db.clone(),
+            s.clone(),
+            kit_generator.clone(),
+            pty_bridge.clone(),
+            mcp_container_manager.clone(),
+        ))
+    });
 
     // Spawn session recovery as a non-blocking background task (Req 5.1–5.7)
     if let Some(ref sm) = session_manager {

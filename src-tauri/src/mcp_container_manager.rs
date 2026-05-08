@@ -114,6 +114,146 @@ impl McpContainerManager {
         })
     }
 
+    /// Ensure the MCP Docker image exists locally.
+    ///
+    /// Checks if `beachead-memory-mcp:latest` is available. Returns an error
+    /// if the image is missing — it should have been built by the installer.
+    pub async fn ensure_image_available(&self) -> Result<(), OrchestratorError> {
+        match self.docker.inspect_image(MCP_IMAGE).await {
+            Ok(_) => Ok(()),
+            Err(bollard::errors::Error::DockerResponseServerError { status_code: 404, .. }) => {
+                Err(OrchestratorError::DockerError(format!(
+                    "MCP image '{}' not found. Please re-run the installer or \
+                     build it manually: docker build -t {} mcp-server/",
+                    MCP_IMAGE, MCP_IMAGE
+                )))
+            }
+            Err(e) => {
+                Err(OrchestratorError::DockerError(
+                    format!("Failed to inspect image '{}': {}", MCP_IMAGE, e),
+                ))
+            }
+        }
+    }
+
+    /// Ensure the MCP container for a persona is running.
+    ///
+    /// Handles all cases:
+    /// - Container exists and is running → returns its config (no-op)
+    /// - Container exists but is stopped/failed → restarts it
+    /// - No container exists → creates and starts one
+    ///
+    /// Called by SessionManager at session start time.
+    pub async fn ensure_container_running(&self, persona_id: &PersonaId) -> Result<McpContainer, OrchestratorError> {
+        let existing = self.find_by_persona_id(persona_id)?;
+
+        match existing {
+            Some(container) if container.status == ContainerStatus::Running => {
+                // Already running — verify with Docker that it's actually alive
+                if let Some(ref docker_id) = container.container_id {
+                    match self.docker.inspect_container(docker_id, None).await {
+                        Ok(info) => {
+                            let is_running = info
+                                .state
+                                .as_ref()
+                                .and_then(|s| s.running)
+                                .unwrap_or(false);
+                            if is_running {
+                                return Ok(container);
+                            }
+                            // Docker says it's not running — restart it
+                        }
+                        Err(_) => {
+                            // Can't inspect — container may have been removed externally
+                            // Fall through to recreate
+                            return self.recreate_container(container).await;
+                        }
+                    }
+                } else {
+                    // No docker_id recorded — need to recreate
+                    return self.recreate_container(container).await;
+                }
+
+                // Container exists in DB as "running" but Docker says otherwise — restart
+                self.restart_existing_container(container).await
+            }
+            Some(container) if container.status == ContainerStatus::Stopped
+                || container.status == ContainerStatus::Created => {
+                // Stopped or just created — start it
+                self.restart_existing_container(container).await
+            }
+            Some(container) if container.status == ContainerStatus::Failed => {
+                // Failed — try to restart, recreate if that fails
+                match self.restart_existing_container(container.clone()).await {
+                    Ok(c) => Ok(c),
+                    Err(_) => self.recreate_container(container).await,
+                }
+            }
+            Some(container) => {
+                // Unknown status — try restart
+                self.restart_existing_container(container).await
+            }
+            None => {
+                // No container exists — create one
+                self.create_container(persona_id.clone()).await
+            }
+        }
+    }
+
+    /// Restart an existing container that has a Docker container ID.
+    async fn restart_existing_container(&self, container: McpContainer) -> Result<McpContainer, OrchestratorError> {
+        if let Some(ref docker_id) = container.container_id {
+            // Try to start it (works for stopped containers)
+            match self.docker.start_container(docker_id, None::<StartContainerOptions<String>>).await {
+                Ok(_) => {
+                    self.update_status(&container.id, ContainerStatus::Running)?;
+                    let mut updated = container;
+                    updated.status = ContainerStatus::Running;
+                    return Ok(updated);
+                }
+                Err(e) => {
+                    eprintln!(
+                        "Failed to start existing container {} for persona {}: {}",
+                        docker_id, container.persona_id.0, e
+                    );
+                    // Fall through to recreate
+                }
+            }
+        }
+
+        self.recreate_container(container).await
+    }
+
+    /// Remove an existing container record and create a fresh one.
+    async fn recreate_container(&self, container: McpContainer) -> Result<McpContainer, OrchestratorError> {
+        let persona_id = container.persona_id.clone();
+
+        // Clean up the old container from Docker (best-effort)
+        if let Some(ref docker_id) = container.container_id {
+            let _ = self.docker.stop_container(docker_id, Some(StopContainerOptions { t: 5 })).await;
+            let _ = self.docker.remove_container(docker_id, Some(RemoveContainerOptions {
+                force: true,
+                ..Default::default()
+            })).await;
+        }
+
+        // Release the old port
+        self.port_allocator.release(container.port)?;
+
+        // Delete the old DB record
+        self.db.with_conn(|conn| {
+            conn.execute(
+                "DELETE FROM mcp_containers WHERE id = ?1",
+                params![container.id.0],
+            )
+            .map_err(|e| OrchestratorError::Database(e.to_string()))?;
+            Ok(())
+        })?;
+
+        // Create a fresh container
+        self.create_container(persona_id).await
+    }
+
     /// Create a new MCP container for the given persona.
     ///
     /// Allocates a port, generates a bearer token, creates the Docker container

@@ -95,21 +95,60 @@ if ($DockerOk) {
 }
 
 # --- Check Docker daemon is running (needed for MCP memory containers) ---
+$DockerRunning = $false
 if ($DockerOk) {
     Write-Host "Checking Docker daemon status..." -ForegroundColor White
     try {
         $null = & docker info 2>&1
         if ($LASTEXITCODE -eq 0) {
             Write-Host "  [OK] Docker daemon is running" -ForegroundColor Green
-            Write-Host "    Memory MCP containers will start automatically with Beachead."
+            $DockerRunning = $true
         } else {
             Write-Host "  [!] Docker daemon is not running" -ForegroundColor Yellow
             Write-Host "    Start Docker to use per-persona memory features."
-            Write-Host "    Memory MCP containers require the Docker daemon to be active."
         }
     } catch {
         Write-Host "  [!] Could not check Docker daemon status" -ForegroundColor Yellow
         Write-Host "    Ensure Docker Desktop is running for memory features."
+    }
+    Write-Host ""
+}
+
+# --- Build MCP memory server Docker image ---
+if ($DockerOk -and $DockerRunning) {
+    Write-Host "Building MCP memory server image..." -ForegroundColor White
+
+    # Locate the mcp-server directory
+    $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+    $McpServerDir = $null
+
+    if (Test-Path (Join-Path $ScriptDir "..\mcp-server\Dockerfile")) {
+        $McpServerDir = Join-Path $ScriptDir "..\mcp-server"
+    } elseif (Test-Path (Join-Path $ScriptDir "..\..\mcp-server\Dockerfile")) {
+        $McpServerDir = Join-Path $ScriptDir "..\..\mcp-server"
+    } elseif (Test-Path "mcp-server\Dockerfile") {
+        $McpServerDir = "mcp-server"
+    }
+
+    if ($McpServerDir) {
+        $existingImage = & docker images --format '{{.Repository}}:{{.Tag}}' 2>&1 | Where-Object { $_ -eq "beachead-memory-mcp:latest" }
+        if ($existingImage) {
+            Write-Host "  [OK] Image beachead-memory-mcp:latest already exists" -ForegroundColor Green
+        } else {
+            Write-Host "  Building beachead-memory-mcp:latest (this may take a few minutes)..."
+            $null = & docker build -t beachead-memory-mcp:latest $McpServerDir 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "  [OK] Image beachead-memory-mcp:latest built successfully" -ForegroundColor Green
+            } else {
+                Write-Host "  [X] Failed to build MCP image" -ForegroundColor Red
+                Write-Host "    You can build it manually later:"
+                Write-Host "    docker build -t beachead-memory-mcp:latest $McpServerDir"
+            }
+        }
+    } else {
+        Write-Host "  [!] mcp-server\ directory not found - cannot build image" -ForegroundColor Yellow
+        Write-Host "    Build it manually from the project root:"
+        Write-Host "    docker build -t beachead-memory-mcp:latest mcp-server\"
     }
     Write-Host ""
 }

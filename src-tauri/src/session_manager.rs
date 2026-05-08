@@ -8,12 +8,12 @@ use std::path::Path;
 use std::sync::Arc;
 
 use chrono::Utc;
-use rusqlite::OptionalExtension;
 
 use crate::db::Database;
 use crate::db_ops;
 use crate::error::OrchestratorError;
 use crate::kit_generator::{KitGenerator, McpConfig};
+use crate::mcp_container_manager::McpContainerManager;
 use crate::pty_bridge::PtyBridge;
 use crate::sbx::{SbxCli, SbxRunArgs};
 use crate::types::{
@@ -52,6 +52,7 @@ pub struct SessionManager {
     sbx: Arc<SbxCli>,
     kit_generator: Arc<KitGenerator>,
     pty_bridge: Arc<PtyBridge>,
+    mcp_container_manager: Option<Arc<McpContainerManager>>,
 }
 
 impl SessionManager {
@@ -61,12 +62,14 @@ impl SessionManager {
         sbx: Arc<SbxCli>,
         kit_generator: Arc<KitGenerator>,
         pty_bridge: Arc<PtyBridge>,
+        mcp_container_manager: Option<Arc<McpContainerManager>>,
     ) -> Self {
         Self {
             db,
             sbx,
             kit_generator,
             pty_bridge,
+            mcp_container_manager,
         }
     }
 
@@ -90,9 +93,9 @@ impl SessionManager {
         let agent = self.resolve_agent_identifier(&persona)?;
 
         // 3. Generate kit (includes agent-specific network domains)
-        // If persona has memory enabled, look up the MCP container to inject config into the kit
+        // If persona has memory enabled, ensure the MCP container is running and inject config into the kit
         let mcp_config = if persona.memory_enabled {
-            self.lookup_mcp_config(&persona.id)?
+            self.ensure_mcp_container_running(&persona.id).await?
         } else {
             None
         };
@@ -699,43 +702,36 @@ impl SessionManager {
             })
     }
 
-    /// Look up the MCP container for a persona and construct a McpConfig for kit generation.
-    /// Returns None if no container exists or the container is not running.
-    fn lookup_mcp_config(&self, persona_id: &PersonaId) -> Result<Option<McpConfig>, OrchestratorError> {
-        self.db.with_conn(|conn| {
-            let result: Option<(u16, String, String)> = conn
-                .query_row(
-                    "SELECT port, bearer_token, status FROM mcp_containers WHERE persona_id = ?1",
-                    rusqlite::params![persona_id.0],
-                    |row| {
-                        Ok((
-                            row.get::<_, i64>(0)? as u16,
-                            row.get::<_, String>(1)?,
-                            row.get::<_, String>(2)?,
-                        ))
-                    },
-                )
-                .optional()
-                .map_err(|e| OrchestratorError::Database(e.to_string()))?;
-
-            match result {
-                Some((port, bearer_token, status)) if status == "running" => {
-                    Ok(Some(McpConfig {
-                        url: format!("http://host.docker.internal:{}/sse", port),
-                        bearer_token,
-                        port,
-                    }))
-                }
-                Some((_, _, status)) => {
-                    eprintln!(
-                        "MCP container for persona {} exists but is not running (status: {})",
-                        persona_id.0, status
-                    );
-                    Ok(None)
-                }
-                None => Ok(None),
+    /// Ensure the MCP container for a persona is running and return its config.
+    ///
+    /// If the container exists but is stopped, restarts it. If it doesn't exist, creates it.
+    /// Returns None if the MCP container manager is unavailable (Docker not installed).
+    async fn ensure_mcp_container_running(&self, persona_id: &PersonaId) -> Result<Option<McpConfig>, OrchestratorError> {
+        let mgr = match &self.mcp_container_manager {
+            Some(mgr) => mgr,
+            None => {
+                eprintln!(
+                    "MCP container manager unavailable; skipping memory for persona {}",
+                    persona_id.0
+                );
+                return Ok(None);
             }
-        })
+        };
+
+        match mgr.ensure_container_running(persona_id).await {
+            Ok(container) => Ok(Some(McpConfig {
+                url: format!("http://host.docker.internal:{}/sse", container.port),
+                bearer_token: container.bearer_token,
+                port: container.port,
+            })),
+            Err(e) => {
+                eprintln!(
+                    "Failed to ensure MCP container for persona {}: {}",
+                    persona_id.0, e
+                );
+                Ok(None)
+            }
+        }
     }
 }
 
@@ -918,6 +914,7 @@ esac
             sbx,
             kit_generator,
             pty_bridge.clone(),
+            None,
         );
 
         let session = manager.start(&persona_id, None).await.unwrap();
@@ -948,7 +945,7 @@ esac
 
         let persona_id = insert_test_persona(&db, workspace_dir.path());
 
-        let manager = SessionManager::new(db.clone(), sbx, kit_generator, pty_bridge);
+        let manager = SessionManager::new(db.clone(), sbx, kit_generator, pty_bridge, None);
 
         let result = manager.start(&persona_id, None).await;
         assert!(result.is_err());
@@ -976,7 +973,7 @@ esac
 
         let persona_id = insert_test_persona(&db, workspace_dir.path());
 
-        let manager = SessionManager::new(db.clone(), sbx, kit_generator, pty_bridge);
+        let manager = SessionManager::new(db.clone(), sbx, kit_generator, pty_bridge, None);
 
         let result = manager.start(&persona_id, None).await;
         assert!(result.is_err());
@@ -1006,6 +1003,7 @@ esac
             sbx,
             kit_generator,
             pty_bridge.clone(),
+            None,
         );
 
         // Start a session first
@@ -1036,6 +1034,7 @@ esac
             sbx,
             kit_generator,
             pty_bridge.clone(),
+            None,
         );
 
         // Start a session first
@@ -1070,6 +1069,7 @@ esac
             sbx,
             kit_generator,
             pty_bridge.clone(),
+            None,
         );
 
         // Initially empty
@@ -1105,6 +1105,7 @@ esac
             sbx,
             kit_generator,
             pty_bridge.clone(),
+            None,
         );
 
         // Start a session
@@ -1142,6 +1143,7 @@ esac
             sbx,
             kit_generator,
             pty_bridge.clone(),
+            None,
         );
 
         // Start a session
@@ -1180,6 +1182,7 @@ esac
             sbx,
             kit_generator,
             pty_bridge.clone(),
+            None,
         );
 
         // Start and stop a session
@@ -1209,7 +1212,7 @@ esac
         let kit_generator = Arc::new(KitGenerator::new(kit_dir.path().to_path_buf()));
         let pty_bridge = Arc::new(PtyBridge::new());
 
-        let manager = SessionManager::new(db, sbx, kit_generator, pty_bridge);
+        let manager = SessionManager::new(db, sbx, kit_generator, pty_bridge, None);
 
         // Should detect credential errors
         assert!(manager.is_credential_error("Error: unauthorized access"));
@@ -1348,6 +1351,7 @@ esac
             sbx,
             kit_generator,
             pty_bridge.clone(),
+            None,
         );
 
         let results = manager.recover_sessions().await;
@@ -1389,6 +1393,7 @@ esac
             sbx,
             kit_generator,
             pty_bridge.clone(),
+            None,
         );
 
         let results = manager.recover_sessions().await;
@@ -1425,6 +1430,7 @@ esac
             sbx,
             kit_generator,
             pty_bridge.clone(),
+            None,
         );
 
         let results = manager.recover_sessions().await;
@@ -1445,7 +1451,7 @@ esac
         let (db, sbx, kit_generator, pty_bridge, _kit_dir, _workspace_dir) =
             setup_test_env(sbx_path);
 
-        let manager = SessionManager::new(db.clone(), sbx, kit_generator, pty_bridge);
+        let manager = SessionManager::new(db.clone(), sbx, kit_generator, pty_bridge, None);
 
         // No active sessions — should return empty
         let results = manager.recover_sessions().await;

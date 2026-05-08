@@ -101,11 +101,51 @@ if [ "$DOCKER_OK" = true ]; then
     echo -e "${BOLD}Checking Docker daemon status...${NC}"
     if docker info &>/dev/null; then
         echo -e "  ${GREEN}✓${NC} Docker daemon is running"
-        echo "    Memory MCP containers will start automatically with Beachead."
+        DOCKER_RUNNING=true
     else
         echo -e "  ${YELLOW}!${NC} Docker daemon is not running"
         echo "    Start Docker to use per-persona memory features."
-        echo "    Memory MCP containers require the Docker daemon to be active."
+        DOCKER_RUNNING=false
+    fi
+    echo ""
+fi
+
+# --- Build MCP memory server Docker image ---
+if [ "$DOCKER_OK" = true ] && [ "${DOCKER_RUNNING:-false}" = true ]; then
+    echo -e "${BOLD}Building MCP memory server image...${NC}"
+
+    # Locate the mcp-server directory
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    MCP_SERVER_DIR=""
+
+    # Check relative to script location (installed app)
+    if [ -f "${SCRIPT_DIR}/../mcp-server/Dockerfile" ]; then
+        MCP_SERVER_DIR="${SCRIPT_DIR}/../mcp-server"
+    # Check relative to project root (development)
+    elif [ -f "${SCRIPT_DIR}/../../mcp-server/Dockerfile" ]; then
+        MCP_SERVER_DIR="${SCRIPT_DIR}/../../mcp-server"
+    # Check CWD
+    elif [ -f "mcp-server/Dockerfile" ]; then
+        MCP_SERVER_DIR="mcp-server"
+    fi
+
+    if [ -n "$MCP_SERVER_DIR" ]; then
+        if docker images --format '{{.Repository}}:{{.Tag}}' | grep -q "^beachead-memory-mcp:latest$"; then
+            echo -e "  ${GREEN}✓${NC} Image beachead-memory-mcp:latest already exists"
+        else
+            echo "  Building beachead-memory-mcp:latest (this may take a few minutes)..."
+            if docker build -t beachead-memory-mcp:latest "$MCP_SERVER_DIR" >/dev/null 2>&1; then
+                echo -e "  ${GREEN}✓${NC} Image beachead-memory-mcp:latest built successfully"
+            else
+                echo -e "  ${RED}✗${NC} Failed to build MCP image"
+                echo "    You can build it manually later:"
+                echo "    docker build -t beachead-memory-mcp:latest $MCP_SERVER_DIR"
+            fi
+        fi
+    else
+        echo -e "  ${YELLOW}!${NC} mcp-server/ directory not found — cannot build image"
+        echo "    Build it manually from the project root:"
+        echo "    docker build -t beachead-memory-mcp:latest mcp-server/"
     fi
     echo ""
 fi
