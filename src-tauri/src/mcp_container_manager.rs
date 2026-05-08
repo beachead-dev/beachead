@@ -265,10 +265,8 @@ impl McpContainerManager {
         let volume_name = format!("beachead-memory-{}", persona_id.0);
         let now = Utc::now().to_rfc3339();
 
-        // Allocate a port
-        let port = self.port_allocator.allocate(&mcp_id.0)?;
-
-        // Persist the record first (so port_allocations FK is satisfied)
+        // Insert the mcp_containers record first (port_allocations has a FK to it)
+        // Use port 0 as placeholder until allocation succeeds.
         self.db.with_conn(|conn| {
             conn.execute(
                 "INSERT INTO mcp_containers (id, persona_id, port, bearer_token, volume_name, status, created_at, updated_at)
@@ -276,13 +274,37 @@ impl McpContainerManager {
                 params![
                     mcp_id.0,
                     persona_id.0,
-                    port as i64,
+                    0i64,
                     bearer_token,
                     volume_name,
                     ContainerStatus::Created.as_str(),
                     now,
                     now,
                 ],
+            )
+            .map_err(|e| OrchestratorError::Database(e.to_string()))?;
+            Ok(())
+        })?;
+
+        // Allocate a port (inserts into port_allocations which references mcp_containers)
+        let port = match self.port_allocator.allocate(&mcp_id.0) {
+            Ok(p) => p,
+            Err(e) => {
+                // Clean up the mcp_containers row on failure
+                let _ = self.db.with_conn(|conn| {
+                    conn.execute("DELETE FROM mcp_containers WHERE id = ?1", params![mcp_id.0])
+                        .map_err(|e| OrchestratorError::Database(e.to_string()))?;
+                    Ok(())
+                });
+                return Err(e);
+            }
+        };
+
+        // Update the record with the actual allocated port
+        self.db.with_conn(|conn| {
+            conn.execute(
+                "UPDATE mcp_containers SET port = ?1, updated_at = ?2 WHERE id = ?3",
+                params![port as i64, Utc::now().to_rfc3339(), mcp_id.0],
             )
             .map_err(|e| OrchestratorError::Database(e.to_string()))?;
             Ok(())
