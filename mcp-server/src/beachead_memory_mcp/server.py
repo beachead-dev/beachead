@@ -220,10 +220,8 @@ async def health_check(request: Request) -> JSONResponse:
 
 
 def main():
-    """Run the MCP server with HTTP/SSE transport."""
+    """Run the MCP server with streamable HTTP transport."""
     import uvicorn
-
-    from beachead_memory_mcp.auth import BearerTokenMiddleware
 
     logging.basicConfig(
         level=logging.INFO,
@@ -232,12 +230,10 @@ def main():
 
     logger.info("Starting Beachead Memory MCP Server on %s:%d", HOST, PORT)
     logger.info("Data directory: %s", DATA_DIR)
-    logger.info("Auth: %s", "enabled" if BEARER_TOKEN else "disabled (no token configured)")
 
-    # Get the Starlette app from FastMCP and add bearer token auth middleware
-    app = mcp.sse_app()
-    if BEARER_TOKEN:
-        app.add_middleware(BearerTokenMiddleware, expected_token=BEARER_TOKEN)
+    # Use streamable HTTP transport (single /mcp endpoint)
+    # Compatible with all modern MCP clients
+    app = mcp.streamable_http_app()
 
     config = uvicorn.Config(app, host=HOST, port=PORT, log_level="info")
     server = uvicorn.Server(config)

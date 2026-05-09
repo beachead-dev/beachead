@@ -235,7 +235,7 @@ mod tests {
         let persona = make_persona("memory-agent", true, vec![]);
 
         let mcp_config = McpConfig {
-            url: "http://host.docker.internal:9100/sse".to_string(),
+            url: "http://host.docker.internal:9100/mcp".to_string(),
             bearer_token: "secret-token-123".to_string(),
             port: 9100,
         };
@@ -248,7 +248,7 @@ mod tests {
         assert!(content.contains("/.mcp.json"));
         assert!(content.contains("mcpServers"));
         assert!(content.contains("memory"));
-        assert!(content.contains("host.docker.internal:9100/sse"));
+        assert!(content.contains("host.docker.internal:9100/mcp"));
 
         // Auth headers are not included — isolation is via per-persona containers
         assert!(!content.contains("Bearer"));
@@ -314,7 +314,7 @@ mod tests {
 
         let persona = make_persona("full-config", true, mcp_servers);
         let mcp_config = McpConfig {
-            url: "http://host.docker.internal:9200/sse".to_string(),
+            url: "http://host.docker.internal:9200/mcp".to_string(),
             bearer_token: "mem-token".to_string(),
             port: 9200,
         };
@@ -325,7 +325,7 @@ mod tests {
         // Both memory and custom-tool should be in mcpServers
         assert!(content.contains("\"memory\""));
         assert!(content.contains("\"custom-tool\""));
-        assert!(content.contains("host.docker.internal:9200/sse"));
+        assert!(content.contains("host.docker.internal:9200/mcp"));
         assert!(content.contains("http://localhost:7070/api"));
 
         // Should NOT have network allowedDomains (restrictive allowlist removed)
@@ -464,7 +464,7 @@ mod tests {
                 Just(None),
                 (arb_port(), "[a-zA-Z0-9]{10,30}").prop_map(|(port, token)| {
                     Some(McpConfig {
-                        url: format!("http://host.docker.internal:{}/sse", port),
+                        url: format!("http://host.docker.internal:{}/mcp", port),
                         bearer_token: token,
                         port,
                     })

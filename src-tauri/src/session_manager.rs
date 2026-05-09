@@ -716,7 +716,7 @@ impl SessionManager {
 
         match mgr.find_running_container(persona_id) {
             Ok(Some(container)) => Ok(Some(McpConfig {
-                url: format!("http://host.docker.internal:{}/sse", container.port),
+                url: format!("http://host.docker.internal:{}/mcp", container.port),
                 bearer_token: container.bearer_token,
                 port: container.port,
             })),
