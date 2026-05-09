@@ -38,15 +38,16 @@ async fn create_persona(
     let memory_enabled = req.memory_enabled.unwrap_or(false);
     let persona = state.persona_manager.create(req)?;
 
-    // If memory is enabled, create an MCP container for this persona
+    // If memory is enabled, create and start an MCP container for this persona
     if memory_enabled {
         if let Some(ref mgr) = state.mcp_container_manager {
             if let Err(e) = mgr.create_container(persona.id.clone()).await {
-                eprintln!(
-                    "Warning: failed to create MCP container for persona '{}': {}",
+                // Container creation failed — delete the persona and return error
+                let _ = state.persona_manager.delete(&persona.id);
+                return Err(OrchestratorError::DockerError(format!(
+                    "Failed to create memory container for persona '{}': {}",
                     persona.name, e
-                );
-                // Don't fail the persona creation — container can be retried
+                )));
             }
         }
     }
@@ -81,12 +82,22 @@ async fn update_persona(
     // Handle MCP container lifecycle based on memory_enabled changes
     if let Some(ref mgr) = state.mcp_container_manager {
         if new_memory_enabled && !memory_was_enabled {
-            // Memory just enabled — create container
+            // Memory just enabled — create and start container
             if let Err(e) = mgr.create_container(persona_id.clone()).await {
-                eprintln!(
-                    "Warning: failed to create MCP container for persona: {}",
+                // Revert memory_enabled back to false
+                let revert_req = UpdatePersonaRequest {
+                    name: None,
+                    agent_type_id: None,
+                    workspace_path: None,
+                    memory_enabled: Some(false),
+                    agent_cli_args: None,
+                    mcp_servers: None,
+                };
+                let _ = state.persona_manager.update(&persona_id, revert_req);
+                return Err(OrchestratorError::DockerError(format!(
+                    "Failed to create memory container: {}. Memory has not been enabled.",
                     e
-                );
+                )));
             }
         } else if !new_memory_enabled && memory_was_enabled {
             // Memory just disabled — remove container
