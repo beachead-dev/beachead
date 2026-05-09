@@ -1183,8 +1183,9 @@ body {
 .diagnose-output {
   margin-top: 0.75rem;
   padding: 0.75rem;
-  background: #1a1a2e;
-  color: #f6f6f6;
+  background: #f0f0f5;
+  color: #333;
+  border: 1px solid #ddd;
   border-radius: 0.375rem;
   font-size: 0.75rem;
   overflow-x: auto;
@@ -1324,6 +1325,18 @@ body {
   .upload-result {
     background: #1f3d2a;
   }
+
+  .diagnose-output {
+    background: #1a1a2e;
+    color: #f6f6f6;
+    border-color: #2d3f6b;
+  }
+
+  .help-markdown pre {
+    background: #1a1a2e;
+    color: #f6f6f6;
+    border-color: #2d3f6b;
+  }
 }
 
 /* Help page */
@@ -1439,8 +1452,9 @@ body {
 }
 
 .help-markdown pre {
-  background: #1a1a2e;
-  color: #f6f6f6;
+  background: #f0f0f5;
+  color: #333;
+  border: 1px solid #ddd;
   padding: 1rem;
   border-radius: 0.375rem;
   overflow-x: auto;
@@ -1510,6 +1524,12 @@ body {
 
   .help-markdown code {
     background: rgba(108, 99, 255, 0.15);
+  }
+
+  .help-markdown pre {
+    background: #1a1a2e;
+    color: #f6f6f6;
+    border-color: #2d3f6b;
   }
 }
 
@@ -1636,6 +1656,18 @@ body {
 
 :root[data-theme="dark"] .upload-result {
   background: #1f3d2a;
+}
+
+:root[data-theme="dark"] .diagnose-output {
+  background: #1a1a2e;
+  color: #f6f6f6;
+  border-color: #2d3f6b;
+}
+
+:root[data-theme="dark"] .help-markdown pre {
+  background: #1a1a2e;
+  color: #f6f6f6;
+  border-color: #2d3f6b;
 }
 
 :root[data-theme="dark"] .help-sidebar {
