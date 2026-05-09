@@ -155,6 +155,9 @@ pub async fn start_server(
                 if let Err(e) = mgr_clone.start_all().await {
                     eprintln!("Warning: failed to start MCP containers: {}", e);
                 }
+                if let Err(e) = mgr_clone.reconcile().await {
+                    eprintln!("Warning: failed to reconcile MCP containers: {}", e);
+                }
             });
             Some(mgr)
         }

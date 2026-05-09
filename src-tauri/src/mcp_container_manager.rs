@@ -419,6 +419,48 @@ impl McpContainerManager {
         Ok(())
     }
 
+    /// Reconcile containers: create missing containers for personas with memory enabled.
+    ///
+    /// Handles the case where a persona has memory_enabled=true but no container
+    /// exists (e.g., due to a previous creation failure).
+    /// Called on orchestrator startup after start_all.
+    pub async fn reconcile(&self) -> Result<(), OrchestratorError> {
+        // Find personas with memory_enabled that have no mcp_container
+        let missing: Vec<PersonaId> = self.db.with_conn(|conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT p.id FROM personas p
+                     WHERE p.memory_enabled = 1
+                     AND NOT EXISTS (SELECT 1 FROM mcp_containers mc WHERE mc.persona_id = p.id)",
+                )
+                .map_err(|e| OrchestratorError::Database(e.to_string()))?;
+
+            let ids = stmt
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(|e| OrchestratorError::Database(e.to_string()))?
+                .filter_map(|r| r.ok())
+                .map(PersonaId)
+                .collect();
+
+            Ok(ids)
+        })?;
+
+        for persona_id in missing {
+            eprintln!(
+                "Reconciling: creating missing MCP container for persona {}",
+                persona_id.0
+            );
+            if let Err(e) = self.create_container(persona_id.clone()).await {
+                eprintln!(
+                    "Failed to reconcile MCP container for persona {}: {}",
+                    persona_id.0, e
+                );
+            }
+        }
+
+        Ok(())
+    }
+
     /// Stop all running MCP containers.
     /// Called on orchestrator shutdown.
     pub async fn stop_all(&self) -> Result<(), OrchestratorError> {
