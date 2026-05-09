@@ -6,6 +6,28 @@ Deferred improvements, bug fixes, and future features for implementation.
 
 ## Bug Fixes
 
+### "Documentation" Menu Text Overlaps Content in Help
+
+**Priority:** Low  
+**Affected area:** `src/pages/HelpPage.tsx` or equivalent help/documentation view
+
+**Problem:** The "Documentation" heading or menu label overlaps the actual documentation content below it, making it hard to read.
+
+**Solution:** Fix the CSS layout — likely a missing margin/padding, a z-index issue, or a position:sticky/fixed element that doesn't account for content flow.
+
+---
+
+### New Session UI Design Broken
+
+**Priority:** Medium  
+**Affected area:** Session creation form/modal
+
+**Problem:** The new session creation UI has layout or design issues that need fixing.
+
+**Solution:** Review and fix the session launcher form layout, spacing, and responsiveness.
+
+---
+
 ### PTY Exit → DB Status Sync
 
 **Priority:** Low (workaround: app restart triggers recovery which corrects status)  
@@ -162,19 +184,43 @@ Deferred improvements, bug fixes, and future features for implementation.
 
 ## New Features
 
-### Sandbox Management Tab
+### Delete Memory Data Option When Disabling Memory
 
 **Priority:** Medium  
-**Affected area:** New page + route + backend endpoint
+**Affected area:** `src-tauri/src/routes/personas.rs`, `src-tauri/src/mcp_container_manager.rs`, persona form UI
 
-**Description:** Add a "Sandboxes" tab in the sidebar (above System Settings) that displays the output of `sbx ls` in a table format. Each sandbox row shows name, agent, status, workspace, and published ports. Actions per sandbox: Start (resume), Stop, Remove. This provides direct sandbox management independent of sessions — useful for sandboxes created outside the app or orphaned sandboxes.
+**Description:** When a user disables memory on a persona, offer a checkbox/switch to also delete the stored memory data (Docker volume). Currently disabling memory removes the container but preserves the volume, so re-enabling memory restores previous data.
 
 **Implementation:**
-- New `SandboxesPage` component
-- Backend: `GET /api/sandboxes` already exists (calls `sbx ls --json`)
-- Add `POST /api/sandboxes/{name}/start` (calls `sbx run <name>` non-interactively or just starts it)
-- Existing `POST /api/sandboxes/{id}/stop` and `DELETE /api/sandboxes/{id}` may need adjustment
-- Add route to sidebar navigation
+- Add `delete_data: Option<bool>` field to `UpdatePersonaRequest` (only relevant when `memory_enabled` goes from true to false)
+- If `delete_data` is true, call `docker volume rm beachead-memory-{persona_id}` after removing the container
+- Add a `remove_volume` method to `McpContainerManager` using bollard's volume API
+- Frontend: show a confirmation dialog with a "Delete stored memories" checkbox when toggling memory off
+
+---
+
+### Docker Management Tab
+
+**Priority:** Medium  
+**Affected area:** New page + routes + sidebar navigation
+
+**Description:** Add a "Docker" tab in the sidebar with two sub-sections: Sandboxes and Containers. Each displays the current list of items and allows the user to start, stop, and remove them.
+
+**Sandboxes sub-tab:**
+- Displays output of `sbx ls` (name, agent, status, workspace, ports)
+- Actions per sandbox: Start, Stop, Remove
+
+**Containers sub-tab:**
+- Displays MCP memory containers (from `mcp_containers` table + Docker status)
+- Shows: persona name, port, status, volume name, created date
+- Actions per container: Start, Stop, Remove (with optional volume deletion)
+
+**Implementation:**
+- New `DockerPage` component with tab navigation (Sandboxes | Containers)
+- Sandboxes: reuse existing `GET /api/sandboxes` endpoint
+- Containers: new `GET /api/mcp-containers` endpoint returning container list with live Docker status
+- Action endpoints: `POST /api/mcp-containers/{id}/start`, `POST /api/mcp-containers/{id}/stop`, `DELETE /api/mcp-containers/{id}`
+- Add "Docker" entry to sidebar navigation
 
 ---
 
