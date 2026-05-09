@@ -336,7 +336,7 @@ impl McpContainerManager {
             image: Some(MCP_IMAGE.to_string()),
             env: Some(vec![
                 format!("BEACHEAD_PORT={}", CONTAINER_INTERNAL_PORT),
-                format!("BEACHEAD_BEARER_TOKEN={}", bearer_token),
+                "BEACHEAD_BEARER_TOKEN=".to_string(),
                 "BEACHEAD_DATA_DIR=/data/memory".to_string(),
             ]),
             host_config: Some(host_config),

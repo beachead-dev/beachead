@@ -135,22 +135,14 @@ impl KitGenerator {
 
         let mut servers = serde_json::Map::new();
 
-        // Memory MCP server (Phase 2)
+        // Memory MCP server
+        // No auth headers needed — each persona has its own container with
+        // isolated data. Network policy restricts sandbox access to localhost ports.
         if let Some(config) = mcp_config {
-            let mut headers = serde_json::Map::new();
-            headers.insert(
-                "Authorization".to_string(),
-                serde_json::Value::String(format!("Bearer {}", config.bearer_token)),
-            );
-
             let mut memory_server = serde_json::Map::new();
             memory_server.insert(
                 "url".to_string(),
                 serde_json::Value::String(config.url.clone()),
-            );
-            memory_server.insert(
-                "headers".to_string(),
-                serde_json::Value::Object(headers),
             );
 
             servers.insert("memory".to_string(), serde_json::Value::Object(memory_server));
@@ -257,7 +249,10 @@ mod tests {
         assert!(content.contains("mcpServers"));
         assert!(content.contains("memory"));
         assert!(content.contains("host.docker.internal:9100/sse"));
-        assert!(content.contains("Bearer secret-token-123"));
+
+        // Auth headers are not included — isolation is via per-persona containers
+        assert!(!content.contains("Bearer"));
+        assert!(!content.contains("Authorization"));
 
         // Should NOT have network allowedDomains (restrictive allowlist removed)
         assert!(!content.contains("network:"));
@@ -654,9 +649,10 @@ mod tests {
                         "McpConfig URL '{}' not found in spec.yaml",
                         config.url
                     );
+                    // Memory server should not have bearer token in the config
                     prop_assert!(
-                        content.contains(&format!("Bearer {}", config.bearer_token)),
-                        "McpConfig bearer token not found in spec.yaml"
+                        !content.contains(&format!("Bearer {}", config.bearer_token)),
+                        "Memory MCP bearer token should not be in spec.yaml"
                     );
                 }
 
