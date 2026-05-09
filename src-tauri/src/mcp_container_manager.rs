@@ -318,7 +318,7 @@ impl McpContainerManager {
         port_bindings.insert(
             port_str.clone(),
             Some(vec![PortBinding {
-                host_ip: Some("127.0.0.1".to_string()),
+                host_ip: Some("0.0.0.0".to_string()),
                 host_port: Some(port.to_string()),
             }]),
         );
@@ -701,6 +701,18 @@ impl McpContainerManager {
 
             Ok(result)
         })
+    }
+
+    /// Find a running container for the given persona.
+    ///
+    /// Returns the container record if it exists and has status "running".
+    /// Used by SessionManager to get connection details at session start.
+    pub fn find_running_container(&self, persona_id: &PersonaId) -> Result<Option<McpContainer>, OrchestratorError> {
+        let container = self.find_by_persona_id(persona_id)?;
+        match container {
+            Some(c) if c.status == ContainerStatus::Running => Ok(Some(c)),
+            _ => Ok(None),
+        }
     }
 
     /// Find a container by persona ID.

@@ -93,9 +93,10 @@ impl SessionManager {
         let agent = self.resolve_agent_identifier(&persona)?;
 
         // 3. Generate kit (includes agent-specific network domains)
-        // If persona has memory enabled, ensure the MCP container is running and inject config into the kit
+        // If persona has memory enabled, look up the running MCP container config.
+        // Containers are started at app startup; we just need the connection details.
         let mcp_config = if persona.memory_enabled {
-            self.ensure_mcp_container_running(&persona.id).await?
+            self.lookup_mcp_config(&persona.id)?
         } else {
             None
         };
@@ -702,31 +703,32 @@ impl SessionManager {
             })
     }
 
-    /// Ensure the MCP container for a persona is running and return its config.
+    /// Look up the running MCP container for a persona and return its connection config.
     ///
-    /// If the container exists but is stopped, restarts it. If it doesn't exist, creates it.
-    /// Returns None if the MCP container manager is unavailable (Docker not installed).
-    async fn ensure_mcp_container_running(&self, persona_id: &PersonaId) -> Result<Option<McpConfig>, OrchestratorError> {
+    /// Containers are started at app startup and stopped at shutdown.
+    /// Returns None if no container exists or it's not running.
+    fn lookup_mcp_config(&self, persona_id: &PersonaId) -> Result<Option<McpConfig>, OrchestratorError> {
         let mgr = match &self.mcp_container_manager {
             Some(mgr) => mgr,
-            None => {
-                eprintln!(
-                    "MCP container manager unavailable; skipping memory for persona {}",
-                    persona_id.0
-                );
-                return Ok(None);
-            }
+            None => return Ok(None),
         };
 
-        match mgr.ensure_container_running(persona_id).await {
-            Ok(container) => Ok(Some(McpConfig {
+        match mgr.find_running_container(persona_id) {
+            Ok(Some(container)) => Ok(Some(McpConfig {
                 url: format!("http://host.docker.internal:{}/sse", container.port),
                 bearer_token: container.bearer_token,
                 port: container.port,
             })),
+            Ok(None) => {
+                eprintln!(
+                    "No running MCP container found for persona {}; session will start without memory",
+                    persona_id.0
+                );
+                Ok(None)
+            }
             Err(e) => {
                 eprintln!(
-                    "Failed to ensure MCP container for persona {}: {}",
+                    "Error looking up MCP container for persona {}: {}",
                     persona_id.0, e
                 );
                 Ok(None)

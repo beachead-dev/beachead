@@ -2,8 +2,7 @@
 //!
 //! Each persona gets a generated mixin kit at session start containing:
 //! - spec.yaml with schemaVersion, kind, name, description
-//! - initFiles for MCP configuration (if memory enabled or additional MCP servers)
-//! - network.allowedDomains for each MCP server port
+//! - commands.initFiles for MCP configuration (placed at .mcp.json in workspace root)
 //! - memory field with markdown instructions (if memory enabled)
 //! - environment.variables with at minimum BEACHEAD_PERSONA
 
@@ -79,29 +78,20 @@ impl KitGenerator {
             persona.name
         ));
 
-        // initFiles section (MCP config)
+        // commands.initFiles section (MCP config at standard .mcp.json path)
+        // Agents discover MCP servers from .mcp.json in the workspace root.
         let mcp_json = self.build_mcp_json(persona, mcp_config);
         if let Some(mcp_content) = mcp_json {
-            yaml.push_str("\ninitFiles:\n");
-            yaml.push_str("  - path: ${WORKDIR}/.beachead/mcp.json\n");
-            yaml.push_str("    content: |\n");
+            yaml.push_str("\ncommands:\n");
+            yaml.push_str("  initFiles:\n");
+            yaml.push_str("    - path: ${WORKDIR}/.mcp.json\n");
+            yaml.push_str("      content: |\n");
             for line in mcp_content.lines() {
-                yaml.push_str(&format!("      {}\n", line));
+                yaml.push_str(&format!("        {}\n", line));
             }
         }
 
-        // network.allowedDomains
-        // NOTE: We intentionally do NOT emit network.allowedDomains in the kit.
-        // When present, it acts as a restrictive allowlist that blocks all other
-        // traffic. MCP containers on host.docker.internal are already reachable
-        // from sandboxes, and agent auth domains are handled by the default
-        // sandbox network policy. Emitting this section would block the agent
-        // from reaching APIs, package registries, etc. after authentication.
-        //
-        // If specific network restrictions are needed, use `sbx policy allow/deny`
-        // commands after sandbox creation instead.
-
-        // memory field (if memory enabled)
+        // memory field (instructions appended to agent's AI file if supported)
         if persona.memory_enabled {
             yaml.push_str("\nmemory: |\n");
             yaml.push_str("  ## Memory Instructions\n");
@@ -261,7 +251,7 @@ mod tests {
 
         // Should have initFiles with MCP config
         assert!(content.contains("initFiles:"));
-        assert!(content.contains("${WORKDIR}/.beachead/mcp.json"));
+        assert!(content.contains("${WORKDIR}/.mcp.json"));
         assert!(content.contains("mcpServers"));
         assert!(content.contains("memory"));
         assert!(content.contains("host.docker.internal:9100/sse"));
