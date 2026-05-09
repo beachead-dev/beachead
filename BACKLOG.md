@@ -6,6 +6,17 @@ Deferred improvements, bug fixes, and future features for implementation.
 
 ## Bug Fixes
 
+### Duplicate Primary Workspace Detection
+
+**Priority:** Medium  
+**Affected area:** `src-tauri/src/routes/personas.rs`, persona validation logic
+
+**Problem:** Two personas can be configured with the same primary workspace path. When both have active sessions, the second `sbx run` will fail because `sbx` enforces one sandbox per primary workspace. The error is confusing ("sandbox already exists and can't be given new workspaces").
+
+**Solution:** On persona create/update, query the DB for any other persona with the same `workspace_path`. If found, return a validation error: "Workspace path is already used by persona '<name>'. Each persona must have a unique primary workspace." Allow the same path as a secondary (additional) workspace across personas.
+
+---
+
 ### "Documentation" Menu Text Overlaps Content in Help
 
 **Priority:** Low  
@@ -14,6 +25,31 @@ Deferred improvements, bug fixes, and future features for implementation.
 **Problem:** The "Documentation" heading or menu label overlaps the actual documentation content below it, making it hard to read.
 
 **Solution:** Fix the CSS layout — likely a missing margin/padding, a z-index issue, or a position:sticky/fixed element that doesn't account for content flow.
+
+---
+
+### MCP Container Bearer Token Not Passed to Container
+
+**Priority:** High  
+**Affected area:** `src-tauri/src/mcp_container_manager.rs`
+
+**Problem:** Line ~339 sets `"BEACHEAD_BEARER_TOKEN=".to_string()` — the token value is never appended. The MCP container receives an empty bearer token, making the auth middleware compare against empty string. Combined with the finding that kit `allowedDomains` provides no per-sandbox isolation, this means MCP containers are effectively unprotected.
+
+**Solution:** Change to `format!("BEACHEAD_BEARER_TOKEN={}", bearer_token)`.
+
+---
+
+### Kit allowedDomains Persists in Global Policy
+
+**Priority:** Medium  
+**Affected area:** Kit generator, policy management
+
+**Problem:** Domains added via kit `network.allowedDomains` are merged into the global `sbx policy`. They can only be removed by the same kit or by clearing all policies (`sbx policy reset`). Over time, the global policy accumulates allow rules from every kit applied. Removing a sandbox does not remove its kit's policy entries.
+
+**Solution options:**
+1. Track kit-injected domains and manage cleanup via `sbx policy rm` at session removal (requires knowing the rule IDs — may not be exposed)
+2. Accept the accumulation and document it — user manages global policy separately
+3. Stop using kit `allowedDomains` entirely — add MCP port rules via `sbx policy allow network` at session start and `sbx policy rm` at session stop (gives orchestrator explicit control over lifecycle)
 
 ---
 
@@ -369,15 +405,18 @@ Deferred improvements, bug fixes, and future features for implementation.
 
 **Priority:** Medium  
 **Effort:** Low  
-**Affected area:** Persona form, kit generator, session manager
+**Affected area:** Persona form, kit generator, session manager, DB schema
 
-**Description:** sbx supports multiple workspace paths as positional args (`sbx run agent /path1 /path2`). Currently we only support one. Allow personas to specify additional workspaces (read-only or read-write).
+**Description:** sbx supports multiple workspace paths as positional args (`sbx run agent /path1 /path2:ro`). Currently we only support one. Allow personas to specify additional workspaces (read-only or read-write). Tested 2026-05-09: secondary workspaces CAN be shared across sandboxes and are writable by both unless mounted with `:ro`. Primary workspace must be unique per persona.
 
 **Implementation:**
-- Add `additional_workspaces` field to Persona (array of {path, read_only} objects)
-- Update persona form with dynamic list for extra workspaces
-- Session manager passes extra paths as positional args to `sbx create`
+- Add `additional_workspaces` table: `id, persona_id, path, read_only, created_at`
+- Update persona form with a dynamic list (+ / - buttons) for extra workspaces, each with a path input and a read-only toggle
+- Session manager passes extra paths as positional args to `sbx create`/`sbx run`
 - Append `:ro` suffix for read-only mounts per sbx docs
+- Validate: additional workspace paths must exist on host (same as primary)
+- No uniqueness constraint on additional workspaces — they can be shared across personas
+- UI: show read-only badge next to paths mounted as `:ro`
 
 ---
 
