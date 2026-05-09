@@ -78,13 +78,15 @@ impl KitGenerator {
             persona.name
         ));
 
-        // commands.initFiles section (MCP config at standard .mcp.json path)
+        // commands.initFiles section (MCP config at .mcp.json in workspace)
         // Agents discover MCP servers from .mcp.json in the workspace root.
+        // The path must be absolute per the kit spec.
         let mcp_json = self.build_mcp_json(persona, mcp_config);
         if let Some(mcp_content) = mcp_json {
+            let workspace_path = persona.workspace_path.to_string_lossy();
             yaml.push_str("\ncommands:\n");
             yaml.push_str("  initFiles:\n");
-            yaml.push_str("    - path: ${WORKDIR}/.mcp.json\n");
+            yaml.push_str(&format!("    - path: {}/.mcp.json\n", workspace_path));
             yaml.push_str("      content: |\n");
             for line in mcp_content.lines() {
                 yaml.push_str(&format!("        {}\n", line));
@@ -251,7 +253,7 @@ mod tests {
 
         // Should have initFiles with MCP config
         assert!(content.contains("initFiles:"));
-        assert!(content.contains("${WORKDIR}/.mcp.json"));
+        assert!(content.contains("/.mcp.json"));
         assert!(content.contains("mcpServers"));
         assert!(content.contains("memory"));
         assert!(content.contains("host.docker.internal:9100/sse"));
