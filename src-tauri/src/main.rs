@@ -35,6 +35,12 @@ pub mod token;
 mod types;
 pub mod workspace_manager;
 
+use std::sync::{Arc, OnceLock};
+use mcp_container_manager::McpContainerManager;
+
+/// Global reference to the MCP container manager for shutdown cleanup.
+static MCP_MANAGER: OnceLock<Arc<McpContainerManager>> = OnceLock::new();
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -49,6 +55,25 @@ fn main() {
             });
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app_handle, event| {
+            if let tauri::RunEvent::Exit = event {
+                // Stop all MCP containers on app exit
+                if let Some(mgr) = MCP_MANAGER.get() {
+                    let mgr = mgr.clone();
+                    // Use a blocking runtime since we're in the exit handler
+                    let rt = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build();
+                    if let Ok(rt) = rt {
+                        rt.block_on(async {
+                            if let Err(e) = mgr.stop_all().await {
+                                eprintln!("Warning: failed to stop MCP containers on exit: {}", e);
+                            }
+                        });
+                    }
+                }
+            }
+        });
 }

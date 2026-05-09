@@ -146,6 +146,8 @@ pub async fn start_server(
     let mcp_container_manager = match McpContainerManager::new(db.clone(), port_allocator) {
         Ok(mgr) => {
             let mgr = Arc::new(mgr);
+            // Register globally for shutdown cleanup
+            let _ = crate::MCP_MANAGER.set(mgr.clone());
             // Ensure the MCP image exists and start all existing containers on startup
             let mgr_clone = mgr.clone();
             tokio::spawn(async move {
