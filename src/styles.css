@@ -1400,6 +1400,23 @@ body {
   :root:not([data-theme="light"]) .terminal-status {
     color: #aaa;
   }
+
+  :root:not([data-theme="light"]) .help-sidebar {
+    background: #1a1a2e;
+    border-color: #2d3f6b;
+  }
+
+  :root:not([data-theme="light"]) .help-sidebar-title {
+    color: #aaa;
+  }
+
+  :root:not([data-theme="light"]) .help-topic-btn {
+    color: #ccc;
+  }
+
+  :root:not([data-theme="light"]) .help-markdown code {
+    background: rgba(108, 99, 255, 0.15);
+  }
 }
 
 /* Help page */
@@ -1569,31 +1586,6 @@ body {
   color: #a9a3ff;
   font-weight: 700;
   font-size: 0.8125rem;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .help-sidebar {
-    background: #1a1a2e;
-    border-color: #2d3f6b;
-  }
-
-  :root:not([data-theme="light"]) .help-sidebar-title {
-    color: #aaa;
-  }
-
-  :root:not([data-theme="light"]) .help-topic-btn {
-    color: #ccc;
-  }
-
-  :root:not([data-theme="light"]) .help-markdown code {
-    background: rgba(108, 99, 255, 0.15);
-  }
-
-  :root:not([data-theme="light"]) .help-markdown pre {
-    background: #1a1a2e;
-    color: #f6f6f6;
-    border-color: #2d3f6b;
-  }
 }
 
 /* Explicit dark theme via data-theme attribute */
