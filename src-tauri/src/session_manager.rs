@@ -184,6 +184,14 @@ impl SessionManager {
             db_ops::update_session_sandbox_id(conn, &session_id, &sandbox_id)
         })?;
 
+        // Allow network access to MCP memory container if configured
+        if let Some(ref config) = mcp_config {
+            let target = format!("localhost:{}", config.port);
+            if let Err(e) = self.sbx.policy_allow_network(&target).await {
+                eprintln!("Warning: failed to allow network for MCP port {}: {}", config.port, e);
+            }
+        }
+
         // 5. Spawn PTY via PtyBridge with `sbx run <sandbox_id>` to attach
         let sbx_path = self.sbx.path().to_string_lossy().to_string();
         let pty_bridge = self.pty_bridge.clone();
