@@ -67,6 +67,7 @@ mod tests {
                 auth_methods: methods,
                 description: desc,
                 supports_interactive_auth: interactive,
+                mcp_config_path: None,
             })
     }
 
@@ -523,6 +524,7 @@ mod tests {
                         auth_methods: vec![AuthMethod::ApiKey],
                         description: "Test agent".to_string(),
                         supports_interactive_auth: false,
+                        mcp_config_path: None,
                     },
                     created_at: now,
                     updated_at: now,
@@ -545,6 +547,7 @@ mod tests {
                                     auth_methods: vec![AuthMethod::ApiKey],
                                     description: description.clone(),
                                     supports_interactive_auth: false,
+                                    mcp_config_path: None,
                                 },
                                 created_at: now,
                                 updated_at: now,

@@ -89,10 +89,20 @@ impl SessionManager {
         // 1. Get persona from DB
         let persona = self.db.with_conn(|conn| db_ops::get_persona(conn, persona_id))?;
 
-        // 2. Resolve agent identifier (needed for kit generation and sandbox creation)
-        let agent = self.resolve_agent_identifier(&persona)?;
+        // 2. Resolve agent type (needed for kit generation and sandbox creation)
+        let agent_type = self.db.with_conn(|conn| db_ops::get_agent_type(conn, &persona.agent_type_id))?;
+        let agent = agent_type
+            .sbx_agent
+            .clone()
+            .or(agent_type.kit_ref.clone())
+            .ok_or_else(|| {
+                OrchestratorError::Validation(format!(
+                    "Agent type '{}' has no sbx_agent or kit_ref configured",
+                    agent_type.name
+                ))
+            })?;
 
-        // 3. Generate kit (includes agent-specific network domains)
+        // 3. Generate kit (includes agent-specific MCP config at the correct path)
         // If persona has memory enabled, look up the running MCP container config.
         // Containers are started at app startup; we just need the connection details.
         let mcp_config = if persona.memory_enabled {
@@ -100,7 +110,8 @@ impl SessionManager {
         } else {
             None
         };
-        let kit_path = self.kit_generator.generate(&persona, mcp_config.as_ref(), Some(&agent))?;
+        let mcp_config_path = agent_type.metadata.mcp_config_path.as_deref();
+        let kit_path = self.kit_generator.generate(&persona, mcp_config.as_ref(), mcp_config_path)?;
 
         // 4. Create session record in "starting" state
         let session_id = SessionId::new();
@@ -693,24 +704,6 @@ impl SessionManager {
             .any(|pattern| lower.contains(pattern))
     }
 
-    /// Resolve the agent identifier for sbx run from the persona's agent type.
-    fn resolve_agent_identifier(&self, persona: &Persona) -> Result<String, OrchestratorError> {
-        let agent_type = self
-            .db
-            .with_conn(|conn| db_ops::get_agent_type(conn, &persona.agent_type_id))?;
-
-        // Use sbx_agent if available (built-in agents), otherwise use kit_ref or name
-        agent_type
-            .sbx_agent
-            .or(agent_type.kit_ref)
-            .ok_or_else(|| {
-                OrchestratorError::Validation(format!(
-                    "Agent type '{}' has no sbx_agent or kit_ref configured",
-                    agent_type.name
-                ))
-            })
-    }
-
     /// Look up the running MCP container for a persona and return its connection config.
     ///
     /// Containers are started at app startup and stopped at shutdown.
@@ -885,6 +878,7 @@ esac
                     auth_methods: vec![AuthMethod::ApiKey],
                     description: "Claude Code agent".to_string(),
                     supports_interactive_auth: false,
+                    mcp_config_path: None,
                 },
                 created_at: now,
                 updated_at: now,

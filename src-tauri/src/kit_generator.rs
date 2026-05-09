@@ -45,13 +45,13 @@ impl KitGenerator {
         &self,
         persona: &Persona,
         mcp_config: Option<&McpConfig>,
-        sbx_agent: Option<&str>,
+        mcp_config_path: Option<&str>,
     ) -> Result<PathBuf, OrchestratorError> {
         let dir_name = format!("{}-{}", persona.name, uuid::Uuid::new_v4());
         let kit_dir = self.kit_base_dir.join(&dir_name);
         fs::create_dir_all(&kit_dir)?;
 
-        let spec_yaml = self.build_spec_yaml(persona, mcp_config, sbx_agent);
+        let spec_yaml = self.build_spec_yaml(persona, mcp_config, mcp_config_path);
         fs::write(kit_dir.join("spec.yaml"), spec_yaml)?;
 
         Ok(kit_dir)
@@ -66,7 +66,7 @@ impl KitGenerator {
     }
 
     /// Build the spec.yaml content for a persona's mixin kit.
-    fn build_spec_yaml(&self, persona: &Persona, mcp_config: Option<&McpConfig>, _sbx_agent: Option<&str>) -> String {
+    fn build_spec_yaml(&self, persona: &Persona, mcp_config: Option<&McpConfig>, mcp_config_path: Option<&str>) -> String {
         let mut yaml = String::new();
 
         // Header
@@ -78,15 +78,15 @@ impl KitGenerator {
             persona.name
         ));
 
-        // commands.initFiles section (MCP config at .mcp.json in workspace)
-        // Agents discover MCP servers from .mcp.json in the workspace root.
-        // The path must be absolute per the kit spec.
+        // commands.initFiles section (MCP config at agent-specific path)
+        // Each agent reads MCP config from a different location.
         let mcp_json = self.build_mcp_json(persona, mcp_config);
         if let Some(mcp_content) = mcp_json {
+            let config_path = mcp_config_path.unwrap_or(".mcp.json");
             let workspace_path = persona.workspace_path.to_string_lossy();
             yaml.push_str("\ncommands:\n");
             yaml.push_str("  initFiles:\n");
-            yaml.push_str(&format!("    - path: {}/.mcp.json\n", workspace_path));
+            yaml.push_str(&format!("    - path: {}/{}\n", workspace_path, config_path));
             yaml.push_str("      content: |\n");
             for line in mcp_content.lines() {
                 yaml.push_str(&format!("        {}\n", line));

@@ -421,6 +421,7 @@ mod tests {
                 auth_methods: vec![AuthMethod::ApiKey],
                 description: "Test agent".to_string(),
                 supports_interactive_auth: false,
+                mcp_config_path: None,
             },
             created_at: now,
             updated_at: now,

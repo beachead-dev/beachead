@@ -54,6 +54,7 @@ pub fn get_agent_type(conn: &Connection, id: &AgentTypeId) -> Result<AgentType, 
                     auth_methods: vec![],
                     description: String::new(),
                     supports_interactive_auth: false,
+                    mcp_config_path: None,
                 }),
                 created_at: DateTime::parse_from_rfc3339(&created_str)
                     .unwrap()
@@ -170,6 +171,7 @@ pub fn list_agent_types(conn: &Connection) -> Result<Vec<AgentType>, Orchestrato
                     auth_methods: vec![],
                     description: String::new(),
                     supports_interactive_auth: false,
+                    mcp_config_path: None,
                 }),
                 created_at: DateTime::parse_from_rfc3339(&created_str)
                     .unwrap()

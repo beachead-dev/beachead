@@ -101,6 +101,10 @@ pub struct AgentMetadata {
     pub auth_methods: Vec<AuthMethod>,
     pub description: String,
     pub supports_interactive_auth: bool,
+    /// Relative path from workspace root where this agent reads MCP server config.
+    /// e.g., ".mcp.json", ".kiro/settings/mcp.json", ".cursor/mcp.json"
+    #[serde(default)]
+    pub mcp_config_path: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
