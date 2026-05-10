@@ -138,8 +138,14 @@ impl KitGenerator {
         // Memory MCP server
         // Auth is via token query parameter embedded in the URL.
         // The MCP server validates the token on each request.
+        // "type": "http" is required for Kiro and other agents to recognize this
+        // as an HTTP-based MCP server (vs stdio-based command servers).
         if let Some(config) = mcp_config {
             let mut memory_server = serde_json::Map::new();
+            memory_server.insert(
+                "type".to_string(),
+                serde_json::Value::String("http".to_string()),
+            );
             memory_server.insert(
                 "url".to_string(),
                 serde_json::Value::String(config.url.clone()),
@@ -151,6 +157,10 @@ impl KitGenerator {
         // Additional MCP servers
         for mcp_server in &persona.mcp_servers {
             let mut server_entry = serde_json::Map::new();
+            server_entry.insert(
+                "type".to_string(),
+                serde_json::Value::String("http".to_string()),
+            );
             server_entry.insert(
                 "url".to_string(),
                 serde_json::Value::String(mcp_server.url.clone()),
