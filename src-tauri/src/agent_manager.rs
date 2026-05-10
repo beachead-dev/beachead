@@ -47,6 +47,23 @@ impl AgentManager {
 
                 if !exists {
                     db_ops::insert_agent_type(conn, agent)?;
+                } else {
+                    // Update existing built-in with latest metadata (picks up new fields
+                    // like mcp_config_path that may have been added after initial seeding)
+                    let metadata_json = serde_json::to_string(&agent.metadata)
+                        .map_err(|e| OrchestratorError::Internal(e.to_string()))?;
+                    conn.execute(
+                        "UPDATE agent_types SET metadata = ?1, sbx_agent = ?2, kit_ref = ?3, updated_at = ?4
+                         WHERE name = ?5 AND is_builtin = 1",
+                        rusqlite::params![
+                            metadata_json,
+                            agent.sbx_agent,
+                            agent.kit_ref,
+                            agent.updated_at.to_rfc3339(),
+                            agent.name,
+                        ],
+                    )
+                    .map_err(|e| OrchestratorError::Database(e.to_string()))?;
                 }
             }
             Ok(())
