@@ -28,14 +28,12 @@ Deferred improvements, bug fixes, and future features for implementation.
 
 ---
 
-### MCP Container Bearer Token Not Passed to Container
+### ~~MCP Container Bearer Token Not Passed to Container~~ ✅ FIXED
 
-**Priority:** High  
+**Fixed:** 2026-05-10  
 **Affected area:** `src-tauri/src/mcp_container_manager.rs`
 
-**Problem:** Line ~339 sets `"BEACHEAD_BEARER_TOKEN=".to_string()` — the token value is never appended. The MCP container receives an empty bearer token, making the auth middleware compare against empty string. Combined with the finding that kit `allowedDomains` provides no per-sandbox isolation, this means MCP containers are effectively unprotected.
-
-**Solution:** Change to `format!("BEACHEAD_BEARER_TOKEN={}", bearer_token)`.
+**What was done:** Changed `"BEACHEAD_BEARER_TOKEN=".to_string()` to `format!("BEACHEAD_BEARER_TOKEN={}", bearer_token)`. Auth middleware now wired into server.py. Token passed via URL query parameter (`?token=<value>`) for MCP client compatibility. Docker image rebuilt and verified.
 
 ---
 
