@@ -6,14 +6,12 @@ Deferred improvements, bug fixes, and future features for implementation.
 
 ## Bug Fixes
 
-### Duplicate Primary Workspace Detection
+### ~~Duplicate Primary Workspace Detection~~ ✅ FIXED
 
-**Priority:** High  
-**Affected area:** `src-tauri/src/routes/personas.rs`, persona validation logic
+**Fixed:** 2026-05-10  
+**Affected area:** `src-tauri/src/persona_manager.rs`, `src-tauri/src/db_ops.rs`
 
-**Problem:** Two personas can be configured with the same primary workspace path. When both have active sessions, the second `sbx run` will fail because `sbx` enforces one sandbox per primary workspace. The error is confusing ("sandbox already exists and can't be given new workspaces").
-
-**Solution:** On persona create/update, query the DB for any other persona with the same `workspace_path`. If found, return a validation error: "Workspace path is already used by persona '<name>'. Each persona must have a unique primary workspace." Allow the same path as a secondary (additional) workspace across personas.
+**What was done:** Added `persona_with_workspace_path()` query to `db_ops.rs` that checks if another persona already uses a given primary workspace path. Added uniqueness validation in `PersonaManager::create()` and `PersonaManager::update()`. Returns a clear error: "Workspace path is already used by persona '<name>'. Each persona must have a unique primary workspace." The constraint applies only to the primary workspace — future additional/secondary workspaces can be shared across personas.
 
 ---
 
