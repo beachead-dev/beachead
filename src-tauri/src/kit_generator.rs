@@ -136,8 +136,8 @@ impl KitGenerator {
         let mut servers = serde_json::Map::new();
 
         // Memory MCP server
-        // No auth headers needed — each persona has its own container with
-        // isolated data. Network policy restricts sandbox access to localhost ports.
+        // Auth is via token query parameter embedded in the URL.
+        // The MCP server validates the token on each request.
         if let Some(config) = mcp_config {
             let mut memory_server = serde_json::Map::new();
             memory_server.insert(

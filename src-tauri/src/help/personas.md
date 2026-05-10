@@ -28,7 +28,7 @@ to the agent. Each entry requires:
 - **Name** — Identifier for the MCP server
 - **URL** — Must use `http://` or `https://` scheme with a valid host
 - **Description** (optional) — What the server provides
-- **Auth Headers** (optional) — JSON object of authentication headers
+- **Auth Headers** (optional) — JSON object of authentication headers. Note: the `headers` field is a non-standard MCP config extension supported by some agents (Cursor, VS Code) but not all. Verify your agent supports it.
 
 ## Editing a Persona
 
