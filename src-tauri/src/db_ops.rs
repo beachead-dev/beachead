@@ -2,7 +2,7 @@
 //! These functions provide the data access layer used by managers.
 
 use chrono::{DateTime, Utc};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::error::OrchestratorError;
 use crate::types::{
@@ -473,6 +473,35 @@ pub fn persona_name_exists(
             .map_err(|e| OrchestratorError::Database(e.to_string()))?,
     };
     Ok(exists)
+}
+
+/// Check if another persona already uses the given workspace path.
+/// Returns the name of the conflicting persona if found.
+/// Optionally excludes a persona by ID (for update operations).
+pub fn persona_with_workspace_path(
+    conn: &Connection,
+    workspace_path: &str,
+    exclude_id: Option<&PersonaId>,
+) -> Result<Option<String>, OrchestratorError> {
+    let name: Option<String> = match exclude_id {
+        Some(id) => conn
+            .query_row(
+                "SELECT name FROM personas WHERE workspace_path = ?1 AND id != ?2 LIMIT 1",
+                params![workspace_path, id.0],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| OrchestratorError::Database(e.to_string()))?,
+        None => conn
+            .query_row(
+                "SELECT name FROM personas WHERE workspace_path = ?1 LIMIT 1",
+                params![workspace_path],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| OrchestratorError::Database(e.to_string()))?,
+    };
+    Ok(name)
 }
 
 pub fn count_active_sessions_for_persona(

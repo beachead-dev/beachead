@@ -74,6 +74,15 @@ impl PersonaManager {
                 )));
             }
 
+            // Check workspace path uniqueness (primary workspace must be unique per persona)
+            let workspace_str = req.workspace_path.to_string_lossy().to_string();
+            if let Some(existing_name) = db_ops::persona_with_workspace_path(conn, &workspace_str, None)? {
+                return Err(OrchestratorError::Validation(format!(
+                    "Workspace path is already used by persona '{}'. Each persona must have a unique primary workspace.",
+                    existing_name
+                )));
+            }
+
             // Verify agent type exists
             db_ops::get_agent_type(conn, &req.agent_type_id)?;
 
@@ -193,6 +202,17 @@ impl PersonaManager {
                     return Err(OrchestratorError::DuplicateName(format!(
                         "Persona with name '{}' already exists",
                         new_name
+                    )));
+                }
+            }
+
+            // Check workspace path uniqueness (excluding self)
+            if new_workspace_path != existing.workspace_path {
+                let workspace_str = new_workspace_path.to_string_lossy().to_string();
+                if let Some(existing_name) = db_ops::persona_with_workspace_path(conn, &workspace_str, Some(id))? {
+                    return Err(OrchestratorError::Validation(format!(
+                        "Workspace path is already used by persona '{}'. Each persona must have a unique primary workspace.",
+                        existing_name
                     )));
                 }
             }
@@ -569,6 +589,122 @@ mod tests {
     }
 
     #[test]
+    fn test_create_persona_duplicate_workspace_fails() {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let agent_id = setup_manager_with_agent(&db);
+        let mgr = PersonaManager::new(db);
+        let ws = temp_workspace();
+
+        let req1 = CreatePersonaRequest {
+            name: "First Persona".to_string(),
+            agent_type_id: agent_id.clone(),
+            workspace_path: ws.path().to_path_buf(),
+            memory_enabled: None,
+            agent_cli_args: None,
+            mcp_servers: None,
+        };
+        mgr.create(req1).unwrap();
+
+        let req2 = CreatePersonaRequest {
+            name: "Second Persona".to_string(),
+            agent_type_id: agent_id,
+            workspace_path: ws.path().to_path_buf(),
+            memory_enabled: None,
+            agent_cli_args: None,
+            mcp_servers: None,
+        };
+        let result = mgr.create(req2);
+        match result {
+            Err(OrchestratorError::Validation(msg)) => {
+                assert!(msg.contains("First Persona"), "Error should name the conflicting persona: {}", msg);
+                assert!(msg.contains("unique primary workspace"), "Error should mention uniqueness: {}", msg);
+            }
+            other => panic!("Expected Validation error, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_update_persona_duplicate_workspace_fails() {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let agent_id = setup_manager_with_agent(&db);
+        let mgr = PersonaManager::new(db);
+        let ws1 = temp_workspace();
+        let ws2 = temp_workspace();
+
+        let req1 = CreatePersonaRequest {
+            name: "Owner".to_string(),
+            agent_type_id: agent_id.clone(),
+            workspace_path: ws1.path().to_path_buf(),
+            memory_enabled: None,
+            agent_cli_args: None,
+            mcp_servers: None,
+        };
+        mgr.create(req1).unwrap();
+
+        let req2 = CreatePersonaRequest {
+            name: "Mover".to_string(),
+            agent_type_id: agent_id,
+            workspace_path: ws2.path().to_path_buf(),
+            memory_enabled: None,
+            agent_cli_args: None,
+            mcp_servers: None,
+        };
+        let mover = mgr.create(req2).unwrap();
+
+        // Try to update Mover's workspace to Owner's workspace
+        let update_req = UpdatePersonaRequest {
+            name: None,
+            agent_type_id: None,
+            workspace_path: Some(ws1.path().to_path_buf()),
+            memory_enabled: None,
+            agent_cli_args: None,
+            mcp_servers: None,
+        };
+        let result = mgr.update(&mover.id, update_req);
+        match result {
+            Err(OrchestratorError::Validation(msg)) => {
+                assert!(msg.contains("Owner"), "Error should name the conflicting persona: {}", msg);
+            }
+            other => panic!("Expected Validation error, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_update_persona_same_workspace_no_change_succeeds() {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let agent_id = setup_manager_with_agent(&db);
+        let mgr = PersonaManager::new(db);
+        let ws = temp_workspace();
+
+        let req = CreatePersonaRequest {
+            name: "Stable".to_string(),
+            agent_type_id: agent_id,
+            workspace_path: ws.path().to_path_buf(),
+            memory_enabled: None,
+            agent_cli_args: None,
+            mcp_servers: None,
+        };
+        let created = mgr.create(req).unwrap();
+
+        // Update with the same workspace path (no change) should succeed
+        let update_req = UpdatePersonaRequest {
+            name: Some("Renamed".to_string()),
+            agent_type_id: None,
+            workspace_path: Some(ws.path().to_path_buf()),
+            memory_enabled: None,
+            agent_cli_args: None,
+            mcp_servers: None,
+        };
+        let result = mgr.update(&created.id, update_req).unwrap();
+        match result {
+            UpdateResult::Applied { persona } => {
+                assert_eq!(persona.name, "Renamed");
+            }
+            _ => panic!("Expected Applied result"),
+        }
+    }
+
+    #[test]
     fn test_create_persona_invalid_mcp_url_fails() {
         let db = Arc::new(Database::open_in_memory().unwrap());
         let agent_id = setup_manager_with_agent(&db);
@@ -652,12 +788,13 @@ mod tests {
         let db = Arc::new(Database::open_in_memory().unwrap());
         let agent_id = setup_manager_with_agent(&db);
         let mgr = PersonaManager::new(db);
-        let ws = temp_workspace();
+        let ws1 = temp_workspace();
+        let ws2 = temp_workspace();
 
         let req1 = CreatePersonaRequest {
             name: "Alpha".to_string(),
             agent_type_id: agent_id.clone(),
-            workspace_path: ws.path().to_path_buf(),
+            workspace_path: ws1.path().to_path_buf(),
             memory_enabled: None,
             agent_cli_args: None,
             mcp_servers: None,
@@ -665,7 +802,7 @@ mod tests {
         let req2 = CreatePersonaRequest {
             name: "Beta".to_string(),
             agent_type_id: agent_id,
-            workspace_path: ws.path().to_path_buf(),
+            workspace_path: ws2.path().to_path_buf(),
             memory_enabled: None,
             agent_cli_args: None,
             mcp_servers: None,
@@ -716,12 +853,13 @@ mod tests {
         let db = Arc::new(Database::open_in_memory().unwrap());
         let agent_id = setup_manager_with_agent(&db);
         let mgr = PersonaManager::new(db);
-        let ws = temp_workspace();
+        let ws1 = temp_workspace();
+        let ws2 = temp_workspace();
 
         let req1 = CreatePersonaRequest {
             name: "First".to_string(),
             agent_type_id: agent_id.clone(),
-            workspace_path: ws.path().to_path_buf(),
+            workspace_path: ws1.path().to_path_buf(),
             memory_enabled: None,
             agent_cli_args: None,
             mcp_servers: None,
@@ -731,7 +869,7 @@ mod tests {
         let req2 = CreatePersonaRequest {
             name: "Second".to_string(),
             agent_type_id: agent_id,
-            workspace_path: ws.path().to_path_buf(),
+            workspace_path: ws2.path().to_path_buf(),
             memory_enabled: None,
             agent_cli_args: None,
             mcp_servers: None,
