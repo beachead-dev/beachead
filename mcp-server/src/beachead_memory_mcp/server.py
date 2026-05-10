@@ -223,6 +223,8 @@ def main():
     """Run the MCP server with streamable HTTP transport."""
     import uvicorn
 
+    from beachead_memory_mcp.auth import BearerTokenMiddleware
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -234,6 +236,13 @@ def main():
     # Use streamable HTTP transport (single /mcp endpoint)
     # Compatible with all modern MCP clients
     app = mcp.streamable_http_app()
+
+    # Add bearer token auth if configured
+    if BEARER_TOKEN:
+        app.add_middleware(BearerTokenMiddleware, expected_token=BEARER_TOKEN)
+        logger.info("Bearer token authentication enabled")
+    else:
+        logger.warning("No BEACHEAD_BEARER_TOKEN set — running without authentication")
 
     config = uvicorn.Config(app, host=HOST, port=PORT, log_level="info")
     server = uvicorn.Server(config)

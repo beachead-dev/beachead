@@ -1,5 +1,9 @@
 """Bearer token authentication for the MCP server.
 
+Supports two authentication methods:
+1. Query parameter: ?token=<value> (preferred — works with all MCP clients)
+2. Authorization header: Bearer <value> (fallback for clients that support headers)
+
 SECURITY: Uses constant-time comparison (hmac.compare_digest) to prevent
 timing attacks. Error responses do not reveal whether the token format
 or value was incorrect.
@@ -15,9 +19,13 @@ from starlette.responses import JSONResponse
 
 
 class BearerTokenMiddleware(BaseHTTPMiddleware):
-    """Middleware that validates Bearer token authentication.
+    """Middleware that validates bearer token authentication.
 
-    Rejects requests without a valid Authorization header with 401.
+    Accepts tokens via:
+    - Query parameter: ?token=<value> (checked first)
+    - Authorization header: Bearer <value> (fallback)
+
+    Rejects requests without a valid token with 401.
     The health check endpoint is exempt from authentication.
     """
 
@@ -32,20 +40,18 @@ class BearerTokenMiddleware(BaseHTTPMiddleware):
         self._expected_token = expected_token
 
     async def dispatch(self, request: Request, call_next):
-        """Validate the Authorization header on each request."""
+        """Validate the token on each request."""
         # Health check endpoint is exempt from auth
         if request.url.path == "/health":
             return await call_next(request)
 
-        auth_header = request.headers.get("authorization", "")
+        provided_token = self._extract_token(request)
 
-        if not auth_header.startswith("Bearer "):
+        if provided_token is None:
             return JSONResponse(
                 status_code=401,
                 content={"error": "Unauthorized"},
             )
-
-        provided_token = auth_header[7:]  # Strip "Bearer " prefix
 
         # SECURITY: Constant-time comparison to prevent timing attacks
         if not hmac.compare_digest(
@@ -57,6 +63,27 @@ class BearerTokenMiddleware(BaseHTTPMiddleware):
             )
 
         return await call_next(request)
+
+    def _extract_token(self, request: Request) -> str | None:
+        """Extract token from query parameter or Authorization header.
+
+        Checks query parameter first (preferred for MCP client compatibility),
+        then falls back to Authorization header.
+
+        Returns:
+            The token string, or None if no token was provided.
+        """
+        # Method 1: Query parameter ?token=<value>
+        token_param = request.query_params.get("token")
+        if token_param:
+            return token_param
+
+        # Method 2: Authorization header (Bearer <value>)
+        auth_header = request.headers.get("authorization", "")
+        if auth_header.startswith("Bearer "):
+            return auth_header[7:]  # Strip "Bearer " prefix
+
+        return None
 
 
 def validate_token(provided: str, expected: str) -> bool:
