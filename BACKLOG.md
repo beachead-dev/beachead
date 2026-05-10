@@ -8,7 +8,7 @@ Deferred improvements, bug fixes, and future features for implementation.
 
 ### Duplicate Primary Workspace Detection
 
-**Priority:** Medium  
+**Priority:** High  
 **Affected area:** `src-tauri/src/routes/personas.rs`, persona validation logic
 
 **Problem:** Two personas can be configured with the same primary workspace path. When both have active sessions, the second `sbx run` will fail because `sbx` enforces one sandbox per primary workspace. The error is confusing ("sandbox already exists and can't be given new workspaces").
@@ -235,7 +235,7 @@ Deferred improvements, bug fixes, and future features for implementation.
 
 ### Docker Management Tab
 
-**Priority:** Medium  
+**Priority:** High  
 **Affected area:** New page + routes + sidebar navigation
 
 **Description:** Add a "Docker" tab in the sidebar with two sub-sections: Sandboxes and Containers. Each displays the current list of items and allows the user to start, stop, and remove them.
@@ -471,7 +471,7 @@ Deferred improvements, bug fixes, and future features for implementation.
 
 ### Multi-Workspace Mounts
 
-**Priority:** Medium  
+**Priority:** High  
 **Effort:** Low  
 **Affected area:** Persona form, kit generator, session manager, DB schema
 
