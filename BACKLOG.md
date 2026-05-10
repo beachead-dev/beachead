@@ -335,6 +335,76 @@ Deferred improvements, bug fixes, and future features for implementation.
 
 ---
 
+### Repo Sync — Git Remote Management
+
+**Priority:** High  
+**Effort:** High  
+**Affected area:** New sidebar menu item, new pages, new backend module, DB schema additions
+
+**Description:** A dedicated "Repo Sync" section that manages git remote synchronization for workspace repositories. The AI agent in the sandbox makes local commits to the workspace; Repo Sync lets the user push those changes to GitHub/GitLab/Bitbucket/etc. without the agent ever seeing remote credentials.
+
+**Core concept:** The agent works locally (commits to the mounted workspace). The user controls what gets synced to remote repos. Credentials for remotes never enter the sandbox — they stay on the host side, managed by Beachead.
+
+**Discovery:**
+- On persona creation or workspace change, automatically scan the workspace (configurable depth, default 5 levels) for `.git` directories
+- Display discovered repos in a "Repos" tab under Repo Sync
+- User selects which repos to "manage" (opt-in per repo)
+
+**Per-managed-repo configuration:**
+- Remote URL (auto-detected from `.git/config`, editable)
+- Remote provider (GitHub, GitLab, Bitbucket, custom)
+- Credentials (per-repo — different repos may use different accounts/tokens)
+- Branch strategy (configurable, not default):
+  - Direct push to current branch
+  - Auto-create feature branch (pattern: `ai/<persona-name>/<date>` or custom)
+  - User chooses on first setup, changeable in repo settings
+
+**Credential storage:**
+- Primary: OS keyring (via Tauri's secure storage or `keyring` crate)
+- Fallback: encrypted file using AES-256-GCM with user-provided password (argon2 KDF for key derivation)
+- User prompted to set encryption password on first use of file-based storage
+- Password prompted on app startup if file-based credentials exist
+- Export/backup: prompt user to export credentials from OS keyring to encrypted file for portability; encrypted credential file included in app export/backup
+
+**Sync operations:**
+- **Push:** Review pending commits → select which to push → push to configured remote/branch
+- **Pull:** Fetch remote changes → show diff summary → pull into workspace (optionally restart sandbox session so agent sees new code)
+- **Conflict detection:** Before push, fetch and compare — alert user if remote has diverged rather than force-pushing or failing
+
+**Commit review before push:**
+- Show commit list with diffs for unpushed changes
+- Allow cherry-picking which commits to include
+- Option to squash selected commits before push
+
+**Commit attribution:**
+- Configurable per repo: keep agent's commit author, rewrite to user, or add `Co-authored-by` trailer
+- Default: keep original author (agent committed it)
+
+**`.gitignore` enforcement:**
+- Before allowing push, scan staged files against common secret/artifact patterns
+- Warn if potential secrets detected (`.env`, private keys, tokens in code)
+- Configurable: block push or warn-only
+
+**Notifications/events:**
+- Badge on Repo Sync sidebar item when managed repos have unpushed commits
+- Periodic check (configurable interval) for new local commits
+- Optional desktop notification when new commits detected
+- Show count of pending commits per repo in the repo list
+
+**UI structure:**
+- Sidebar: "Repo Sync" menu item (below Sessions, above Docker)
+- Main view: tab for each persona's repos (or flat list grouped by persona)
+- Per-repo view: status (ahead/behind), commit list, push/pull buttons, settings gear
+- Settings panel per repo: remote URL, credentials, branch strategy, attribution
+
+**Implementation notes:**
+- All git operations run on the host side (not inside sandbox) — use `std::process::Command` with `git` CLI or `git2` crate
+- Credentials passed via `GIT_ASKPASS` helper or credential.helper config (never written to workspace `.git/config`)
+- DB tables: `managed_repos` (id, persona_id, path, remote_url, provider, branch_strategy, attribution_mode, created_at), `repo_credentials` (id, repo_id, credential_ref — pointer to keyring entry or encrypted file entry)
+- No commercial equivalent exists that combines sandboxed AI agent isolation with host-side git remote management
+
+---
+
 ### Session Output Logging / Export
 
 **Priority:** Medium  
