@@ -15,8 +15,8 @@ use crate::db::Database;
 use crate::db_ops;
 use crate::error::OrchestratorError;
 use crate::types::{
-    CreateAdditionalWorkspaceEntry, CreateMcpServerEntry, CreatePersonaRequest, Persona,
-    PersonaId, PersonaMcpServer, UpdatePersonaRequest, UpdateResult,
+    AdditionalWorkspace, CreateAdditionalWorkspaceEntry, CreateMcpServerEntry,
+    CreatePersonaRequest, Persona, PersonaId, PersonaMcpServer, UpdatePersonaRequest, UpdateResult,
 };
 
 /// Manages persona CRUD and MCP server entry operations.
@@ -66,6 +66,18 @@ impl PersonaManager {
                 validate_mcp_url(&entry.url)?;
             }
         }
+
+        // Validate additional workspaces if provided
+        let validated_workspaces = if let Some(ref entries) = req.additional_workspaces {
+            if !entries.is_empty() {
+                let result = validate_additional_workspaces(entries, &req.workspace_path)?;
+                Some(result)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
 
         // Check name uniqueness and agent type existence inside DB transaction
         self.db.with_conn(|conn| {
@@ -122,6 +134,36 @@ impl PersonaManager {
             };
 
             db_ops::insert_persona(conn, &persona)?;
+
+            // Insert additional workspaces with sequential positions
+            let additional_ws = if let Some(ref entries) = req.additional_workspaces {
+                if let Some(ref validation) = validated_workspaces {
+                    let mut ws_records = Vec::with_capacity(entries.len());
+                    for (i, entry) in entries.iter().enumerate() {
+                        let ws = AdditionalWorkspace {
+                            id: uuid::Uuid::new_v4().to_string(),
+                            persona_id: persona.id.clone(),
+                            path: validation.canonical_paths[i].clone(),
+                            read_only: entry.read_only,
+                            position: i as i32,
+                            label: entry.label.clone(),
+                            created_at: now,
+                        };
+                        db_ops::insert_additional_workspace(conn, &ws)?;
+                        ws_records.push(ws);
+                    }
+                    ws_records
+                } else {
+                    vec![]
+                }
+            } else {
+                vec![]
+            };
+
+            let persona = Persona {
+                additional_workspaces: additional_ws,
+                ..persona
+            };
 
             Ok(persona)
         })
@@ -183,12 +225,27 @@ impl PersonaManager {
             }
         }
 
+        // Validate additional workspaces if provided
+        let validated_workspaces = if let Some(ref entries) = req.additional_workspaces {
+            if !entries.is_empty() {
+                let result = validate_additional_workspaces(entries, &new_workspace_path)?;
+                Some(result)
+            } else {
+                Some(AdditionalWorkspaceValidationResult {
+                    canonical_paths: vec![],
+                    warnings: vec![],
+                })
+            }
+        } else {
+            None
+        };
+
         // Determine if MCP servers are being removed (requires-restart)
         let has_active_sessions = self.db.with_conn(|conn| {
             db_ops::count_active_sessions_for_persona(conn, id)
         })? > 0;
 
-        let requires_restart = if has_active_sessions {
+        let mcp_requires_restart = if has_active_sessions {
             if let Some(ref new_mcp_servers) = req.mcp_servers {
                 classify_mcp_changes(&existing.mcp_servers, new_mcp_servers)
             } else {
@@ -197,6 +254,11 @@ impl PersonaManager {
         } else {
             false
         };
+
+        // Determine if workspace changes require restart
+        let workspace_requires_restart = has_active_sessions && req.additional_workspaces.is_some();
+
+        let requires_restart = mcp_requires_restart || workspace_requires_restart;
 
         self.db.with_conn(|conn| {
             // Check name uniqueness (excluding self)
@@ -267,15 +329,44 @@ impl PersonaManager {
                 }
             }
 
+            // Handle additional workspace updates: replace-all semantics
+            if let Some(ref entries) = req.additional_workspaces {
+                // Delete all existing additional workspaces for this persona
+                db_ops::delete_additional_workspaces_for_persona(conn, id)?;
+
+                // Insert new ones with sequential positions
+                if let Some(ref validation) = validated_workspaces {
+                    for (i, entry) in entries.iter().enumerate() {
+                        let ws = AdditionalWorkspace {
+                            id: uuid::Uuid::new_v4().to_string(),
+                            persona_id: id.clone(),
+                            path: validation.canonical_paths[i].clone(),
+                            read_only: entry.read_only,
+                            position: i as i32,
+                            label: entry.label.clone(),
+                            created_at: now,
+                        };
+                        db_ops::insert_additional_workspace(conn, &ws)?;
+                    }
+                }
+            }
+
             Ok(())
         })?;
 
         let updated_persona = self.get(id)?;
 
         if requires_restart {
+            let reason = if workspace_requires_restart && mcp_requires_restart {
+                "Workspace mounts changed and MCP server(s) were removed; active sessions need restart to apply.".to_string()
+            } else if workspace_requires_restart {
+                "Workspace mounts changed; active sessions need restart to apply.".to_string()
+            } else {
+                "MCP server(s) were removed; active sessions need restart".to_string()
+            };
             Ok(UpdateResult::RequiresRestart {
                 persona: updated_persona,
-                reason: "MCP server(s) were removed; active sessions need restart".to_string(),
+                reason,
             })
         } else {
             Ok(UpdateResult::Applied {
