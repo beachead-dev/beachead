@@ -5,6 +5,8 @@
 //! and MCP server URL format. On update with active sessions, classifies changes
 //! as live-applicable (additive) vs. requires-restart (removal).
 
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use chrono::Utc;
@@ -13,8 +15,8 @@ use crate::db::Database;
 use crate::db_ops;
 use crate::error::OrchestratorError;
 use crate::types::{
-    CreateMcpServerEntry, CreatePersonaRequest, Persona, PersonaId, PersonaMcpServer,
-    UpdatePersonaRequest, UpdateResult,
+    CreateAdditionalWorkspaceEntry, CreateMcpServerEntry, CreatePersonaRequest, Persona,
+    PersonaId, PersonaMcpServer, UpdatePersonaRequest, UpdateResult,
 };
 
 /// Manages persona CRUD and MCP server entry operations.
@@ -415,6 +417,149 @@ fn classify_mcp_changes(
     }
 
     false
+}
+
+/// Result of additional workspace validation containing canonicalized paths and any warnings.
+#[derive(Debug, Clone)]
+pub struct AdditionalWorkspaceValidationResult {
+    /// The canonicalized paths in the same order as the input entries.
+    pub canonical_paths: Vec<PathBuf>,
+    /// Warnings about sensitive directories (paths are still accepted).
+    pub warnings: Vec<String>,
+}
+
+/// Known sensitive directories that trigger a warning when mounted.
+const SENSITIVE_DIRECTORIES: &[&str] = &["/", "/etc", "/sys", "/proc", "/dev"];
+
+/// Validate additional workspace entries for a persona.
+///
+/// Performs the following checks in order:
+/// 1. Null byte check — rejects paths containing `\0`
+/// 2. Absolute path check — rejects non-absolute paths
+/// 3. Existence check — rejects paths that don't exist on host
+/// 4. Canonicalization — resolves symlinks and `..` via `std::fs::canonicalize()`
+/// 5. Sensitive directory warning — checks against known sensitive paths; returns warning (path still accepted)
+/// 6. Duplicate detection — rejects if any two canonicalized paths are equal
+/// 7. Primary collision — rejects if any canonicalized path equals the canonicalized primary workspace
+/// 8. Label validation — rejects labels > 64 chars or containing control characters (0x00–0x1F)
+///
+/// Returns the list of canonicalized paths and any warnings on success.
+pub fn validate_additional_workspaces(
+    entries: &[CreateAdditionalWorkspaceEntry],
+    primary_workspace: &Path,
+) -> Result<AdditionalWorkspaceValidationResult, OrchestratorError> {
+    let mut canonical_paths: Vec<PathBuf> = Vec::with_capacity(entries.len());
+    let mut warnings: Vec<String> = Vec::new();
+
+    // Validate labels first (doesn't require filesystem access)
+    for entry in entries {
+        if let Some(ref label) = entry.label {
+            if label.len() > 64 {
+                return Err(OrchestratorError::Validation(
+                    "Label exceeds maximum length of 64 characters".to_string(),
+                ));
+            }
+            if label.chars().any(|c| (c as u32) < 0x20) {
+                return Err(OrchestratorError::Validation(
+                    "Label contains invalid control characters".to_string(),
+                ));
+            }
+        }
+    }
+
+    // Validate and canonicalize each path
+    for entry in entries {
+        let path_str = entry.path.to_string_lossy();
+
+        // 1. Null byte check
+        if path_str.contains('\0') {
+            return Err(OrchestratorError::Validation(format!(
+                "Path contains invalid null bytes: {}",
+                path_str.replace('\0', "\\0")
+            )));
+        }
+
+        // 2. Absolute path check
+        if !entry.path.is_absolute() {
+            return Err(OrchestratorError::Validation(format!(
+                "Additional workspace path must be absolute: {}",
+                path_str
+            )));
+        }
+
+        // 3. Existence check
+        if !entry.path.exists() {
+            return Err(OrchestratorError::WorkspaceNotFound(format!(
+                "Additional workspace path not found: {}",
+                path_str
+            )));
+        }
+
+        // 4. Canonicalization
+        let canonical = std::fs::canonicalize(&entry.path).map_err(|e| {
+            OrchestratorError::Internal(format!(
+                "Failed to canonicalize path {}: {}",
+                path_str, e
+            ))
+        })?;
+
+        // 5. Sensitive directory warning
+        let canonical_str = canonical.to_string_lossy();
+        if SENSITIVE_DIRECTORIES.contains(&canonical_str.as_ref()) {
+            warnings.push(format!(
+                "Path grants access to sensitive system data: {}",
+                canonical_str
+            ));
+        } else {
+            // Check user-specific sensitive directories (~/.ssh, ~/.gnupg)
+            if let Ok(home) = std::env::var("HOME") {
+                let ssh_dir = PathBuf::from(&home).join(".ssh");
+                let gnupg_dir = PathBuf::from(&home).join(".gnupg");
+                if canonical == ssh_dir || canonical == gnupg_dir {
+                    warnings.push(format!(
+                        "Path grants access to sensitive system data: {}",
+                        canonical_str
+                    ));
+                }
+            }
+        }
+
+        canonical_paths.push(canonical);
+    }
+
+    // 6. Duplicate detection — reject if any two canonicalized paths are equal
+    let mut seen: HashSet<&PathBuf> = HashSet::new();
+    for path in &canonical_paths {
+        if !seen.insert(path) {
+            return Err(OrchestratorError::Validation(format!(
+                "Duplicate additional workspace path: {}",
+                path.to_string_lossy()
+            )));
+        }
+    }
+
+    // 7. Primary collision — reject if any canonicalized path equals the canonicalized primary workspace
+    let canonical_primary = std::fs::canonicalize(primary_workspace).map_err(|e| {
+        OrchestratorError::Internal(format!(
+            "Failed to canonicalize primary workspace {}: {}",
+            primary_workspace.to_string_lossy(),
+            e
+        ))
+    })?;
+
+    for path in &canonical_paths {
+        if *path == canonical_primary {
+            return Err(OrchestratorError::Validation(format!(
+                "Additional workspace path matches primary workspace: {}",
+                path.to_string_lossy()
+            )));
+        }
+    }
+
+    Ok(AdditionalWorkspaceValidationResult {
+        canonical_paths,
+        warnings,
+    })
 }
 
 #[cfg(test)]
@@ -1370,6 +1515,182 @@ mod tests {
             created_at: now,
             updated_at: now,
         }
+    }
+
+    // --- validate_additional_workspaces unit tests ---
+
+    #[test]
+    fn test_validate_additional_workspaces_empty_list() {
+        let primary = temp_workspace();
+        let result =
+            validate_additional_workspaces(&[], primary.path()).unwrap();
+        assert!(result.canonical_paths.is_empty());
+        assert!(result.warnings.is_empty());
+    }
+
+    #[test]
+    fn test_validate_additional_workspaces_valid_path() {
+        let primary = temp_workspace();
+        let additional = temp_workspace();
+        let entries = vec![CreateAdditionalWorkspaceEntry {
+            path: additional.path().to_path_buf(),
+            read_only: false,
+            label: None,
+        }];
+        let result =
+            validate_additional_workspaces(&entries, primary.path()).unwrap();
+        assert_eq!(result.canonical_paths.len(), 1);
+        assert_eq!(
+            result.canonical_paths[0],
+            std::fs::canonicalize(additional.path()).unwrap()
+        );
+        assert!(result.warnings.is_empty());
+    }
+
+    #[test]
+    fn test_validate_additional_workspaces_null_byte_rejected() {
+        let primary = temp_workspace();
+        let entries = vec![CreateAdditionalWorkspaceEntry {
+            path: PathBuf::from("/tmp/bad\0path"),
+            read_only: false,
+            label: None,
+        }];
+        let result = validate_additional_workspaces(&entries, primary.path());
+        assert!(matches!(result, Err(OrchestratorError::Validation(msg)) if msg.contains("null bytes")));
+    }
+
+    #[test]
+    fn test_validate_additional_workspaces_relative_path_rejected() {
+        let primary = temp_workspace();
+        let entries = vec![CreateAdditionalWorkspaceEntry {
+            path: PathBuf::from("relative/path"),
+            read_only: false,
+            label: None,
+        }];
+        let result = validate_additional_workspaces(&entries, primary.path());
+        assert!(matches!(result, Err(OrchestratorError::Validation(msg)) if msg.contains("must be absolute")));
+    }
+
+    #[test]
+    fn test_validate_additional_workspaces_nonexistent_path_rejected() {
+        let primary = temp_workspace();
+        let entries = vec![CreateAdditionalWorkspaceEntry {
+            path: PathBuf::from("/nonexistent/path/that/does/not/exist"),
+            read_only: false,
+            label: None,
+        }];
+        let result = validate_additional_workspaces(&entries, primary.path());
+        assert!(matches!(result, Err(OrchestratorError::WorkspaceNotFound(_))));
+    }
+
+    #[test]
+    fn test_validate_additional_workspaces_duplicate_rejected() {
+        let primary = temp_workspace();
+        let additional = temp_workspace();
+        let entries = vec![
+            CreateAdditionalWorkspaceEntry {
+                path: additional.path().to_path_buf(),
+                read_only: false,
+                label: None,
+            },
+            CreateAdditionalWorkspaceEntry {
+                path: additional.path().to_path_buf(),
+                read_only: true,
+                label: None,
+            },
+        ];
+        let result = validate_additional_workspaces(&entries, primary.path());
+        assert!(matches!(result, Err(OrchestratorError::Validation(msg)) if msg.contains("Duplicate")));
+    }
+
+    #[test]
+    fn test_validate_additional_workspaces_primary_collision_rejected() {
+        let primary = temp_workspace();
+        let entries = vec![CreateAdditionalWorkspaceEntry {
+            path: primary.path().to_path_buf(),
+            read_only: false,
+            label: None,
+        }];
+        let result = validate_additional_workspaces(&entries, primary.path());
+        assert!(matches!(result, Err(OrchestratorError::Validation(msg)) if msg.contains("matches primary")));
+    }
+
+    #[test]
+    fn test_validate_additional_workspaces_label_too_long_rejected() {
+        let primary = temp_workspace();
+        let additional = temp_workspace();
+        let entries = vec![CreateAdditionalWorkspaceEntry {
+            path: additional.path().to_path_buf(),
+            read_only: false,
+            label: Some("a".repeat(65)),
+        }];
+        let result = validate_additional_workspaces(&entries, primary.path());
+        assert!(matches!(result, Err(OrchestratorError::Validation(msg)) if msg.contains("maximum length")));
+    }
+
+    #[test]
+    fn test_validate_additional_workspaces_label_control_chars_rejected() {
+        let primary = temp_workspace();
+        let additional = temp_workspace();
+        let entries = vec![CreateAdditionalWorkspaceEntry {
+            path: additional.path().to_path_buf(),
+            read_only: false,
+            label: Some("bad\x01label".to_string()),
+        }];
+        let result = validate_additional_workspaces(&entries, primary.path());
+        assert!(matches!(result, Err(OrchestratorError::Validation(msg)) if msg.contains("control characters")));
+    }
+
+    #[test]
+    fn test_validate_additional_workspaces_label_64_chars_accepted() {
+        let primary = temp_workspace();
+        let additional = temp_workspace();
+        let entries = vec![CreateAdditionalWorkspaceEntry {
+            path: additional.path().to_path_buf(),
+            read_only: false,
+            label: Some("a".repeat(64)),
+        }];
+        let result = validate_additional_workspaces(&entries, primary.path());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_additional_workspaces_sensitive_dir_warning() {
+        // /tmp always exists and is not sensitive — test with /proc which exists on Linux
+        let primary = temp_workspace();
+        if Path::new("/proc").exists() {
+            let entries = vec![CreateAdditionalWorkspaceEntry {
+                path: PathBuf::from("/proc"),
+                read_only: true,
+                label: None,
+            }];
+            let result =
+                validate_additional_workspaces(&entries, primary.path()).unwrap();
+            assert_eq!(result.canonical_paths.len(), 1);
+            assert!(!result.warnings.is_empty());
+            assert!(result.warnings[0].contains("sensitive system data"));
+        }
+    }
+
+    #[test]
+    fn test_validate_additional_workspaces_canonicalization() {
+        let primary = temp_workspace();
+        let additional = temp_workspace();
+        // Create a path with .. segments that resolves to the same directory
+        let path_with_dots = additional.path().join("subdir/../");
+        // Create the subdir so the .. resolves correctly
+        std::fs::create_dir_all(additional.path().join("subdir")).unwrap();
+        let entries = vec![CreateAdditionalWorkspaceEntry {
+            path: path_with_dots,
+            read_only: false,
+            label: None,
+        }];
+        let result =
+            validate_additional_workspaces(&entries, primary.path()).unwrap();
+        assert_eq!(
+            result.canonical_paths[0],
+            std::fs::canonicalize(additional.path()).unwrap()
+        );
     }
 
     // --- Property-Based Tests ---
