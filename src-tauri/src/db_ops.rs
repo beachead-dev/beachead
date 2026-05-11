@@ -6,8 +6,8 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::error::OrchestratorError;
 use crate::types::{
-    AgentMetadata, AgentType, AgentTypeId, Persona, PersonaId, PersonaMcpServer, Session,
-    SessionId, SessionStatus,
+    AdditionalWorkspace, AgentMetadata, AgentType, AgentTypeId, Persona, PersonaId,
+    PersonaMcpServer, Session, SessionId, SessionStatus,
 };
 
 // --- Agent Type Operations ---
@@ -255,8 +255,12 @@ pub fn get_persona(conn: &Connection, id: &PersonaId) -> Result<Persona, Orchest
     // Load MCP servers
     let mcp_servers = list_persona_mcp_servers(conn, &persona.id)?;
 
+    // Load additional workspaces
+    let additional_workspaces = list_additional_workspaces(conn, &persona.id)?;
+
     Ok(Persona {
         mcp_servers,
+        additional_workspaces,
         ..persona
     })
 }
@@ -294,12 +298,14 @@ pub fn list_personas(conn: &Connection) -> Result<Vec<Persona>, OrchestratorErro
         })?
         .collect::<Result<Vec<_>, _>>()?;
 
-    // Load MCP servers for each persona
+    // Load MCP servers and additional workspaces for each persona
     let mut result = Vec::with_capacity(personas.len());
     for persona in personas {
         let mcp_servers = list_persona_mcp_servers(conn, &persona.id)?;
+        let additional_workspaces = list_additional_workspaces(conn, &persona.id)?;
         result.push(Persona {
             mcp_servers,
+            additional_workspaces,
             ..persona
         });
     }
@@ -449,6 +455,69 @@ pub fn list_persona_mcp_servers(
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(servers)
+}
+
+// --- Additional Workspace Operations ---
+
+pub fn insert_additional_workspace(
+    conn: &Connection,
+    ws: &AdditionalWorkspace,
+) -> Result<(), OrchestratorError> {
+    conn.execute(
+        "INSERT INTO additional_workspaces (id, persona_id, path, read_only, position, label, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![
+            ws.id,
+            ws.persona_id.0,
+            ws.path.to_string_lossy().to_string(),
+            ws.read_only as i32,
+            ws.position,
+            ws.label,
+            ws.created_at.to_rfc3339(),
+        ],
+    )?;
+    Ok(())
+}
+
+pub fn list_additional_workspaces(
+    conn: &Connection,
+    persona_id: &PersonaId,
+) -> Result<Vec<AdditionalWorkspace>, OrchestratorError> {
+    let mut stmt = conn.prepare(
+        "SELECT id, persona_id, path, read_only, position, label, created_at
+         FROM additional_workspaces WHERE persona_id = ?1 ORDER BY position ASC",
+    )?;
+
+    let workspaces = stmt
+        .query_map(params![persona_id.0], |row| {
+            let created_str: String = row.get(6)?;
+
+            Ok(AdditionalWorkspace {
+                id: row.get(0)?,
+                persona_id: PersonaId(row.get(1)?),
+                path: std::path::PathBuf::from(row.get::<_, String>(2)?),
+                read_only: row.get::<_, i32>(3)? != 0,
+                position: row.get(4)?,
+                label: row.get(5)?,
+                created_at: DateTime::parse_from_rfc3339(&created_str)
+                    .unwrap()
+                    .with_timezone(&Utc),
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(workspaces)
+}
+
+pub fn delete_additional_workspaces_for_persona(
+    conn: &Connection,
+    persona_id: &PersonaId,
+) -> Result<(), OrchestratorError> {
+    conn.execute(
+        "DELETE FROM additional_workspaces WHERE persona_id = ?1",
+        params![persona_id.0],
+    )?;
+    Ok(())
 }
 
 // --- Persona Helper Operations ---
