@@ -124,8 +124,36 @@ pub struct Persona {
     pub memory_enabled: bool,
     pub agent_cli_args: Vec<String>,
     pub mcp_servers: Vec<PersonaMcpServer>,
+    pub additional_workspaces: Vec<AdditionalWorkspace>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+/// An additional workspace mount associated with a persona.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdditionalWorkspace {
+    pub id: String,
+    pub persona_id: PersonaId,
+    pub path: PathBuf,
+    pub read_only: bool,
+    pub position: i32,
+    pub label: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Request entry for creating/updating an additional workspace.
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateAdditionalWorkspaceEntry {
+    pub path: PathBuf,
+    pub read_only: bool,
+    pub label: Option<String>,
+}
+
+/// A workspace path ready to be passed to sbx create as a positional arg.
+#[derive(Debug, Clone)]
+pub struct AdditionalWorkspaceArg {
+    pub path: PathBuf,
+    pub read_only: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -213,6 +241,7 @@ pub struct CreatePersonaRequest {
     pub memory_enabled: Option<bool>,
     pub agent_cli_args: Option<Vec<String>>,
     pub mcp_servers: Option<Vec<CreateMcpServerEntry>>,
+    pub additional_workspaces: Option<Vec<CreateAdditionalWorkspaceEntry>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -223,6 +252,7 @@ pub struct UpdatePersonaRequest {
     pub memory_enabled: Option<bool>,
     pub agent_cli_args: Option<Vec<String>>,
     pub mcp_servers: Option<Vec<CreateMcpServerEntry>>,
+    pub additional_workspaces: Option<Vec<CreateAdditionalWorkspaceEntry>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

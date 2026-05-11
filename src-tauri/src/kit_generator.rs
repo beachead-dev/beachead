@@ -197,6 +197,7 @@ mod tests {
             memory_enabled,
             agent_cli_args: vec![],
             mcp_servers,
+            additional_workspaces: vec![],
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }
@@ -512,6 +513,7 @@ mod tests {
                         memory_enabled,
                         agent_cli_args: vec![],
                         mcp_servers: vec![],
+                        additional_workspaces: vec![],
                         created_at: Utc::now(),
                         updated_at: Utc::now(),
                     };
@@ -580,6 +582,7 @@ mod tests {
                     memory_enabled,
                     agent_cli_args: vec![],
                     mcp_servers: mcp_servers.clone(),
+                    additional_workspaces: vec![],
                     created_at: Utc::now(),
                     updated_at: Utc::now(),
                 };

@@ -132,6 +132,7 @@ mod tests {
                     memory_enabled,
                     agent_cli_args: cli_args,
                     mcp_servers: vec![],
+                    additional_workspaces: vec![],
                     created_at: now,
                     updated_at: now,
                 };
@@ -210,6 +211,7 @@ mod tests {
                     memory_enabled: mem1,
                     agent_cli_args: vec![],
                     mcp_servers: vec![],
+                    additional_workspaces: vec![],
                     created_at: now,
                     updated_at: now,
                 };
@@ -224,6 +226,7 @@ mod tests {
                     memory_enabled: mem2,
                     agent_cli_args: vec!["--verbose".to_string()],
                     mcp_servers: vec![],
+                    additional_workspaces: vec![],
                     created_at: now,
                     updated_at: now,
                 };
@@ -290,6 +293,7 @@ mod tests {
                     memory_enabled: false,
                     agent_cli_args: vec![],
                     mcp_servers: vec![],
+                    additional_workspaces: vec![],
                     created_at: now,
                     updated_at: now,
                 };
@@ -564,6 +568,7 @@ mod tests {
                                 memory_enabled: false,
                                 agent_cli_args: cli_args.clone(),
                                 mcp_servers: vec![],
+                                additional_workspaces: vec![],
                                 created_at: now,
                                 updated_at: now,
                             };
@@ -584,6 +589,7 @@ mod tests {
                                         memory_enabled: false,
                                         agent_cli_args: vec![],
                                         mcp_servers: vec![],
+                                        additional_workspaces: vec![],
                                         created_at: now,
                                         updated_at: now,
                                     };
@@ -617,6 +623,7 @@ mod tests {
                                         memory_enabled: false,
                                         agent_cli_args: vec![],
                                         mcp_servers: vec![],
+                                        additional_workspaces: vec![],
                                         created_at: now,
                                         updated_at: now,
                                     };
@@ -685,6 +692,7 @@ mod tests {
                     memory_enabled: false,
                     agent_cli_args: vec![],
                     mcp_servers: vec![],
+                    additional_workspaces: vec![],
                     created_at: now,
                     updated_at: now,
                 };

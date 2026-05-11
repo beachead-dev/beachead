@@ -158,6 +158,12 @@ static MIGRATIONS: &[Migration] = &[
         description: "Create user_settings table",
         sql: MIGRATION_004_USER_SETTINGS,
     },
+    // Additional workspaces per persona
+    Migration {
+        version: 5,
+        description: "Create additional_workspaces table",
+        sql: MIGRATION_005_ADDITIONAL_WORKSPACES,
+    },
 ];
 
 /// Migration 1: Phase 1 core tables (agent_types, personas, persona_mcp_servers, sessions)
@@ -257,6 +263,22 @@ CREATE TABLE user_settings (
 );
 ";
 
+/// Migration 5: Additional workspaces per persona
+const MIGRATION_005_ADDITIONAL_WORKSPACES: &str = "
+CREATE TABLE additional_workspaces (
+    id          TEXT PRIMARY KEY,
+    persona_id  TEXT NOT NULL REFERENCES personas(id) ON DELETE CASCADE,
+    path        TEXT NOT NULL,
+    read_only   INTEGER NOT NULL DEFAULT 0,
+    position    INTEGER NOT NULL DEFAULT 0,
+    label       TEXT,
+    created_at  TEXT NOT NULL
+);
+
+CREATE INDEX idx_additional_workspaces_persona_id
+    ON additional_workspaces(persona_id);
+";
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -267,7 +289,7 @@ mod tests {
 
         db.with_conn(|conn| {
             let version = get_current_version(conn)?;
-            assert_eq!(version, 4, "All migrations should have been applied");
+            assert_eq!(version, 5, "All migrations should have been applied");
             Ok(())
         })
         .unwrap();
@@ -448,7 +470,84 @@ mod tests {
         let db2 = Database::open(&db_path).expect("Second open should succeed");
         db2.with_conn(|conn| {
             let version = get_current_version(conn)?;
-            assert_eq!(version, 4);
+            assert_eq!(version, 5);
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_additional_workspaces_table_exists() {
+        let db = Database::open_in_memory().expect("Failed to open in-memory database");
+
+        db.with_conn(|conn| {
+            let count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='additional_workspaces'",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(|e| OrchestratorError::Database(e.to_string()))?;
+            assert_eq!(count, 1, "Table 'additional_workspaces' should exist");
+
+            // Verify the index exists
+            let idx_count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_additional_workspaces_persona_id'",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(|e| OrchestratorError::Database(e.to_string()))?;
+            assert_eq!(idx_count, 1, "Index 'idx_additional_workspaces_persona_id' should exist");
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_cascade_delete_additional_workspaces() {
+        let db = Database::open_in_memory().expect("Failed to open in-memory database");
+
+        db.with_conn(|conn| {
+            // Insert agent type
+            conn.execute(
+                "INSERT INTO agent_types (id, name, sbx_agent, is_builtin, metadata, created_at, updated_at)
+                 VALUES ('a1', 'claude', 'claude', 1, '{}', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')",
+                [],
+            ).map_err(|e| OrchestratorError::Database(e.to_string()))?;
+
+            // Insert persona
+            conn.execute(
+                "INSERT INTO personas (id, name, agent_type_id, workspace_path, memory_enabled, created_at, updated_at)
+                 VALUES ('p1', 'test-persona', 'a1', '/tmp', 0, '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')",
+                [],
+            ).map_err(|e| OrchestratorError::Database(e.to_string()))?;
+
+            // Insert additional workspaces
+            conn.execute(
+                "INSERT INTO additional_workspaces (id, persona_id, path, read_only, position, label, created_at)
+                 VALUES ('w1', 'p1', '/home/user/libs', 1, 0, 'Shared Libs', '2024-01-01T00:00:00Z')",
+                [],
+            ).map_err(|e| OrchestratorError::Database(e.to_string()))?;
+
+            conn.execute(
+                "INSERT INTO additional_workspaces (id, persona_id, path, read_only, position, label, created_at)
+                 VALUES ('w2', 'p1', '/home/user/data', 0, 1, NULL, '2024-01-01T00:00:00Z')",
+                [],
+            ).map_err(|e| OrchestratorError::Database(e.to_string()))?;
+
+            // Delete persona — additional workspaces should cascade
+            conn.execute("DELETE FROM personas WHERE id = 'p1'", [])
+                .map_err(|e| OrchestratorError::Database(e.to_string()))?;
+
+            let count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM additional_workspaces WHERE persona_id = 'p1'",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(|e| OrchestratorError::Database(e.to_string()))?;
+            assert_eq!(count, 0, "Additional workspace entries should be cascade-deleted");
             Ok(())
         })
         .unwrap();

@@ -114,6 +114,7 @@ impl PersonaManager {
                 memory_enabled: req.memory_enabled.unwrap_or(false),
                 agent_cli_args: req.agent_cli_args.unwrap_or_default(),
                 mcp_servers,
+                additional_workspaces: vec![],
                 created_at: now,
                 updated_at: now,
             };
@@ -473,6 +474,7 @@ mod tests {
                 description: Some("A test MCP server".to_string()),
                 auth_headers: None,
             }]),
+            additional_workspaces: None,
         };
 
         let persona = mgr.create(req).unwrap();
@@ -497,6 +499,7 @@ mod tests {
             memory_enabled: None,
             agent_cli_args: None,
             mcp_servers: None,
+            additional_workspaces: None,
         };
 
         let result = mgr.create(req);
@@ -517,6 +520,7 @@ mod tests {
             memory_enabled: None,
             agent_cli_args: None,
             mcp_servers: None,
+            additional_workspaces: None,
         };
         mgr.create(req).unwrap();
 
@@ -527,6 +531,7 @@ mod tests {
             memory_enabled: None,
             agent_cli_args: None,
             mcp_servers: None,
+            additional_workspaces: None,
         };
         let result = mgr.create(req2);
         assert!(matches!(result, Err(OrchestratorError::DuplicateName(_))));
@@ -544,6 +549,7 @@ mod tests {
             memory_enabled: None,
             agent_cli_args: None,
             mcp_servers: None,
+            additional_workspaces: None,
         };
 
         let result = mgr.create(req);
@@ -563,6 +569,7 @@ mod tests {
             memory_enabled: None,
             agent_cli_args: None,
             mcp_servers: None,
+            additional_workspaces: None,
         };
 
         let result = mgr.create(req);
@@ -582,6 +589,7 @@ mod tests {
             memory_enabled: None,
             agent_cli_args: None,
             mcp_servers: None,
+            additional_workspaces: None,
         };
 
         let result = mgr.create(req);
@@ -602,6 +610,7 @@ mod tests {
             memory_enabled: None,
             agent_cli_args: None,
             mcp_servers: None,
+            additional_workspaces: None,
         };
         mgr.create(req1).unwrap();
 
@@ -612,6 +621,7 @@ mod tests {
             memory_enabled: None,
             agent_cli_args: None,
             mcp_servers: None,
+            additional_workspaces: None,
         };
         let result = mgr.create(req2);
         match result {
@@ -638,6 +648,7 @@ mod tests {
             memory_enabled: None,
             agent_cli_args: None,
             mcp_servers: None,
+            additional_workspaces: None,
         };
         mgr.create(req1).unwrap();
 
@@ -648,6 +659,7 @@ mod tests {
             memory_enabled: None,
             agent_cli_args: None,
             mcp_servers: None,
+            additional_workspaces: None,
         };
         let mover = mgr.create(req2).unwrap();
 
@@ -659,6 +671,7 @@ mod tests {
             memory_enabled: None,
             agent_cli_args: None,
             mcp_servers: None,
+            additional_workspaces: None,
         };
         let result = mgr.update(&mover.id, update_req);
         match result {
@@ -683,6 +696,7 @@ mod tests {
             memory_enabled: None,
             agent_cli_args: None,
             mcp_servers: None,
+            additional_workspaces: None,
         };
         let created = mgr.create(req).unwrap();
 
@@ -694,6 +708,7 @@ mod tests {
             memory_enabled: None,
             agent_cli_args: None,
             mcp_servers: None,
+            additional_workspaces: None,
         };
         let result = mgr.update(&created.id, update_req).unwrap();
         match result {
@@ -723,6 +738,7 @@ mod tests {
                 description: None,
                 auth_headers: None,
             }]),
+            additional_workspaces: None,
         };
 
         let result = mgr.create(req);
@@ -748,6 +764,7 @@ mod tests {
                 description: None,
                 auth_headers: None,
             }]),
+            additional_workspaces: None,
         };
 
         let result = mgr.create(req);
@@ -768,6 +785,7 @@ mod tests {
             memory_enabled: None,
             agent_cli_args: None,
             mcp_servers: None,
+            additional_workspaces: None,
         };
         let created = mgr.create(req).unwrap();
 
@@ -798,6 +816,7 @@ mod tests {
             memory_enabled: None,
             agent_cli_args: None,
             mcp_servers: None,
+            additional_workspaces: None,
         };
         let req2 = CreatePersonaRequest {
             name: "Beta".to_string(),
@@ -806,6 +825,7 @@ mod tests {
             memory_enabled: None,
             agent_cli_args: None,
             mcp_servers: None,
+            additional_workspaces: None,
         };
         mgr.create(req1).unwrap();
         mgr.create(req2).unwrap();
@@ -828,6 +848,7 @@ mod tests {
             memory_enabled: None,
             agent_cli_args: None,
             mcp_servers: None,
+            additional_workspaces: None,
         };
         let created = mgr.create(req).unwrap();
 
@@ -838,6 +859,7 @@ mod tests {
             memory_enabled: None,
             agent_cli_args: None,
             mcp_servers: None,
+            additional_workspaces: None,
         };
         let result = mgr.update(&created.id, update_req).unwrap();
         match result {
@@ -863,6 +885,7 @@ mod tests {
             memory_enabled: None,
             agent_cli_args: None,
             mcp_servers: None,
+            additional_workspaces: None,
         };
         mgr.create(req1).unwrap();
 
@@ -873,6 +896,7 @@ mod tests {
             memory_enabled: None,
             agent_cli_args: None,
             mcp_servers: None,
+            additional_workspaces: None,
         };
         let second = mgr.create(req2).unwrap();
 
@@ -883,6 +907,7 @@ mod tests {
             memory_enabled: None,
             agent_cli_args: None,
             mcp_servers: None,
+            additional_workspaces: None,
         };
         let result = mgr.update(&second.id, update_req);
         assert!(matches!(result, Err(OrchestratorError::DuplicateName(_))));
@@ -907,6 +932,7 @@ mod tests {
                 description: None,
                 auth_headers: None,
             }]),
+            additional_workspaces: None,
         };
         let created = mgr.create(req).unwrap();
         assert_eq!(created.mcp_servers.len(), 1);
@@ -932,6 +958,7 @@ mod tests {
                     auth_headers: None,
                 },
             ]),
+            additional_workspaces: None,
         };
         let result = mgr.update(&created.id, update_req).unwrap();
         match result {
@@ -961,6 +988,7 @@ mod tests {
                 description: None,
                 auth_headers: None,
             }]),
+            additional_workspaces: None,
         };
         let created = mgr.create(req).unwrap();
 
@@ -995,6 +1023,7 @@ mod tests {
                     auth_headers: None,
                 },
             ]),
+            additional_workspaces: None,
         };
         let result = mgr.update(&created.id, update_req).unwrap();
         assert!(matches!(result, UpdateResult::Applied { .. }));
@@ -1027,6 +1056,7 @@ mod tests {
                     auth_headers: None,
                 },
             ]),
+            additional_workspaces: None,
         };
         let created = mgr.create(req).unwrap();
 
@@ -1053,6 +1083,7 @@ mod tests {
                 description: None,
                 auth_headers: None,
             }]),
+            additional_workspaces: None,
         };
         let result = mgr.update(&created.id, update_req).unwrap();
         match result {
@@ -1077,6 +1108,7 @@ mod tests {
             memory_enabled: None,
             agent_cli_args: None,
             mcp_servers: None,
+            additional_workspaces: None,
         };
         let created = mgr.create(req).unwrap();
 
@@ -1099,6 +1131,7 @@ mod tests {
             memory_enabled: None,
             agent_cli_args: None,
             mcp_servers: None,
+            additional_workspaces: None,
         };
         let created = mgr.create(req).unwrap();
 
@@ -1130,6 +1163,7 @@ mod tests {
             memory_enabled: None,
             agent_cli_args: None,
             mcp_servers: None,
+            additional_workspaces: None,
         };
         let created = mgr.create(req).unwrap();
 
@@ -1161,6 +1195,7 @@ mod tests {
             memory_enabled: None,
             agent_cli_args: None,
             mcp_servers: None,
+            additional_workspaces: None,
         };
         let created = mgr.create(req).unwrap();
         assert_eq!(created.mcp_servers.len(), 0);
@@ -1194,6 +1229,7 @@ mod tests {
             memory_enabled: None,
             agent_cli_args: None,
             mcp_servers: None,
+            additional_workspaces: None,
         };
         let created = mgr.create(req).unwrap();
 
@@ -1226,6 +1262,7 @@ mod tests {
                 description: None,
                 auth_headers: None,
             }]),
+            additional_workspaces: None,
         };
         let created = mgr.create(req).unwrap();
         let mcp_id = &created.mcp_servers[0].id;
@@ -1257,6 +1294,7 @@ mod tests {
                 description: None,
                 auth_headers: None,
             }]),
+            additional_workspaces: None,
         };
         let created = mgr.create(req).unwrap();
         let mcp_id = created.mcp_servers[0].id.clone();

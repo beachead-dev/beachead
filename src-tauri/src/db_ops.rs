@@ -235,6 +235,7 @@ pub fn get_persona(conn: &Connection, id: &PersonaId) -> Result<Persona, Orchest
                     .and_then(|s| serde_json::from_str(&s).ok())
                     .unwrap_or_default(),
                 mcp_servers: vec![], // filled below
+                additional_workspaces: vec![], // filled below
                 created_at: DateTime::parse_from_rfc3339(&created_str)
                     .unwrap()
                     .with_timezone(&Utc),
@@ -282,6 +283,7 @@ pub fn list_personas(conn: &Connection) -> Result<Vec<Persona>, OrchestratorErro
                     .and_then(|s| serde_json::from_str(&s).ok())
                     .unwrap_or_default(),
                 mcp_servers: vec![],
+                additional_workspaces: vec![],
                 created_at: DateTime::parse_from_rfc3339(&created_str)
                     .unwrap()
                     .with_timezone(&Utc),

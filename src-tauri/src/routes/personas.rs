@@ -92,6 +92,7 @@ async fn update_persona(
                     memory_enabled: Some(false),
                     agent_cli_args: None,
                     mcp_servers: None,
+                    additional_workspaces: None,
                 };
                 let _ = state.persona_manager.update(&persona_id, revert_req);
                 return Err(OrchestratorError::DockerError(format!(

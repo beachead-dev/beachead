@@ -144,6 +144,7 @@ impl SessionManager {
             workspace: run_args.workspace,
             name: run_args.name,
             template: run_args.template,
+            additional_workspaces: Vec::new(),
         }).await {
             Ok(id) => id,
             Err(OrchestratorError::SbxError(ref msg)) => {
@@ -896,6 +897,7 @@ esac
                 memory_enabled: false,
                 agent_cli_args: vec![],
                 mcp_servers: vec![],
+                additional_workspaces: vec![],
                 created_at: now,
                 updated_at: now,
             };

@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 
 use crate::error::OrchestratorError;
+use crate::types::AdditionalWorkspaceArg;
 
 /// Commands that involve secrets — stderr from these is redacted before logging.
 const SECRET_COMMANDS: &[&str] = &["secret"];
@@ -59,6 +60,7 @@ pub struct SbxCreateArgs {
     pub workspace: PathBuf,
     pub name: Option<String>,
     pub template: Option<String>,
+    pub additional_workspaces: Vec<AdditionalWorkspaceArg>,
 }
 
 /// Port mapping from `sbx ports`.
