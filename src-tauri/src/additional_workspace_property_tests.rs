@@ -9,7 +9,13 @@ mod tests {
 
     use crate::db::Database;
     use crate::db_ops::*;
+    use crate::error::OrchestratorError;
+    use crate::persona_manager::validate_additional_workspaces;
     use crate::types::*;
+
+    fn temp_workspace() -> tempfile::TempDir {
+        tempfile::tempdir().unwrap()
+    }
 
     // --- Arbitrary Generators ---
 
@@ -130,6 +136,224 @@ mod tests {
             }).unwrap();
 
             prop_assert_eq!(remaining.len(), 0, "All additional workspaces should be cascade-deleted when persona is deleted");
+        }
+    }
+
+    // Feature: multi-workspace-mounts, Property 2: Non-absolute paths are rejected
+    // **Validates: Requirements 2.1, 2.3**
+
+    /// Generate a random relative path (does NOT start with `/`)
+    fn arb_relative_path() -> impl Strategy<Value = PathBuf> {
+        // Generate path segments that form a relative path (no leading `/`)
+        prop::string::string_regex("[a-zA-Z0-9_.][a-zA-Z0-9_./\\-]{0,50}")
+            .unwrap()
+            .prop_filter("must not start with /", |s| !s.starts_with('/'))
+            .prop_filter("must not be empty", |s| !s.is_empty())
+            .prop_map(PathBuf::from)
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(100))]
+        #[test]
+        fn prop_non_absolute_paths_are_rejected(
+            relative_path in arb_relative_path(),
+            read_only in any::<bool>(),
+            label in arb_label(),
+        ) {
+            // Ensure the generated path is indeed not absolute
+            prop_assume!(!relative_path.is_absolute());
+
+            let entries = vec![CreateAdditionalWorkspaceEntry {
+                path: relative_path.clone(),
+                read_only,
+                label,
+            }];
+
+            // Use /tmp as the primary workspace (a valid existing absolute path)
+            let primary = std::path::Path::new("/tmp");
+            let result = validate_additional_workspaces(&entries, primary);
+
+            // Validation must return an error
+            prop_assert!(result.is_err(), "Expected validation error for relative path: {:?}", relative_path);
+
+            // The error message must contain "Additional workspace path must be absolute"
+            match result {
+                Err(OrchestratorError::Validation(msg)) => {
+                    prop_assert!(
+                        msg.contains("Additional workspace path must be absolute"),
+                        "Error message should contain 'Additional workspace path must be absolute', got: {}",
+                        msg
+                    );
+                }
+                Err(other) => {
+                    prop_assert!(false, "Expected Validation error, got: {:?}", other);
+                }
+                Ok(_) => {
+                    prop_assert!(false, "Expected error for relative path {:?}, but got Ok", relative_path);
+                }
+            }
+        }
+    }
+
+    // Feature: multi-workspace-mounts, Property 3: Stored paths are canonicalized
+    // **Validates: Requirements 2.7**
+
+    /// Generate a subdirectory name for use in path construction
+    fn arb_subdir_name() -> impl Strategy<Value = String> {
+        "[a-zA-Z][a-zA-Z0-9_]{0,9}".prop_map(|s| s)
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(100))]
+        #[test]
+        fn prop_stored_paths_are_canonicalized(
+            subdir_name in arb_subdir_name(),
+            read_only in any::<bool>(),
+            label in arb_label(),
+        ) {
+            // Create a temp directory to serve as the additional workspace
+            let temp_dir = tempfile::tempdir().unwrap();
+            // Create a subdirectory inside the temp dir
+            let subdir = temp_dir.path().join(&subdir_name);
+            std::fs::create_dir_all(&subdir).unwrap();
+
+            // Build a path with `..` segments that resolves back to the subdir
+            // e.g., /tmp/somedir/subdir/../subdir
+            let path_with_dotdot = subdir.join("..").join(&subdir_name);
+
+            // Create a separate temp directory for the primary workspace
+            let primary_dir = tempfile::tempdir().unwrap();
+
+            let entries = vec![CreateAdditionalWorkspaceEntry {
+                path: path_with_dotdot.clone(),
+                read_only,
+                label,
+            }];
+
+            let result = validate_additional_workspaces(&entries, primary_dir.path());
+
+            // Validation should succeed
+            prop_assert!(result.is_ok(), "Expected Ok for valid path with .. segments, got: {:?}", result.err());
+
+            let validation_result = result.unwrap();
+
+            // The canonical path from validation should equal std::fs::canonicalize() of the input
+            let expected_canonical = std::fs::canonicalize(&path_with_dotdot).unwrap();
+            prop_assert_eq!(
+                &validation_result.canonical_paths[0],
+                &expected_canonical,
+                "Stored path should equal canonicalize() result. Input: {:?}, Got: {:?}, Expected: {:?}",
+                path_with_dotdot,
+                validation_result.canonical_paths[0],
+                expected_canonical
+            );
+        }
+    }
+
+    // Feature: multi-workspace-mounts, Property 11: Label validation
+    // **Validates: Requirements 10.6, 10.7**
+
+    /// Generate a string with length between 65 and 200 characters (exceeds 64-char limit)
+    fn arb_long_label() -> impl Strategy<Value = String> {
+        prop::collection::vec(prop::char::range('a', 'z'), 65..=200)
+            .prop_map(|chars| chars.into_iter().collect::<String>())
+    }
+
+    /// Generate a string containing at least one control character (ASCII 0x00–0x1F)
+    fn arb_label_with_control_chars() -> impl Strategy<Value = String> {
+        // Generate a prefix of printable chars, a control char, and a suffix of printable chars
+        (
+            prop::collection::vec(prop::char::range('a', 'z'), 0..30),
+            prop::char::range('\x00', '\x1F'),
+            prop::collection::vec(prop::char::range('a', 'z'), 0..30),
+        )
+            .prop_map(|(prefix, ctrl, suffix)| {
+                let mut s: String = prefix.into_iter().collect();
+                s.push(ctrl);
+                s.extend(suffix.into_iter());
+                s
+            })
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(100))]
+        #[test]
+        fn prop_labels_exceeding_64_chars_are_rejected(
+            long_label in arb_long_label(),
+            read_only in any::<bool>(),
+        ) {
+            // Verify the generated label is indeed > 64 chars
+            prop_assume!(long_label.len() > 64);
+
+            let primary = temp_workspace();
+            let additional = temp_workspace();
+
+            let entries = vec![CreateAdditionalWorkspaceEntry {
+                path: additional.path().to_path_buf(),
+                read_only,
+                label: Some(long_label.clone()),
+            }];
+
+            let result = validate_additional_workspaces(&entries, primary.path());
+
+            prop_assert!(result.is_err(), "Expected validation error for label with {} chars", long_label.len());
+
+            match result {
+                Err(OrchestratorError::Validation(msg)) => {
+                    prop_assert!(
+                        msg.contains("Label exceeds maximum length of 64 characters"),
+                        "Error message should contain 'Label exceeds maximum length of 64 characters', got: {}",
+                        msg
+                    );
+                }
+                Err(other) => {
+                    prop_assert!(false, "Expected Validation error, got: {:?}", other);
+                }
+                Ok(_) => {
+                    prop_assert!(false, "Expected error for long label (len={}), but got Ok", long_label.len());
+                }
+            }
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(100))]
+        #[test]
+        fn prop_labels_with_control_chars_are_rejected(
+            label_with_ctrl in arb_label_with_control_chars(),
+            read_only in any::<bool>(),
+        ) {
+            // Verify the generated label contains at least one control character
+            prop_assume!(label_with_ctrl.chars().any(|c| (c as u32) < 0x20));
+
+            let primary = temp_workspace();
+            let additional = temp_workspace();
+
+            let entries = vec![CreateAdditionalWorkspaceEntry {
+                path: additional.path().to_path_buf(),
+                read_only,
+                label: Some(label_with_ctrl.clone()),
+            }];
+
+            let result = validate_additional_workspaces(&entries, primary.path());
+
+            prop_assert!(result.is_err(), "Expected validation error for label with control chars");
+
+            match result {
+                Err(OrchestratorError::Validation(msg)) => {
+                    prop_assert!(
+                        msg.contains("Label contains invalid control characters"),
+                        "Error message should contain 'Label contains invalid control characters', got: {}",
+                        msg
+                    );
+                }
+                Err(other) => {
+                    prop_assert!(false, "Expected Validation error, got: {:?}", other);
+                }
+                Ok(_) => {
+                    prop_assert!(false, "Expected error for label with control chars, but got Ok");
+                }
+            }
         }
     }
 
