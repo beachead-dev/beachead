@@ -16,13 +16,14 @@ use aes_gcm::{Aes256Gcm, Nonce};
 use argon2::Argon2;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 use zeroize::Zeroize;
 
 use crate::db::Database;
 use crate::db_ops;
 use crate::error::OrchestratorError;
 use crate::sbx::PolicyRule;
-use crate::types::{AgentType, Persona, PersonaId};
+use crate::types::{AdditionalWorkspace, AgentType, Persona, PersonaId};
 
 // --- Constants ---
 
@@ -112,6 +113,8 @@ struct ExportPayload {
     pub configured_secret_services: Vec<String>,
     pub mcp_container_configs: Vec<McpContainerExport>,
     pub shared_memory_assignments: Vec<SharedMemoryAssignmentExport>,
+    #[serde(default)]
+    pub additional_workspaces: Vec<AdditionalWorkspace>,
 }
 
 /// MCP container config for export (excludes bearer_token).
@@ -269,6 +272,13 @@ impl ExportImportManager {
                             for mcp in &renamed.mcp_servers {
                                 db_ops::insert_persona_mcp_server(conn, mcp)?;
                             }
+                            // Import additional workspaces with the new persona_id
+                            self.import_additional_workspaces_for_persona(
+                                conn,
+                                &payload.additional_workspaces,
+                                &persona.id,
+                                &renamed.id,
+                            )?;
                             personas_imported += 1;
                         }
                         Some(ConflictAction::Overwrite) => {
@@ -282,7 +292,7 @@ impl ExportImportManager {
                                     "DELETE FROM sessions WHERE persona_id = ?1",
                                     rusqlite::params![existing.id.0],
                                 ).map_err(|e| OrchestratorError::Database(e.to_string()))?;
-                                // Delete the existing persona (MCP servers cascade)
+                                // Delete the existing persona (MCP servers and additional_workspaces cascade)
                                 conn.execute(
                                     "DELETE FROM personas WHERE id = ?1",
                                     rusqlite::params![existing.id.0],
@@ -295,6 +305,13 @@ impl ExportImportManager {
                             for mcp in &imported.mcp_servers {
                                 db_ops::insert_persona_mcp_server(conn, mcp)?;
                             }
+                            // Import additional workspaces with the new persona_id
+                            self.import_additional_workspaces_for_persona(
+                                conn,
+                                &payload.additional_workspaces,
+                                &persona.id,
+                                &imported.id,
+                            )?;
                             personas_imported += 1;
                         }
                         None => {
@@ -308,6 +325,13 @@ impl ExportImportManager {
                     for mcp in &persona.mcp_servers {
                         db_ops::insert_persona_mcp_server(conn, mcp)?;
                     }
+                    // Import additional workspaces with the original persona_id
+                    self.import_additional_workspaces_for_persona(
+                        conn,
+                        &payload.additional_workspaces,
+                        &persona.id,
+                        &persona.id,
+                    )?;
                     personas_imported += 1;
                 }
             }
@@ -345,6 +369,12 @@ impl ExportImportManager {
             // Read shared memory assignments
             let shared_memory_assignments = self.read_shared_memory_assignments(conn)?;
 
+            // Collect all additional workspaces across all personas
+            let mut all_additional_workspaces: Vec<AdditionalWorkspace> = Vec::new();
+            for persona in &personas {
+                all_additional_workspaces.extend(persona.additional_workspaces.clone());
+            }
+
             Ok(ExportPayload {
                 version: 1,
                 personas,
@@ -353,6 +383,7 @@ impl ExportImportManager {
                 configured_secret_services: configured_secrets,
                 mcp_container_configs,
                 shared_memory_assignments,
+                additional_workspaces: all_additional_workspaces,
             })
         })
     }
@@ -452,7 +483,7 @@ impl ExportImportManager {
     }
 
     fn detect_invalid_workspaces(&self, payload: &ExportPayload) -> Vec<WorkspaceWarning> {
-        payload
+        let mut warnings: Vec<WorkspaceWarning> = payload
             .personas
             .iter()
             .filter(|p| !p.workspace_path.exists())
@@ -460,7 +491,42 @@ impl ExportImportManager {
                 persona_name: p.name.clone(),
                 workspace_path: p.workspace_path.to_string_lossy().to_string(),
             })
-            .collect()
+            .collect();
+
+        // Also check additional workspace paths
+        for persona in &payload.personas {
+            for ws in &persona.additional_workspaces {
+                if !ws.path.exists() {
+                    warnings.push(WorkspaceWarning {
+                        persona_name: persona.name.clone(),
+                        workspace_path: ws.path.to_string_lossy().to_string(),
+                    });
+                }
+            }
+        }
+
+        warnings
+    }
+
+    /// Import additional workspaces for a persona, mapping from the original persona_id
+    /// to the target persona_id (which may differ due to rename/overwrite generating a new ID).
+    fn import_additional_workspaces_for_persona(
+        &self,
+        conn: &rusqlite::Connection,
+        all_workspaces: &[AdditionalWorkspace],
+        original_persona_id: &PersonaId,
+        target_persona_id: &PersonaId,
+    ) -> Result<(), OrchestratorError> {
+        for ws in all_workspaces
+            .iter()
+            .filter(|w| w.persona_id == *original_persona_id)
+        {
+            let mut imported_ws = ws.clone();
+            imported_ws.id = Uuid::new_v4().to_string();
+            imported_ws.persona_id = target_persona_id.clone();
+            db_ops::insert_additional_workspace(conn, &imported_ws)?;
+        }
+        Ok(())
     }
 }
 
