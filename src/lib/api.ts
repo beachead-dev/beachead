@@ -109,6 +109,7 @@ export const api = { get, getText, post, postForBlob, put, del };
 export interface SandboxInfo {
   name: string | null;
   id: string | null;
+  agent: string | null;
   status: string | null;
   managed: boolean;
 }

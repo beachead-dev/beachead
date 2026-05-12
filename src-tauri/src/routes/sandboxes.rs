@@ -21,6 +21,7 @@ use crate::types::{PersonaId, PublishPortRequest};
 pub struct SandboxInfoEnriched {
     pub name: Option<String>,
     pub id: Option<String>,
+    pub agent: Option<String>,
     pub status: Option<String>,
     pub managed: bool,
 }
@@ -106,6 +107,7 @@ async fn list_sandboxes(
             SandboxInfoEnriched {
                 name: s.name.clone(),
                 id: s.id.or(s.name),
+                agent: s.extra.get("agent").and_then(|v| v.as_str()).map(|s| s.to_string()),
                 status: s.status,
                 managed,
             }

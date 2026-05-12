@@ -45,6 +45,7 @@ function filterManagedSandboxes(
 const sandboxInfoArb: fc.Arbitrary<SandboxInfo> = fc.record({
   name: fc.option(fc.string({ minLength: 1, maxLength: 20 }), { nil: null }),
   id: fc.option(fc.string({ minLength: 1, maxLength: 20 }), { nil: null }),
+  agent: fc.option(fc.string({ minLength: 1, maxLength: 20 }), { nil: null }),
   status: fc.option(
     fc.oneof(
       fc.constant("running"),
@@ -84,6 +85,7 @@ describe("Feature: docker-management-tab, Property 1: Sandbox table rendering co
   const sandboxArb: fc.Arbitrary<SandboxInfo> = fc.record({
     name: fc.option(safeStringArb, { nil: null }),
     id: fc.option(safeStringArb, { nil: null }),
+    agent: fc.option(safeStringArb, { nil: null }),
     status: fc.option(
       fc.oneof(
         fc.constant("running"),
@@ -122,23 +124,27 @@ describe("Feature: docker-management-tab, Property 1: Sandbox table rendering co
           const row = rows[i];
           const cells = within(row).getAllByRole("cell");
 
-          // 4 cells: Name, Status, ID, Actions
-          expect(cells.length).toBe(4);
+          // 5 cells: Name, Agent, Status, ID, Actions
+          expect(cells.length).toBe(5);
 
           // Name column: value or placeholder "\u2014"
           const expectedName = sandbox.name ?? "\u2014";
           expect(cells[0].textContent).toBe(expectedName);
 
+          // Agent column: value or placeholder "\u2014"
+          const expectedAgent = sandbox.agent ?? "\u2014";
+          expect(cells[1].textContent).toBe(expectedAgent);
+
           // Status column: value or placeholder "\u2014"
           const expectedStatus = sandbox.status ?? "\u2014";
-          expect(cells[1].textContent).toBe(expectedStatus);
+          expect(cells[2].textContent).toBe(expectedStatus);
 
           // ID column: value or placeholder "\u2014"
           const expectedId = sandbox.id ?? "\u2014";
-          expect(cells[2].textContent).toBe(expectedId);
+          expect(cells[3].textContent).toBe(expectedId);
 
           // Actions column: Start, Stop, Remove buttons
-          const buttons = within(cells[3]).getAllByRole("button");
+          const buttons = within(cells[4]).getAllByRole("button");
           expect(buttons.length).toBe(3);
           expect(buttons[0]).toHaveTextContent("Start");
           expect(buttons[1]).toHaveTextContent("Stop");

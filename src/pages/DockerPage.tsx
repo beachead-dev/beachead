@@ -123,6 +123,7 @@ function SandboxesTab({ active }: { active: boolean }) {
           <thead>
             <tr>
               <th>Name</th>
+              <th>Agent</th>
               <th>Status</th>
               <th>ID</th>
               <th>Actions</th>
@@ -137,6 +138,7 @@ function SandboxesTab({ active }: { active: boolean }) {
               return (
                 <tr key={sandbox.id ?? `sandbox-${index}`}>
                   <td>{sandbox.name ?? "\u2014"}</td>
+                  <td>{sandbox.agent ?? "\u2014"}</td>
                   <td>{sandbox.status ?? "\u2014"}</td>
                   <td>{sandbox.id ?? "\u2014"}</td>
                   <td className="action-buttons">

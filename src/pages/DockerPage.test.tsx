@@ -78,8 +78,8 @@ describe("DockerPage — Sandboxes Tab", () => {
 
     expect(screen.getByText("has-name")).toBeInTheDocument();
     const dashes = screen.getAllByText("\u2014");
-    // null name (row 1) + null id (row 1) + null id (row 2) + null status (row 2) = 4
-    expect(dashes.length).toBe(4);
+    // null name (row 1) + null agent (row 1) + null id (row 1) + null agent (row 2) + null id (row 2) + null status (row 2) = 6
+    expect(dashes.length).toBe(6);
   });
 
   it("shows empty state message when no sandboxes exist", async () => {
