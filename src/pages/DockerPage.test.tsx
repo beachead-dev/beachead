@@ -8,14 +8,20 @@ vi.mock("../lib/api", () => ({
   stopSandbox: vi.fn(),
   startSandbox: vi.fn(),
   removeSandbox: vi.fn(),
+  getMcpContainers: vi.fn(),
+  startContainer: vi.fn(),
+  stopContainer: vi.fn(),
+  removeContainer: vi.fn(),
 }));
 
-import { getSandboxes, stopSandbox, startSandbox, removeSandbox } from "../lib/api";
+import { getSandboxes, stopSandbox, startSandbox, removeSandbox, getMcpContainers, removeContainer } from "../lib/api";
 
 const mockGetSandboxes = getSandboxes as ReturnType<typeof vi.fn>;
 const mockStopSandbox = stopSandbox as ReturnType<typeof vi.fn>;
 const mockStartSandbox = startSandbox as ReturnType<typeof vi.fn>;
 const mockRemoveSandbox = removeSandbox as ReturnType<typeof vi.fn>;
+const mockGetMcpContainers = getMcpContainers as ReturnType<typeof vi.fn>;
+const mockRemoveContainer = removeContainer as ReturnType<typeof vi.fn>;
 
 describe("DockerPage — Sandboxes Tab", () => {
   beforeEach(() => {
@@ -274,7 +280,7 @@ describe("DockerPage — Sandboxes Tab", () => {
     expect(screen.getByLabelText("Start sandbox fail-sbx")).toBeEnabled();
   });
 
-  it("calls removeSandbox when Remove button is clicked", async () => {
+  it("calls removeSandbox when Remove is confirmed via dialog", async () => {
     mockGetSandboxes.mockResolvedValue([
       { name: "rm-sbx", id: "rm1", status: "stopped", managed: true },
     ]);
@@ -286,11 +292,243 @@ describe("DockerPage — Sandboxes Tab", () => {
       await vi.advanceTimersByTimeAsync(0);
     });
 
+    // Click Remove to open the confirmation dialog
+    fireEvent.click(screen.getByLabelText("Remove sandbox rm-sbx"));
+
+    // Dialog should be visible
+    expect(screen.getByText(/This will permanently remove the sandbox 'rm-sbx'/)).toBeInTheDocument();
+
+    // Confirm removal
     await act(async () => {
-      fireEvent.click(screen.getByLabelText("Remove sandbox rm-sbx"));
+      fireEvent.click(screen.getByRole("button", { name: "Remove" }));
       await vi.advanceTimersByTimeAsync(0);
     });
 
     expect(mockRemoveSandbox).toHaveBeenCalledWith("rm1");
+  });
+
+  it("does not call removeSandbox when dialog is cancelled", async () => {
+    mockGetSandboxes.mockResolvedValue([
+      { name: "cancel-sbx", id: "c1", status: "stopped", managed: true },
+    ]);
+
+    render(<DockerPage />);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    // Click Remove to open the confirmation dialog
+    fireEvent.click(screen.getByLabelText("Remove sandbox cancel-sbx"));
+
+    // Dialog should be visible
+    expect(screen.getByText(/This will permanently remove the sandbox 'cancel-sbx'/)).toBeInTheDocument();
+
+    // Cancel
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    // Dialog should be closed and removeSandbox not called
+    expect(screen.queryByText(/This will permanently remove the sandbox/)).not.toBeInTheDocument();
+    expect(mockRemoveSandbox).not.toHaveBeenCalled();
+  });
+});
+
+describe("DockerPage — Containers Tab — Removal Dialog", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    // Default: sandboxes tab loads empty so we can switch to containers
+    mockGetSandboxes.mockResolvedValue([]);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("shows confirmation dialog with volume checkbox when Remove is clicked", async () => {
+    mockGetMcpContainers.mockResolvedValue([
+      {
+        id: "c1",
+        persona_id: "p1",
+        persona_name: "Test Persona",
+        container_id: "docker-123",
+        port: 9001,
+        volume_name: "beachead-memory-p1",
+        status: "stopped",
+        live_status_confirmed: true,
+        created_at: "2024-01-01T00:00:00Z",
+        updated_at: "2024-01-01T00:00:00Z",
+      },
+    ]);
+
+    render(<DockerPage />);
+
+    // Switch to Containers tab
+    fireEvent.click(screen.getByRole("tab", { name: "Containers" }));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    // Click Remove
+    fireEvent.click(screen.getByLabelText("Remove container Test Persona"));
+
+    // Dialog should be visible with container name
+    expect(screen.getByText(/This will permanently remove the container 'Test Persona'/)).toBeInTheDocument();
+
+    // Volume checkbox should be present and unchecked by default
+    const checkbox = screen.getByLabelText("Also delete associated Docker volume");
+    expect(checkbox).toBeInTheDocument();
+    expect(checkbox).not.toBeChecked();
+  });
+
+  it("calls removeContainer with deleteVolume=false when confirmed without checkbox", async () => {
+    mockGetMcpContainers.mockResolvedValue([
+      {
+        id: "c1",
+        persona_id: "p1",
+        persona_name: "Test Persona",
+        container_id: "docker-123",
+        port: 9001,
+        volume_name: "beachead-memory-p1",
+        status: "stopped",
+        live_status_confirmed: true,
+        created_at: "2024-01-01T00:00:00Z",
+        updated_at: "2024-01-01T00:00:00Z",
+      },
+    ]);
+    mockRemoveContainer.mockResolvedValue(undefined);
+
+    render(<DockerPage />);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Containers" }));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    // Click Remove to open dialog
+    fireEvent.click(screen.getByLabelText("Remove container Test Persona"));
+
+    // Confirm without checking the volume checkbox
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(mockRemoveContainer).toHaveBeenCalledWith("c1", false);
+  });
+
+  it("calls removeContainer with deleteVolume=true when checkbox is checked", async () => {
+    mockGetMcpContainers.mockResolvedValue([
+      {
+        id: "c1",
+        persona_id: "p1",
+        persona_name: "Test Persona",
+        container_id: "docker-123",
+        port: 9001,
+        volume_name: "beachead-memory-p1",
+        status: "stopped",
+        live_status_confirmed: true,
+        created_at: "2024-01-01T00:00:00Z",
+        updated_at: "2024-01-01T00:00:00Z",
+      },
+    ]);
+    mockRemoveContainer.mockResolvedValue(undefined);
+
+    render(<DockerPage />);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Containers" }));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    // Click Remove to open dialog
+    fireEvent.click(screen.getByLabelText("Remove container Test Persona"));
+
+    // Check the volume deletion checkbox
+    fireEvent.click(screen.getByLabelText("Also delete associated Docker volume"));
+
+    // Confirm
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(mockRemoveContainer).toHaveBeenCalledWith("c1", true);
+  });
+
+  it("does not call removeContainer when dialog is cancelled", async () => {
+    mockGetMcpContainers.mockResolvedValue([
+      {
+        id: "c1",
+        persona_id: "p1",
+        persona_name: "Test Persona",
+        container_id: "docker-123",
+        port: 9001,
+        volume_name: "beachead-memory-p1",
+        status: "stopped",
+        live_status_confirmed: true,
+        created_at: "2024-01-01T00:00:00Z",
+        updated_at: "2024-01-01T00:00:00Z",
+      },
+    ]);
+
+    render(<DockerPage />);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Containers" }));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    // Click Remove to open dialog
+    fireEvent.click(screen.getByLabelText("Remove container Test Persona"));
+
+    // Cancel
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    // Dialog should be closed
+    expect(screen.queryByText(/This will permanently remove the container/)).not.toBeInTheDocument();
+    expect(mockRemoveContainer).not.toHaveBeenCalled();
+  });
+
+  it("resets deleteVolume checkbox state after cancel", async () => {
+    mockGetMcpContainers.mockResolvedValue([
+      {
+        id: "c1",
+        persona_id: "p1",
+        persona_name: "Test Persona",
+        container_id: "docker-123",
+        port: 9001,
+        volume_name: "beachead-memory-p1",
+        status: "stopped",
+        live_status_confirmed: true,
+        created_at: "2024-01-01T00:00:00Z",
+        updated_at: "2024-01-01T00:00:00Z",
+      },
+    ]);
+    mockRemoveContainer.mockResolvedValue(undefined);
+
+    render(<DockerPage />);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Containers" }));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    // Open dialog and check the volume checkbox
+    fireEvent.click(screen.getByLabelText("Remove container Test Persona"));
+    fireEvent.click(screen.getByLabelText("Also delete associated Docker volume"));
+
+    // Cancel
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    // Re-open dialog — checkbox should be unchecked
+    fireEvent.click(screen.getByLabelText("Remove container Test Persona"));
+    const checkbox = screen.getByLabelText("Also delete associated Docker volume");
+    expect(checkbox).not.toBeChecked();
   });
 });
