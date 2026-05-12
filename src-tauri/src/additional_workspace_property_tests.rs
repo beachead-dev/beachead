@@ -734,13 +734,36 @@ mod tests {
         }
     }
 
+    /// Generate a non-builtin AgentType for export/import tests (non-builtin agents get imported)
+    fn arb_non_builtin_agent_type() -> impl Strategy<Value = AgentType> {
+        arb_name().prop_map(|name| {
+            let now = Utc::now();
+            AgentType {
+                id: AgentTypeId::new(),
+                name,
+                sbx_agent: Some("claude".to_string()),
+                kit_ref: None,
+                is_builtin: false,
+                metadata: AgentMetadata {
+                    required_secrets: vec!["anthropic".to_string()],
+                    auth_methods: vec![AuthMethod::ApiKey],
+                    description: "Test agent".to_string(),
+                    supports_interactive_auth: false,
+                    mcp_config_path: None,
+                },
+                created_at: now,
+                updated_at: now,
+            }
+        })
+    }
+
     // Feature: multi-workspace-mounts, Property 9: Export/import round trip preserves additional workspaces
     // **Validates: Requirements 8.1, 8.2**
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(100))]
         #[test]
         fn prop_export_import_round_trip_preserves_additional_workspaces(
-            agent in arb_agent_type(),
+            agent in arb_non_builtin_agent_type(),
             persona_name in arb_name(),
             workspace_count in 0usize..10,
             read_only_flags in prop::collection::vec(any::<bool>(), 0..10),
@@ -762,7 +785,7 @@ mod tests {
             // Set up source database
             let source_db = Arc::new(Database::open_in_memory().unwrap());
 
-            // Insert agent type
+            // Insert agent type (non-builtin so it gets imported into target DB)
             source_db.with_conn(|conn| {
                 insert_agent_type(conn, &agent)
             }).unwrap();
