@@ -190,6 +190,21 @@ Deferred improvements, bug fixes, and future features for implementation.
 
 ---
 
+### Support/Donate Link in Help and README
+
+**Priority:** Medium  
+**Affected area:** `src/pages/HelpPage.tsx`, `README.md`
+
+**Description:** Add a "Support this project" link in the app's Help section and in the README. Links to a donation platform (GitHub Sponsors, Ko-fi, Buy Me a Coffee, or Open Collective — TBD).
+
+**Implementation:**
+- Add a "Support" card or link in the Help page with a brief message and external link
+- Add a "Support" section to README.md with badge/link
+- Choose donation platform (research options first)
+- Optionally add a FUNDING.yml for GitHub Sponsors button on the repo
+
+---
+
 ## Security Items
 
 ### WebSocket Authentication
@@ -486,37 +501,10 @@ Deferred improvements, bug fixes, and future features for implementation.
 
 ## Project Operations
 
-### Licensing Model Decision
+### ~~Licensing Model Decision~~ ✅ DONE
 
-**Priority:** High  
-**Effort:** Research + decision  
-**Affected area:** `LICENSE` file, README, website, distribution strategy
-
-**Description:** Research and decide on a licensing model for Beachead. Options to evaluate:
-
-| Model | Pros | Cons |
-|-------|------|------|
-| **MIT/Apache 2.0 (fully open)** | Community contributions, trust, adoption | No revenue, competitors can fork |
-| **AGPL** | Copyleft protects against SaaS competitors | Scares away corporate users |
-| **BSL (Business Source License)** | Open source after delay, commercial license for immediate use | Complex, less community goodwill |
-| **Dual license (open + commercial)** | Free for individuals, paid for enterprise | Enforcement overhead, CLA needed |
-| **Source-available (non-OSI)** | Visible code, controlled distribution | Not "open source", limits contributions |
-| **Closed source (binary only)** | Full control, simple monetization | No community, trust issues for security tool |
-| **Donationware (open + "buy me a coffee")** | Goodwill, low friction | Unreliable revenue |
-
-**Decision factors:**
-- Target audience (individual devs vs enterprise teams)
-- Revenue goals (hobby project vs sustainable business)
-- Dependency on Docker Sandboxes (sbx is proprietary — limits commercial viability?)
-- Community contribution value vs IP protection
-- Competitor landscape
-
-**Action items:**
-1. Research what similar tools use (Warp, Zed, Cursor, Continue.dev)
-2. Decide on model
-3. Add LICENSE file
-4. Update README with license section
-5. If dual-license: draft CLA for contributors
+**Completed:** 2026-05-11  
+**Decision:** MIT License with voluntary donation model (Buy Me a Coffee / GitHub Sponsors / similar). Maximum adoption, zero friction, community-friendly. LICENSE file added to repo root.
 
 ---
 
