@@ -24,6 +24,7 @@ export function deriveContainerButtonStates(
       case "running":
         return { startEnabled: false, stopEnabled: true, removeEnabled: true };
       case "stopped":
+      case "exited":
       case "created":
         return { startEnabled: false, stopEnabled: false, removeEnabled: true };
       default:
@@ -35,6 +36,7 @@ export function deriveContainerButtonStates(
     case "running":
       return { startEnabled: false, stopEnabled: true, removeEnabled: false };
     case "stopped":
+    case "exited":
     case "created":
       return { startEnabled: true, stopEnabled: false, removeEnabled: true };
     default:
