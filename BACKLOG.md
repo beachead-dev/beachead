@@ -309,28 +309,12 @@ Deferred improvements, bug fixes, and future features for implementation.
 
 ---
 
-### Docker Management Tab
+### ~~Docker Management Tab~~ ✅ DONE
 
-**Priority:** High  
-**Affected area:** New page + routes + sidebar navigation
+**Completed:** 2026-05-12  
+**Affected area:** New `/docker` page + backend endpoints + sidebar navigation
 
-**Description:** Add a "Docker" tab in the sidebar with two sub-sections: Sandboxes and Containers. Each displays the current list of items and allows the user to start, stop, and remove them.
-
-**Sandboxes sub-tab:**
-- Displays output of `sbx ls` (name, agent, status, workspace, ports)
-- Actions per sandbox: Start, Stop, Remove
-
-**Containers sub-tab:**
-- Displays MCP memory containers (from `mcp_containers` table + Docker status)
-- Shows: persona name, port, status, volume name, created date
-- Actions per container: Start, Stop, Remove (with optional volume deletion)
-
-**Implementation:**
-- New `DockerPage` component with tab navigation (Sandboxes | Containers)
-- Sandboxes: reuse existing `GET /api/sandboxes` endpoint
-- Containers: new `GET /api/mcp-containers` endpoint returning container list with live Docker status
-- Action endpoints: `POST /api/mcp-containers/{id}/start`, `POST /api/mcp-containers/{id}/stop`, `DELETE /api/mcp-containers/{id}`
-- Add "Docker" entry to sidebar navigation
+**What was done:** Full implementation of Docker Management Tab with two sub-tabs (Sandboxes and Containers). Sandboxes tab shows sandbox list from `sbx ls` with Name, Agent, Status, ID columns and Start/Stop/Remove actions. Containers tab shows all Docker containers (managed MCP containers by default, all containers with Show All toggle) with Persona Name, Image, Port, Status, Volume Name, Created Date columns and Start/Stop/Remove actions. Features: polling-based data freshness (10s interval), immediate refresh on actions and toggle changes, confirmation dialogs for destructive operations, volume deletion option for container removal, stale data indicator, managed/unmanaged filtering, proper button state derivation based on container status (running/stopped/exited/created). Backend: sandbox action endpoints with 30s timeout, container action endpoints via bollard, live Docker status enrichment, unmanaged container direct removal. 6 property-based tests, 35 unit tests, 16 backend integration tests.
 
 ---
 
