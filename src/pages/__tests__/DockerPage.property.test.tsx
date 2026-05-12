@@ -294,6 +294,7 @@ describe("Feature: docker-management-tab, Property 4: Container table rendering 
       persona_id: fc.uuid(),
       persona_name: safeStringArb,
       container_id: fc.option(fc.uuid(), { nil: null }),
+      image: safeStringArb,
       port: fc.integer({ min: 1024, max: 65535 }),
       volume_name: safeStringArb,
       status: statusArb,
@@ -355,30 +356,33 @@ describe("Feature: docker-management-tab, Property 4: Container table rendering 
           const row = rows[i];
           const cells = within(row).getAllByRole("cell");
 
-          // 6 cells: Persona Name, Port, Status, Volume Name, Created Date, Actions
-          expect(cells.length).toBe(6);
+          // 7 cells: Persona Name, Image, Port, Status, Volume Name, Created Date, Actions
+          expect(cells.length).toBe(7);
 
           // Persona Name column: displays persona_name (not persona_id)
           expect(cells[0].textContent).toContain(container.persona_name);
           expect(cells[0].textContent).not.toContain(container.persona_id);
 
+          // Image column
+          expect(cells[1].textContent).toBeDefined();
+
           // Port column
-          expect(cells[1].textContent).toBe(String(container.port));
+          expect(cells[2].textContent).toBe(String(container.port));
 
           // Status column
-          expect(cells[2].textContent).toBe(container.status);
+          expect(cells[3].textContent).toBe(container.status);
 
           // Volume Name column
-          expect(cells[3].textContent).toBe(container.volume_name);
+          expect(cells[4].textContent).toBe(container.volume_name);
 
           // Created Date column: should contain a formatted version of created_at
           // The component uses toLocaleString(), so we verify it's non-empty and
           // represents the same date
-          const cellDateText = cells[4].textContent ?? "";
+          const cellDateText = cells[5].textContent ?? "";
           expect(cellDateText.length).toBeGreaterThan(0);
 
           // Actions column: Start, Stop, Remove buttons
-          const buttons = within(cells[5]).getAllByRole("button");
+          const buttons = within(cells[6]).getAllByRole("button");
           expect(buttons.length).toBe(3);
           expect(buttons[0]).toHaveTextContent("Start");
           expect(buttons[1]).toHaveTextContent("Stop");
@@ -443,6 +447,7 @@ describe("Feature: docker-management-tab, Property 6: Unmanaged container displa
       persona_id: fc.uuid(),
       persona_name: safeStringArb,
       container_id: fc.option(fc.uuid(), { nil: null }),
+      image: safeStringArb,
       port: fc.integer({ min: 1024, max: 65535 }),
       volume_name: safeStringArb,
       status: statusArb,
@@ -510,7 +515,7 @@ describe("Feature: docker-management-tab, Property 6: Unmanaged container displa
 
           // Get action buttons
           const cells = within(row).getAllByRole("cell");
-          const actionCell = cells[5]; // Actions column is the 6th cell
+          const actionCell = cells[6]; // Actions column is the 7th cell
           const buttons = within(actionCell).getAllByRole("button");
           expect(buttons.length).toBe(3);
 

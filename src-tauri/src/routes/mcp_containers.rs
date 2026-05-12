@@ -52,6 +52,7 @@ pub struct McpContainerListResponse {
     pub persona_id: String,
     pub persona_name: String,
     pub container_id: Option<String>,
+    pub image: String,
     pub port: u16,
     pub volume_name: String,
     pub status: String,
@@ -138,6 +139,7 @@ async fn list_mcp_containers(
             persona_id: row.persona_id.clone(),
             persona_name: row.persona_name.clone(),
             container_id: row.container_id.clone(),
+            image: "beachead-memory-mcp:latest".to_string(),
             port: row.port,
             volume_name: row.volume_name.clone(),
             status: live_status.unwrap_or_else(|| row.status.clone()),
@@ -264,6 +266,13 @@ async fn find_unmanaged_containers(
             })
             .unwrap_or_default();
 
+        // Extract image name
+        let image = container
+            .image
+            .as_deref()
+            .unwrap_or("unknown")
+            .to_string();
+
         let created_at = container
             .created
             .map(|ts| chrono::DateTime::from_timestamp(ts, 0)
@@ -276,6 +285,7 @@ async fn find_unmanaged_containers(
             persona_id: String::new(),
             persona_name: name,
             container_id: Some(docker_id),
+            image,
             port,
             volume_name,
             status,
@@ -352,6 +362,7 @@ async fn start_container(
                         persona_id: db_row.persona_id,
                         persona_name: db_row.persona_name,
                         container_id: db_row.container_id,
+                        image: "beachead-memory-mcp:latest".to_string(),
                         port: db_row.port,
                         volume_name: db_row.volume_name,
                         status: "running".to_string(),
@@ -405,6 +416,7 @@ async fn start_container(
         persona_id: db_row.persona_id,
         persona_name: db_row.persona_name,
         container_id: db_row.container_id,
+        image: "beachead-memory-mcp:latest".to_string(),
         port: db_row.port,
         volume_name: db_row.volume_name,
         status: "running".to_string(),
@@ -464,6 +476,7 @@ async fn stop_container(
             persona_id: db_row.persona_id,
             persona_name: db_row.persona_name,
             container_id: db_row.container_id,
+            image: "beachead-memory-mcp:latest".to_string(),
             port: db_row.port,
             volume_name: db_row.volume_name,
             status: "stopped".to_string(),
@@ -518,6 +531,7 @@ async fn stop_container(
         persona_id: db_row.persona_id,
         persona_name: db_row.persona_name,
         container_id: db_row.container_id,
+        image: "beachead-memory-mcp:latest".to_string(),
         port: db_row.port,
         volume_name: db_row.volume_name,
         status: "stopped".to_string(),

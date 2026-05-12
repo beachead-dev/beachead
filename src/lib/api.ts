@@ -127,6 +127,7 @@ export interface McpContainerResponse {
   persona_id: string;
   persona_name: string;
   container_id: string | null;
+  image: string;
   port: number;
   volume_name: string;
   status: string;

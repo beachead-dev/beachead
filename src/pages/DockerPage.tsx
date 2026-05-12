@@ -318,6 +318,7 @@ function ContainersTab({ active }: { active: boolean }) {
           <thead>
             <tr>
               <th>Persona Name</th>
+              <th>Image</th>
               <th>Port</th>
               <th>Status</th>
               <th>Volume Name</th>
@@ -339,6 +340,7 @@ function ContainersTab({ active }: { active: boolean }) {
                       <span className="badge badge-unmanaged">Unmanaged</span>
                     )}
                   </td>
+                  <td>{container.image}</td>
                   <td>{container.port}</td>
                   <td>{container.status}</td>
                   <td>{container.volume_name}</td>
