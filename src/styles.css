@@ -2068,24 +2068,58 @@ body {
   color: #888;
 }
 
-/* Docker page — Sandbox table */
-.sandbox-table {
+/* Docker page — Sandbox & Container tables */
+.sandbox-table,
+.container-table {
   width: 100%;
   border-collapse: collapse;
   margin-top: 0.5rem;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  overflow: hidden;
 }
 
 .sandbox-table th,
-.sandbox-table td {
+.sandbox-table td,
+.container-table th,
+.container-table td {
   text-align: left;
-  padding: 0.5rem 0.75rem;
+  padding: 0.6rem 0.75rem;
   border-bottom: 1px solid #e8e8e8;
+  border-right: 1px solid #f0f0f0;
 }
 
-.sandbox-table th {
+.sandbox-table th:last-child,
+.sandbox-table td:last-child,
+.container-table th:last-child,
+.container-table td:last-child {
+  border-right: none;
+}
+
+.sandbox-table th,
+.container-table th {
   font-weight: 600;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
   color: #555;
+  background: #f8f9fa;
   border-bottom: 2px solid #e0e0e0;
+}
+
+.sandbox-table tbody tr:nth-child(even),
+.container-table tbody tr:nth-child(even) {
+  background: #fafbfc;
+}
+
+.sandbox-table tbody tr:hover,
+.container-table tbody tr:hover {
+  background: #f0f4ff;
+}
+
+.sandbox-table tbody tr:last-child td,
+.container-table tbody tr:last-child td {
+  border-bottom: none;
 }
 
 /* Docker page — Tab toolbar (Show All toggle) */
@@ -2104,6 +2138,13 @@ body {
   cursor: pointer;
 }
 
+/* Docker page — Action buttons cell */
+.action-buttons {
+  display: flex;
+  gap: 0.35rem;
+  white-space: nowrap;
+}
+
 /* Loading indicator */
 .loading-indicator {
   color: #999;
@@ -2111,23 +2152,63 @@ body {
   padding: 1rem 0;
 }
 
-/* Dark mode — sandbox table */
-:root:not([data-theme="light"]) .sandbox-table th,
-:root:not([data-theme="light"]) .sandbox-table td {
-  border-bottom-color: #2d3f6b;
+/* Dark mode — sandbox & container tables */
+:root:not([data-theme="light"]) .sandbox-table,
+:root:not([data-theme="light"]) .container-table {
+  border-color: #2d3f6b;
 }
 
-:root:not([data-theme="light"]) .sandbox-table th {
+:root:not([data-theme="light"]) .sandbox-table th,
+:root:not([data-theme="light"]) .sandbox-table td,
+:root:not([data-theme="light"]) .container-table th,
+:root:not([data-theme="light"]) .container-table td {
+  border-bottom-color: #2d3f6b;
+  border-right-color: #253356;
+}
+
+:root:not([data-theme="light"]) .sandbox-table th,
+:root:not([data-theme="light"]) .container-table th {
   color: #aaa;
+  background: #1a2744;
+}
+
+:root:not([data-theme="light"]) .sandbox-table tbody tr:nth-child(even),
+:root:not([data-theme="light"]) .container-table tbody tr:nth-child(even) {
+  background: #1c2d4a;
+}
+
+:root:not([data-theme="light"]) .sandbox-table tbody tr:hover,
+:root:not([data-theme="light"]) .container-table tbody tr:hover {
+  background: #243a5e;
+}
+
+:root[data-theme="dark"] .sandbox-table,
+:root[data-theme="dark"] .container-table {
+  border-color: #2d3f6b;
 }
 
 :root[data-theme="dark"] .sandbox-table th,
-:root[data-theme="dark"] .sandbox-table td {
+:root[data-theme="dark"] .sandbox-table td,
+:root[data-theme="dark"] .container-table th,
+:root[data-theme="dark"] .container-table td {
   border-bottom-color: #2d3f6b;
+  border-right-color: #253356;
 }
 
-:root[data-theme="dark"] .sandbox-table th {
+:root[data-theme="dark"] .sandbox-table th,
+:root[data-theme="dark"] .container-table th {
   color: #aaa;
+  background: #1a2744;
+}
+
+:root[data-theme="dark"] .sandbox-table tbody tr:nth-child(even),
+:root[data-theme="dark"] .container-table tbody tr:nth-child(even) {
+  background: #1c2d4a;
+}
+
+:root[data-theme="dark"] .sandbox-table tbody tr:hover,
+:root[data-theme="dark"] .container-table tbody tr:hover {
+  background: #243a5e;
 }
 
 /* Confirm dialog */
