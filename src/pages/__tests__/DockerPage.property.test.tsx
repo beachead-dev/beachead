@@ -51,6 +51,102 @@ const sandboxInfoArb: fc.Arbitrary<SandboxInfo> = fc.record({
   managed: fc.boolean(),
 });
 
+describe("Feature: docker-management-tab, Property 1: Sandbox table rendering completeness", () => {
+  /**
+   * **Validates: Requirements 3.2, 3.3, 4.1**
+   *
+   * For any array of sandbox objects with arbitrary present/null fields,
+   * verify a row is rendered for each sandbox with name (or placeholder),
+   * status (or placeholder), ID (or placeholder), and action buttons.
+   */
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // Generator for safe strings (printable ASCII, no control characters)
+  const safeStringArb = fc
+    .string({ minLength: 1, maxLength: 20 })
+    .map((s) => s.replace(/[^\x20-\x7E]/g, "a"))
+    .filter((s) => s.trim().length > 0);
+
+  // Generator for sandbox objects with nullable fields
+  const sandboxArb: fc.Arbitrary<SandboxInfo> = fc.record({
+    name: fc.option(safeStringArb, { nil: null }),
+    id: fc.option(safeStringArb, { nil: null }),
+    status: fc.option(
+      fc.oneof(
+        fc.constant("running"),
+        fc.constant("stopped"),
+        safeStringArb,
+      ),
+      { nil: null },
+    ),
+    managed: fc.constant(true),
+  });
+
+  // Non-empty arrays (empty arrays show empty state, not a table)
+  const sandboxArrayArb = fc.array(sandboxArb, { minLength: 1, maxLength: 5 });
+
+  it("renders a table row for each sandbox with correct content and action buttons", async () => {
+    await fc.assert(
+      fc.asyncProperty(sandboxArrayArb, async (sandboxes) => {
+        mockGetSandboxes.mockResolvedValue(sandboxes);
+
+        const { unmount } = render(<DockerPage />);
+
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(0);
+        });
+
+        // Get the table body rows
+        const table = screen.getByRole("table", { name: "Sandboxes table" });
+        const tbody = table.querySelector("tbody");
+        expect(tbody).not.toBeNull();
+
+        const rows = within(tbody!).getAllByRole("row");
+        expect(rows.length).toBe(sandboxes.length);
+
+        for (let i = 0; i < sandboxes.length; i++) {
+          const sandbox = sandboxes[i];
+          const row = rows[i];
+          const cells = within(row).getAllByRole("cell");
+
+          // 4 cells: Name, Status, ID, Actions
+          expect(cells.length).toBe(4);
+
+          // Name column: value or placeholder "\u2014"
+          const expectedName = sandbox.name ?? "\u2014";
+          expect(cells[0].textContent).toBe(expectedName);
+
+          // Status column: value or placeholder "\u2014"
+          const expectedStatus = sandbox.status ?? "\u2014";
+          expect(cells[1].textContent).toBe(expectedStatus);
+
+          // ID column: value or placeholder "\u2014"
+          const expectedId = sandbox.id ?? "\u2014";
+          expect(cells[2].textContent).toBe(expectedId);
+
+          // Actions column: Start, Stop, Remove buttons
+          const buttons = within(cells[3]).getAllByRole("button");
+          expect(buttons.length).toBe(3);
+          expect(buttons[0]).toHaveTextContent("Start");
+          expect(buttons[1]).toHaveTextContent("Stop");
+          expect(buttons[2]).toHaveTextContent("Remove");
+        }
+
+        unmount();
+      }),
+      { numRuns: 100 },
+    );
+  });
+});
+
 describe("Feature: docker-management-tab, Property 3: Managed sandbox filtering", () => {
   /**
    * **Validates: Requirements 3.8, 3.10**
