@@ -3,7 +3,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use bollard::container::{ListContainersOptions, StartContainerOptions};
+use bollard::container::{ListContainersOptions, StartContainerOptions, StopContainerOptions};
 use bollard::Docker;
 use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
@@ -18,6 +18,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/mcp-containers", get(list_mcp_containers))
         .route("/api/mcp-containers/{id}/start", post(start_container))
+        .route("/api/mcp-containers/{id}/stop", post(stop_container))
 }
 
 // --- Query parameters ---
@@ -398,6 +399,119 @@ async fn start_container(
         port: db_row.port,
         volume_name: db_row.volume_name,
         status: "running".to_string(),
+        live_status_confirmed: true,
+        created_at: db_row.created_at,
+        updated_at: now,
+    }))
+}
+
+/// POST /api/mcp-containers/{id}/stop — stop a running MCP container.
+///
+/// Looks up the container by its database primary key `id` (not the Docker container_id).
+/// - If not found in DB, returns 404.
+/// - If already stopped (DB status is "stopped"), returns 200 with current record (idempotent).
+/// - Otherwise, stops the Docker container via bollard with a 10-second timeout,
+///   updates DB status to "stopped", and returns 200 with the updated container record.
+/// - On Docker failure, updates DB status to "failed" and returns error.
+async fn stop_container(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<McpContainerListResponse>, OrchestratorError> {
+    // 1. Look up the container in the DB by its primary key
+    let db_row: DbContainerRow = state.db.with_conn(|conn| {
+        let mut stmt = conn
+            .prepare(
+                "SELECT mc.id, mc.persona_id, COALESCE(p.name, '') as persona_name,
+                        mc.container_id, mc.port, mc.volume_name, mc.status,
+                        mc.created_at, mc.updated_at
+                 FROM mcp_containers mc
+                 LEFT JOIN personas p ON mc.persona_id = p.id
+                 WHERE mc.id = ?1",
+            )
+            .map_err(|e| OrchestratorError::Database(e.to_string()))?;
+
+        stmt.query_row(rusqlite::params![id], |row| {
+            Ok(DbContainerRow {
+                id: row.get(0)?,
+                persona_id: row.get(1)?,
+                persona_name: row.get(2)?,
+                container_id: row.get(3)?,
+                port: row.get::<_, i64>(4)? as u16,
+                volume_name: row.get(5)?,
+                status: row.get(6)?,
+                created_at: row.get(7)?,
+                updated_at: row.get(8)?,
+            })
+        })
+        .optional()
+        .map_err(|e| OrchestratorError::Database(e.to_string()))
+    })?
+    .ok_or_else(|| OrchestratorError::NotFound(format!("Container '{}' not found", id)))?;
+
+    // 2. If already stopped, return current record (idempotent)
+    if db_row.status == "stopped" {
+        return Ok(Json(McpContainerListResponse {
+            id: db_row.id,
+            persona_id: db_row.persona_id,
+            persona_name: db_row.persona_name,
+            container_id: db_row.container_id,
+            port: db_row.port,
+            volume_name: db_row.volume_name,
+            status: "stopped".to_string(),
+            live_status_confirmed: false,
+            created_at: db_row.created_at,
+            updated_at: db_row.updated_at,
+        }));
+    }
+
+    // 3. Connect to Docker
+    let docker = Docker::connect_with_local_defaults()
+        .map_err(|e| OrchestratorError::DockerError(format!("Failed to connect to Docker: {}", e)))?;
+
+    // 4. Stop the container via bollard with 10-second timeout
+    let docker_id = db_row.container_id.as_deref().ok_or_else(|| {
+        OrchestratorError::DockerError("Container has no Docker container ID".to_string())
+    })?;
+
+    if let Err(e) = docker
+        .stop_container(docker_id, Some(StopContainerOptions { t: 10 }))
+        .await
+    {
+        // Docker failure — update status to "failed" and return error
+        let now = chrono::Utc::now().to_rfc3339();
+        let _ = state.db.with_conn(|conn| {
+            conn.execute(
+                "UPDATE mcp_containers SET status = ?1, updated_at = ?2 WHERE id = ?3",
+                rusqlite::params![ContainerStatus::Failed.as_str(), now, db_row.id],
+            )
+            .map_err(|e| OrchestratorError::Database(e.to_string()))
+        });
+
+        return Err(OrchestratorError::DockerError(format!(
+            "Failed to stop container '{}': {}",
+            id, e
+        )));
+    }
+
+    // 5. Update DB status to "stopped"
+    let now = chrono::Utc::now().to_rfc3339();
+    state.db.with_conn(|conn| {
+        conn.execute(
+            "UPDATE mcp_containers SET status = ?1, updated_at = ?2 WHERE id = ?3",
+            rusqlite::params![ContainerStatus::Stopped.as_str(), now, db_row.id],
+        )
+        .map_err(|e| OrchestratorError::Database(e.to_string()))
+    })?;
+
+    // 6. Return the updated container record
+    Ok(Json(McpContainerListResponse {
+        id: db_row.id,
+        persona_id: db_row.persona_id,
+        persona_name: db_row.persona_name,
+        container_id: db_row.container_id,
+        port: db_row.port,
+        volume_name: db_row.volume_name,
+        status: "stopped".to_string(),
         live_status_confirmed: true,
         created_at: db_row.created_at,
         updated_at: now,
