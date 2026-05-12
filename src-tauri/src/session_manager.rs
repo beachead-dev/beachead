@@ -17,7 +17,8 @@ use crate::mcp_container_manager::McpContainerManager;
 use crate::pty_bridge::PtyBridge;
 use crate::sbx::{SbxCli, SbxRunArgs};
 use crate::types::{
-    Persona, PersonaId, Session, SessionId, SessionStatus, UploadMethod, UploadResult,
+    AdditionalWorkspaceArg, Persona, PersonaId, Session, SessionId, SessionStatus, UploadMethod,
+    UploadResult,
 };
 use crate::workspace_manager::WorkspaceManager;
 
@@ -129,6 +130,15 @@ impl SessionManager {
         self.db.with_conn(|conn| db_ops::insert_session(conn, &session))?;
 
         // 5. Build args and call sbx create (creates sandbox without attaching)
+        let additional_ws: Vec<AdditionalWorkspaceArg> = persona
+            .additional_workspaces
+            .iter()
+            .map(|ws| AdditionalWorkspaceArg {
+                path: ws.path.clone(),
+                read_only: ws.read_only,
+            })
+            .collect();
+
         let run_args = SbxRunArgs {
             agent: agent.clone(),
             kit_paths: vec![kit_path.clone()],
@@ -144,7 +154,7 @@ impl SessionManager {
             workspace: run_args.workspace,
             name: run_args.name,
             template: run_args.template,
-            additional_workspaces: Vec::new(),
+            additional_workspaces: additional_ws,
         }).await {
             Ok(id) => id,
             Err(OrchestratorError::SbxError(ref msg)) => {
