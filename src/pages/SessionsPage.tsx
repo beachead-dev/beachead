@@ -408,7 +408,7 @@ export function SessionsPage() {
                 key={sessionId}
                 style={{ display: activeTabId === sessionId ? "flex" : "none", flexDirection: "column", flex: 1, height: "100%" }}
               >
-                <SessionPanel sessionId={sessionId} sandboxId={session?.sandbox_id || null} />
+                <SessionPanel sessionId={sessionId} sandboxId={session?.sandbox_id || null} personaId={session?.persona_id || ""} />
               </div>
             );
           })}
@@ -532,10 +532,11 @@ function StoppedSessionsSection({ sessions, onResume, onRemove }: StoppedSession
 interface SessionPanelProps {
   sessionId: string;
   sandboxId: string | null;
+  personaId: string;
 }
 
-function SessionPanel({ sessionId, sandboxId }: SessionPanelProps) {
-  const [panelView, setPanelView] = useState<"terminal" | "files" | "ports">("terminal");
+function SessionPanel({ sessionId, sandboxId, personaId }: SessionPanelProps) {
+  const [panelView, setPanelView] = useState<"terminal" | "files" | "ports" | "mounts">("terminal");
 
   return (
     <div className="session-panel">
@@ -549,6 +550,9 @@ function SessionPanel({ sessionId, sandboxId }: SessionPanelProps) {
         <button className={`tab-btn ${panelView === "ports" ? "active" : ""}`} onClick={() => setPanelView("ports")}>
           Ports
         </button>
+        <button className={`tab-btn ${panelView === "mounts" ? "active" : ""}`} onClick={() => setPanelView("mounts")}>
+          Mounts
+        </button>
       </nav>
 
       {/* Always render terminal (hidden when not active) to preserve content */}
@@ -558,6 +562,7 @@ function SessionPanel({ sessionId, sandboxId }: SessionPanelProps) {
       {panelView === "files" && <FileUploadView sessionId={sessionId} />}
       {panelView === "ports" && sandboxId && <PortManagerView sandboxId={sandboxId} />}
       {panelView === "ports" && !sandboxId && <p>No sandbox associated with this session.</p>}
+      {panelView === "mounts" && <MountsView personaId={personaId} />}
     </div>
   );
 }
@@ -826,6 +831,104 @@ function PortManagerView({ sandboxId }: { sandboxId: string }) {
         </table>
       ) : (
         <p className="empty-state">No ports published.</p>
+      )}
+    </div>
+  );
+}
+
+interface MountsPersona {
+  id: string;
+  workspace_path: string;
+  additional_workspaces: {
+    id: string;
+    path: string;
+    read_only: boolean;
+    position: number;
+    label: string | null;
+  }[];
+}
+
+function MountsView({ personaId }: { personaId: string }) {
+  const [persona, setPersona] = useState<MountsPersona | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchPersona = useCallback(async () => {
+    if (!personaId) {
+      setError("No persona associated with this session.");
+      setLoading(false);
+      return;
+    }
+    try {
+      setLoading(true);
+      const data = await api.get<MountsPersona>(`/api/personas/${personaId}`);
+      setPersona(data);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load workspace mounts");
+    } finally {
+      setLoading(false);
+    }
+  }, [personaId]);
+
+  useEffect(() => {
+    fetchPersona();
+  }, [fetchPersona]);
+
+  if (loading) return <p>Loading mounts...</p>;
+  if (error) return <div className="alert alert-error" role="alert">{error}</div>;
+  if (!persona) return <p className="empty-state">No persona data available.</p>;
+
+  return (
+    <div className="mounts-view" style={{ padding: "1rem" }}>
+      <table className="mounts-table" aria-label="Workspace mounts">
+        <thead>
+          <tr>
+            <th>Workspace</th>
+            <th>Access</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>
+              <span className="mount-path">
+                <code>{persona.workspace_path}</code>
+              </span>
+              <span className="badge badge-builtin" style={{ marginLeft: "0.5rem" }}>Primary</span>
+            </td>
+            <td>
+              <span className="badge badge-allowed">Read-Write</span>
+            </td>
+          </tr>
+          {persona.additional_workspaces
+            .sort((a, b) => a.position - b.position)
+            .map((ws) => (
+              <tr key={ws.id}>
+                <td>
+                  {ws.label ? (
+                    <span className="mount-path" title={ws.path}>
+                      <span className="mount-label">{ws.label}</span>
+                      <code className="mount-secondary-path">{ws.path}</code>
+                    </span>
+                  ) : (
+                    <span className="mount-path">
+                      <code>{ws.path}</code>
+                    </span>
+                  )}
+                </td>
+                <td>
+                  {ws.read_only ? (
+                    <span className="badge badge-deny">Read-Only</span>
+                  ) : (
+                    <span className="badge badge-allowed">Read-Write</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+        </tbody>
+      </table>
+      {persona.additional_workspaces.length === 0 && (
+        <p className="empty-state" style={{ marginTop: "0.5rem" }}>No additional workspaces configured.</p>
       )}
     </div>
   );
