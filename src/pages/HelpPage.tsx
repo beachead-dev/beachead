@@ -13,6 +13,7 @@ const HELP_TOPICS: HelpTopic[] = [
   { id: "agents", label: "Agents" },
   { id: "sessions", label: "Sessions" },
   { id: "policies", label: "Policies" },
+  { id: "docker", label: "Docker" },
   { id: "system-settings", label: "System Settings" },
   { id: "troubleshooting", label: "Troubleshooting" },
   { id: "glossary", label: "Glossary" },
