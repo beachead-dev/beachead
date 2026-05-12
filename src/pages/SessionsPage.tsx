@@ -848,7 +848,7 @@ interface MountsPersona {
   }[];
 }
 
-function MountsView({ personaId }: { personaId: string }) {
+export function MountsView({ personaId }: { personaId: string }) {
   const [persona, setPersona] = useState<MountsPersona | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
