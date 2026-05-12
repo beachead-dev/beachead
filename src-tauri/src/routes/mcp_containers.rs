@@ -558,6 +558,32 @@ async fn remove_container(
     Path(id): Path<String>,
     Query(params): Query<DeleteContainerQuery>,
 ) -> Result<StatusCode, OrchestratorError> {
+    // Handle unmanaged containers (not in DB — remove directly via Docker)
+    if id.starts_with("unmanaged-") {
+        let docker_id = id.strip_prefix("unmanaged-").unwrap_or(&id);
+
+        let docker = Docker::connect_with_local_defaults()
+            .map_err(|e| OrchestratorError::DockerError(format!("Failed to connect to Docker: {}", e)))?;
+
+        // Stop (best-effort)
+        let _ = docker
+            .stop_container(docker_id, Some(StopContainerOptions { t: 10 }))
+            .await;
+
+        // Remove with force (best-effort)
+        let _ = docker
+            .remove_container(
+                docker_id,
+                Some(RemoveContainerOptions {
+                    force: true,
+                    ..Default::default()
+                }),
+            )
+            .await;
+
+        return Ok(StatusCode::NO_CONTENT);
+    }
+
     // 1. Look up the container in the DB by its primary key
     let db_row: DbContainerRow = state.db.with_conn(|conn| {
         let mut stmt = conn
