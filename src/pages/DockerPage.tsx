@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { getSandboxes, stopSandbox, startSandbox, removeSandbox, SandboxInfo } from "../lib/api";
+import { getSandboxes, stopSandbox, startSandbox, removeSandbox, SandboxInfo, getMcpContainers, McpContainerResponse } from "../lib/api";
 import { usePolling } from "../hooks/usePolling";
 import { deriveSandboxButtonStates } from "../lib/sandboxButtonStates";
 
@@ -158,6 +158,123 @@ function SandboxesTab({ active }: { active: boolean }) {
   );
 }
 
+function ContainersTab({ active }: { active: boolean }) {
+  const [showAll, setShowAll] = useState(false);
+
+  const fetchFn = useCallback(() => getMcpContainers(showAll), [showAll]);
+
+  const { data, error, loading, stale, refresh: _refresh } = usePolling<McpContainerResponse[]>(
+    fetchFn,
+    10000,
+    active,
+  );
+
+  // Sort by created_at descending (newest first) client-side for safety
+  const containers = (data ?? []).slice().sort(
+    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+  );
+
+  const isUnmanaged = (container: McpContainerResponse) =>
+    container.id.startsWith("unmanaged-");
+
+  const formatDate = (dateStr: string) => {
+    try {
+      return new Date(dateStr).toLocaleString();
+    } catch {
+      return dateStr;
+    }
+  };
+
+  return (
+    <div role="tabpanel" aria-label="Containers tab content">
+      <div className="tab-toolbar">
+        <label className="toggle-label">
+          <input
+            type="checkbox"
+            checked={showAll}
+            onChange={(e) => setShowAll(e.target.checked)}
+          />
+          Show All
+        </label>
+      </div>
+
+      {stale && (
+        <div className="alert alert-warning" role="status">
+          Data may be stale. Retrying…
+        </div>
+      )}
+
+      {loading && (
+        <p className="loading-indicator">Loading containers…</p>
+      )}
+
+      {error && !data && !loading && (
+        <div className="alert alert-error" role="alert">
+          {error.message}
+        </div>
+      )}
+
+      {!loading && !error && containers.length === 0 && (
+        <p className="empty-state">No containers found</p>
+      )}
+
+      {containers.length > 0 && (
+        <table className="container-table" aria-label="Containers table">
+          <thead>
+            <tr>
+              <th>Persona Name</th>
+              <th>Port</th>
+              <th>Status</th>
+              <th>Volume Name</th>
+              <th>Created Date</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {containers.map((container) => (
+              <tr key={container.id}>
+                <td>
+                  {container.persona_name}
+                  {isUnmanaged(container) && (
+                    <span className="badge badge-unmanaged">Unmanaged</span>
+                  )}
+                </td>
+                <td>{container.port}</td>
+                <td>{container.status}</td>
+                <td>{container.volume_name}</td>
+                <td>{formatDate(container.created_at)}</td>
+                <td className="action-buttons">
+                  <button
+                    className="btn btn-sm"
+                    disabled
+                    aria-label={`Start container ${container.persona_name}`}
+                  >
+                    Start
+                  </button>
+                  <button
+                    className="btn btn-sm"
+                    disabled
+                    aria-label={`Stop container ${container.persona_name}`}
+                  >
+                    Stop
+                  </button>
+                  <button
+                    className="btn btn-sm btn-danger"
+                    disabled
+                    aria-label={`Remove container ${container.persona_name}`}
+                  >
+                    Remove
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
 export function DockerPage() {
   const [activeTab, setActiveTab] = useState<DockerTab>("sandboxes");
 
@@ -191,9 +308,7 @@ export function DockerPage() {
       )}
 
       {activeTab === "containers" && (
-        <div role="tabpanel" aria-label="Containers tab content">
-          <p className="empty-state">Containers content</p>
-        </div>
+        <ContainersTab active={activeTab === "containers"} />
       )}
     </div>
   );
