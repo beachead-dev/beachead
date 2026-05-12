@@ -467,25 +467,6 @@ Deferred improvements, bug fixes, and future features for implementation.
 
 ---
 
-### Multi-Workspace Mounts
-
-**Priority:** High  
-**Effort:** Low  
-**Affected area:** Persona form, kit generator, session manager, DB schema
-
-**Description:** sbx supports multiple workspace paths as positional args (`sbx run agent /path1 /path2:ro`). Currently we only support one. Allow personas to specify additional workspaces (read-only or read-write). Tested 2026-05-09: secondary workspaces CAN be shared across sandboxes and are writable by both unless mounted with `:ro`. Primary workspace must be unique per persona.
-
-**Implementation:**
-- Add `additional_workspaces` table: `id, persona_id, path, read_only, created_at`
-- Update persona form with a dynamic list (+ / - buttons) for extra workspaces, each with a path input and a read-only toggle
-- Session manager passes extra paths as positional args to `sbx create`/`sbx run`
-- Append `:ro` suffix for read-only mounts per sbx docs
-- Validate: additional workspace paths must exist on host (same as primary)
-- No uniqueness constraint on additional workspaces — they can be shared across personas
-- UI: show read-only badge next to paths mounted as `:ro`
-
----
-
 ### Clipboard Bridge
 
 **Priority:** Low  
@@ -625,3 +606,12 @@ Deferred improvements, bug fixes, and future features for implementation.
 - Added 32×32 favicon to `index.html`
 - Source assets stored in `assets/branding/` for future use
 - CSS container queries handle responsive logo/icon switching
+
+---
+
+### Multi-Workspace Mounts
+
+**Completed:** 2026-05-11  
+**Affected area:** DB schema, persona manager, session manager, sbx CLI, export/import, frontend (PersonasPage + SessionsPage)
+
+**What was done:** Full implementation of multiple workspace mounts per persona. Added `additional_workspaces` table (migration v5) with FK cascade delete. Validation in PersonaManager: path canonicalization, null byte rejection, absolute path enforcement, existence check, sensitive directory warnings, duplicate detection, primary collision check, label validation (64 char max, no control chars). SbxCli passes additional paths as positional args with `:ro` suffix for read-only. SessionManager loads and passes workspaces at session start. ExportImportManager includes workspaces in backup/restore. Frontend: persona form with dynamic workspace list (directory picker, labels, read-only toggle, reorder), client-side duplicate detection, persona card shows all workspaces with labels/badges, Mounts tab in session panel. 12 property-based tests + 12 frontend tests.
