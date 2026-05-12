@@ -10,6 +10,16 @@ interface McpServer {
   auth_headers?: Record<string, string>;
 }
 
+interface AdditionalWorkspace {
+  id: string;
+  persona_id: string;
+  path: string;
+  read_only: boolean;
+  position: number;
+  label: string | null;
+  created_at: string;
+}
+
 interface Persona {
   id: string;
   name: string;
@@ -18,6 +28,7 @@ interface Persona {
   memory_enabled: boolean;
   agent_cli_args: string[];
   mcp_servers: McpServer[];
+  additional_workspaces: AdditionalWorkspace[];
   created_at: string;
   updated_at: string;
 }
@@ -54,6 +65,12 @@ interface McpEntry {
   auth_headers: string;
 }
 
+interface AdditionalWorkspaceEntry {
+  path: string;
+  label: string;
+  readOnly: boolean;
+}
+
 export function PersonasPage() {
   const [personas, setPersonas] = useState<Persona[]>([]);
   const [agents, setAgents] = useState<AgentType[]>([]);
@@ -72,6 +89,7 @@ export function PersonasPage() {
   const [formMemory, setFormMemory] = useState(false);
   const [formCliArgs, setFormCliArgs] = useState("");
   const [formMcpServers, setFormMcpServers] = useState<McpEntry[]>([]);
+  const [formAdditionalWorkspaces, setFormAdditionalWorkspaces] = useState<AdditionalWorkspaceEntry[]>([]);
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -107,6 +125,7 @@ export function PersonasPage() {
     setFormMemory(false);
     setFormCliArgs("");
     setFormMcpServers([]);
+    setFormAdditionalWorkspaces([]);
     setFormError(null);
     setEditingPersona(null);
   };
@@ -129,6 +148,13 @@ export function PersonasPage() {
         url: s.url,
         description: s.description || "",
         auth_headers: s.auth_headers ? JSON.stringify(s.auth_headers) : "",
+      }))
+    );
+    setFormAdditionalWorkspaces(
+      (persona.additional_workspaces || []).map((ws) => ({
+        path: ws.path,
+        label: ws.label || "",
+        readOnly: ws.read_only,
       }))
     );
     setFormError(null);
@@ -181,6 +207,13 @@ export function PersonasPage() {
         memory_enabled: formMemory,
         agent_cli_args: formCliArgs.trim() ? formCliArgs.trim().split(/\s+/) : [],
         mcp_servers: mcpServers.length > 0 ? mcpServers : undefined,
+        additional_workspaces: formAdditionalWorkspaces
+          .filter((ws) => ws.path.trim() !== "")
+          .map((ws) => ({
+            path: ws.path.trim(),
+            read_only: ws.readOnly,
+            label: ws.label.trim() || null,
+          })),
       };
 
       if (editingPersona) {
@@ -223,6 +256,32 @@ export function PersonasPage() {
       i === index ? { ...entry, [field]: value } : entry
     );
     setFormMcpServers(updated);
+  };
+
+  const addWorkspaceEntry = () => {
+    setFormAdditionalWorkspaces([...formAdditionalWorkspaces, { path: "", label: "", readOnly: false }]);
+  };
+
+  const removeWorkspaceEntry = (index: number) => {
+    setFormAdditionalWorkspaces(formAdditionalWorkspaces.filter((_, i) => i !== index));
+  };
+
+  const updateWorkspaceEntry = (index: number, field: keyof AdditionalWorkspaceEntry, value: string | boolean) => {
+    const updated = formAdditionalWorkspaces.map((entry, i) =>
+      i === index ? { ...entry, [field]: value } : entry
+    );
+    setFormAdditionalWorkspaces(updated);
+  };
+
+  const moveWorkspaceEntry = (index: number, direction: "up" | "down") => {
+    const targetIndex = direction === "up" ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= formAdditionalWorkspaces.length) return;
+    const updated = [...formAdditionalWorkspaces];
+    const item = updated[index]!;
+    const target = updated[targetIndex]!;
+    updated[index] = target;
+    updated[targetIndex] = item;
+    setFormAdditionalWorkspaces(updated);
   };
 
   const getAgentName = (agentTypeId: string) => {
@@ -373,7 +432,10 @@ export function PersonasPage() {
           </div>
 
           <div className="form-group">
-            <label htmlFor="persona-workspace">Workspace Path *</label>
+            <label htmlFor="persona-workspace">
+              Workspace Path *
+              <span className="badge badge-primary" style={{ marginLeft: "0.5rem" }}>Primary</span>
+            </label>
             <div className="input-with-button">
               <input
                 id="persona-workspace"
@@ -399,6 +461,98 @@ export function PersonasPage() {
               </button>
             </div>
           </div>
+
+          <fieldset className="form-group">
+            <legend>Additional Workspaces</legend>
+            {formAdditionalWorkspaces.map((entry, i) => (
+              <div key={i} className="workspace-entry" role="group" aria-label={`Additional workspace ${i + 1}`}>
+                <div className="workspace-entry-fields">
+                  <div className="workspace-entry-path">
+                    <div className="input-with-button">
+                      <input
+                        type="text"
+                        placeholder="/path/to/directory"
+                        value={entry.path}
+                        onChange={(e) => updateWorkspaceEntry(i, "path", e.target.value)}
+                        aria-label={`Additional workspace ${i + 1} path`}
+                      />
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        onClick={async () => {
+                          const selected = await open({ directory: true, multiple: false });
+                          if (selected) {
+                            updateWorkspaceEntry(i, "path", selected as string);
+                          }
+                        }}
+                        aria-label={`Browse for additional workspace ${i + 1} folder`}
+                      >
+                        Browse
+                      </button>
+                    </div>
+                  </div>
+                  <div className="workspace-entry-label">
+                    <input
+                      type="text"
+                      placeholder="Label (optional, max 64 chars)"
+                      value={entry.label}
+                      onChange={(e) => updateWorkspaceEntry(i, "label", e.target.value.slice(0, 64))}
+                      maxLength={64}
+                      aria-label={`Additional workspace ${i + 1} label`}
+                    />
+                  </div>
+                  <div className="workspace-entry-controls">
+                    <label className="workspace-readonly-toggle" title="Read-only mount">
+                      <input
+                        type="checkbox"
+                        checked={entry.readOnly}
+                        onChange={(e) => updateWorkspaceEntry(i, "readOnly", e.target.checked)}
+                        aria-label={`Additional workspace ${i + 1} read-only`}
+                      />
+                      <span className="workspace-readonly-label">Read-only</span>
+                    </label>
+                    {entry.readOnly && (
+                      <span className="badge badge-readonly">RO</span>
+                    )}
+                  </div>
+                </div>
+                <div className="workspace-entry-actions">
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    onClick={() => moveWorkspaceEntry(i, "up")}
+                    disabled={i === 0}
+                    aria-label={`Move workspace ${i + 1} up`}
+                    title="Move up"
+                  >
+                    ↑
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    onClick={() => moveWorkspaceEntry(i, "down")}
+                    disabled={i === formAdditionalWorkspaces.length - 1}
+                    aria-label={`Move workspace ${i + 1} down`}
+                    title="Move down"
+                  >
+                    ↓
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-danger"
+                    onClick={() => removeWorkspaceEntry(i)}
+                    aria-label={`Remove additional workspace ${i + 1}`}
+                    title="Remove"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+            ))}
+            <button type="button" className="btn btn-sm" onClick={addWorkspaceEntry}>
+              + Add Workspace
+            </button>
+          </fieldset>
 
           <div className="form-group form-group-inline">
             <label htmlFor="persona-memory">
