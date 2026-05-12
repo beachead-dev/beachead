@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, act, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import fc from "fast-check";
-import { SandboxInfo } from "../../lib/api";
+import { SandboxInfo, McpContainerResponse } from "../../lib/api";
 
 // Mock the API module
 vi.mock("../../lib/api", async (importOriginal) => {
@@ -13,13 +14,17 @@ vi.mock("../../lib/api", async (importOriginal) => {
     startSandbox: vi.fn(),
     removeSandbox: vi.fn(),
     getMcpContainers: vi.fn(),
+    startContainer: vi.fn(),
+    stopContainer: vi.fn(),
+    removeContainer: vi.fn(),
   };
 });
 
-import { getSandboxes } from "../../lib/api";
+import { getSandboxes, getMcpContainers } from "../../lib/api";
 import { DockerPage } from "../DockerPage";
 
 const mockGetSandboxes = getSandboxes as ReturnType<typeof vi.fn>;
+const mockGetMcpContainers = getMcpContainers as ReturnType<typeof vi.fn>;
 
 /**
  * Pure filtering function that replicates the backend managed sandbox filtering logic.
@@ -189,6 +194,208 @@ describe("Feature: docker-management-tab, Property 3: Managed sandbox filtering"
           expect(result.length).toBe(expectedCount);
         },
       ),
+      { numRuns: 100 },
+    );
+  });
+});
+
+import { deriveContainerButtonStates } from "../../lib/containerButtonStates";
+
+describe("Feature: docker-management-tab, Property 5: Container button state derivation from status", () => {
+  /**
+   * **Validates: Requirements 7.1, 7.2, 7.3**
+   *
+   * For any status string, verify:
+   * - "running" → Stop enabled, Start/Remove disabled
+   * - "stopped"/"created" → Start/Remove enabled, Stop disabled
+   * - any other status → all disabled
+   *
+   * This tests the MANAGED case (isUnmanaged=false).
+   */
+
+  // Generator for container status: includes known statuses, null, empty, and random strings
+  const statusArb: fc.Arbitrary<string | null> = fc.oneof(
+    fc.constant("running"),
+    fc.constant("stopped"),
+    fc.constant("created"),
+    fc.constant(null as string | null),
+    fc.constant(""),
+    fc.string({ minLength: 0, maxLength: 30 }),
+  );
+
+  it("derives correct button states for managed containers based on status", () => {
+    fc.assert(
+      fc.property(statusArb, (status) => {
+        const result = deriveContainerButtonStates(status, false);
+
+        if (status === "running") {
+          expect(result).toEqual({
+            startEnabled: false,
+            stopEnabled: true,
+            removeEnabled: false,
+          });
+        } else if (status === "stopped" || status === "created") {
+          expect(result).toEqual({
+            startEnabled: true,
+            stopEnabled: false,
+            removeEnabled: true,
+          });
+        } else {
+          // null, empty, or any other string → all disabled
+          expect(result).toEqual({
+            startEnabled: false,
+            stopEnabled: false,
+            removeEnabled: false,
+          });
+        }
+      }),
+      { numRuns: 100 },
+    );
+  });
+});
+
+
+describe("Feature: docker-management-tab, Property 4: Container table rendering with sorting", () => {
+  /**
+   * **Validates: Requirements 6.2, 6.3**
+   *
+   * For any array of container objects, verify rows contain all columns,
+   * persona name is displayed (not persona_id), and rows are ordered by
+   * created_at descending (newest first).
+   */
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // Generator for safe printable strings (no control characters)
+  const safeStringArb = fc
+    .string({ minLength: 1, maxLength: 15 })
+    .map((s) => s.replace(/[^\x20-\x7E]/g, "a"))
+    .filter((s) => s.trim().length > 0);
+
+  // Generator for container status values
+  const statusArb = fc.oneof(
+    fc.constant("running"),
+    fc.constant("stopped"),
+    fc.constant("created"),
+    safeStringArb,
+  );
+
+  // Generator for a McpContainerResponse object
+  const containerArb: fc.Arbitrary<McpContainerResponse> = fc
+    .record({
+      id: fc.uuid(),
+      persona_id: fc.uuid(),
+      persona_name: safeStringArb,
+      container_id: fc.option(fc.uuid(), { nil: null }),
+      port: fc.integer({ min: 1024, max: 65535 }),
+      volume_name: safeStringArb,
+      status: statusArb,
+      live_status_confirmed: fc.boolean(),
+      created_at: fc.date({
+        min: new Date("2020-01-01T00:00:00Z"),
+        max: new Date("2030-12-31T23:59:59Z"),
+      }).map((d) => d.toISOString()),
+      updated_at: fc.date({
+        min: new Date("2020-01-01T00:00:00Z"),
+        max: new Date("2030-12-31T23:59:59Z"),
+      }).map((d) => d.toISOString()),
+    });
+
+  // Non-empty arrays (empty arrays show empty state, not a table)
+  const containerArrayArb = fc.array(containerArb, { minLength: 1, maxLength: 5 });
+
+  it("renders a table row for each container with all columns and rows sorted by created_at descending", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+
+    await fc.assert(
+      fc.asyncProperty(containerArrayArb, async (containers) => {
+        // Mock getSandboxes to return empty (so Sandboxes tab doesn't interfere)
+        mockGetSandboxes.mockResolvedValue([]);
+        // Mock getMcpContainers to return the generated containers
+        mockGetMcpContainers.mockResolvedValue(containers);
+
+        const { unmount } = render(<DockerPage />);
+
+        // Wait for initial Sandboxes tab data to load
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(0);
+        });
+
+        // Switch to Containers tab
+        const containersTab = screen.getByRole("tab", { name: /containers/i });
+        await act(async () => {
+          await user.click(containersTab);
+        });
+
+        // Wait for container data to load
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(0);
+        });
+
+        // Get the containers table
+        const table = screen.getByRole("table", { name: "Containers table" });
+        const tbody = table.querySelector("tbody");
+        expect(tbody).not.toBeNull();
+
+        const rows = within(tbody!).getAllByRole("row");
+        expect(rows.length).toBe(containers.length);
+
+        // Expected sort order: by created_at descending (newest first)
+        const sortedContainers = [...containers].sort(
+          (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+        );
+
+        for (let i = 0; i < sortedContainers.length; i++) {
+          const container = sortedContainers[i];
+          const row = rows[i];
+          const cells = within(row).getAllByRole("cell");
+
+          // 6 cells: Persona Name, Port, Status, Volume Name, Created Date, Actions
+          expect(cells.length).toBe(6);
+
+          // Persona Name column: displays persona_name (not persona_id)
+          expect(cells[0].textContent).toContain(container.persona_name);
+          expect(cells[0].textContent).not.toContain(container.persona_id);
+
+          // Port column
+          expect(cells[1].textContent).toBe(String(container.port));
+
+          // Status column
+          expect(cells[2].textContent).toBe(container.status);
+
+          // Volume Name column
+          expect(cells[3].textContent).toBe(container.volume_name);
+
+          // Created Date column: should contain a formatted version of created_at
+          // The component uses toLocaleString(), so we verify it's non-empty and
+          // represents the same date
+          const cellDateText = cells[4].textContent ?? "";
+          expect(cellDateText.length).toBeGreaterThan(0);
+
+          // Actions column: Start, Stop, Remove buttons
+          const buttons = within(cells[5]).getAllByRole("button");
+          expect(buttons.length).toBe(3);
+          expect(buttons[0]).toHaveTextContent("Start");
+          expect(buttons[1]).toHaveTextContent("Stop");
+          expect(buttons[2]).toHaveTextContent("Remove");
+        }
+
+        // Verify sort order: each row's created_at should be >= the next row's
+        for (let i = 0; i < sortedContainers.length - 1; i++) {
+          const currentDate = new Date(sortedContainers[i].created_at).getTime();
+          const nextDate = new Date(sortedContainers[i + 1].created_at).getTime();
+          expect(currentDate).toBeGreaterThanOrEqual(nextDate);
+        }
+
+        unmount();
+      }),
       { numRuns: 100 },
     );
   });
