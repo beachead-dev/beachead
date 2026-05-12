@@ -10,7 +10,6 @@ use bollard::container::{
 use bollard::Docker;
 use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 use crate::error::OrchestratorError;
 use crate::mcp_container_manager::ContainerStatus;
@@ -194,19 +193,17 @@ async fn get_live_status(
     }
 }
 
-/// Find Docker containers with image `beachead-memory-mcp:latest` that are NOT tracked in the DB.
+/// Find all Docker containers that are NOT tracked in the DB.
 ///
+/// When show_all is enabled, returns all Docker containers (regardless of image)
+/// that are not already tracked in the Beachead database.
 /// Returns them as `McpContainerListResponse` entries with placeholder values for DB-only fields.
 async fn find_unmanaged_containers(
     docker: &Docker,
     db_rows: &[DbContainerRow],
 ) -> Vec<McpContainerListResponse> {
-    let mut filters = HashMap::new();
-    filters.insert("ancestor".to_string(), vec!["beachead-memory-mcp:latest".to_string()]);
-
-    let options = ListContainersOptions {
+    let options = ListContainersOptions::<String> {
         all: true,
-        filters,
         ..Default::default()
     };
 
