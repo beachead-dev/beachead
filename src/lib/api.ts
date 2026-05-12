@@ -103,3 +103,87 @@ export async function postForBlob(path: string, body?: unknown): Promise<Blob> {
 }
 
 export const api = { get, getText, post, postForBlob, put, del };
+
+// Docker Management Types
+
+export interface SandboxInfo {
+  name: string | null;
+  id: string | null;
+  status: string | null;
+  managed: boolean;
+}
+
+export interface SandboxActionResponse {
+  id: string;
+  status: string;
+}
+
+export interface SandboxStartResponse {
+  id: string;
+}
+
+export interface McpContainerResponse {
+  id: string;
+  persona_id: string;
+  persona_name: string;
+  container_id: string | null;
+  port: number;
+  volume_name: string;
+  status: string;
+  live_status_confirmed: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+// Docker Management API Methods
+
+export async function getSandboxes(
+  showAll?: boolean,
+): Promise<SandboxInfo[]> {
+  const params = showAll ? "?show_all=true" : "";
+  return get<SandboxInfo[]>(`/api/sandboxes${params}`);
+}
+
+export async function stopSandbox(
+  id: string,
+): Promise<SandboxActionResponse> {
+  return post<SandboxActionResponse>(`/api/sandboxes/${id}/stop`);
+}
+
+export async function startSandbox(
+  id: string,
+): Promise<SandboxStartResponse> {
+  return post<SandboxStartResponse>(`/api/sandboxes/${id}/start`);
+}
+
+export async function removeSandbox(id: string): Promise<void> {
+  return del<void>(`/api/sandboxes/${id}`);
+}
+
+export async function getMcpContainers(
+  showAll?: boolean,
+): Promise<McpContainerResponse[]> {
+  const params = showAll ? "?show_all=true" : "";
+  return get<McpContainerResponse[]>(`/api/mcp-containers${params}`);
+}
+
+export async function startContainer(
+  id: string,
+): Promise<McpContainerResponse> {
+  return post<McpContainerResponse>(`/api/mcp-containers/${id}/start`);
+}
+
+export async function stopContainer(
+  id: string,
+): Promise<McpContainerResponse> {
+  return post<McpContainerResponse>(`/api/mcp-containers/${id}/stop`);
+}
+
+export async function removeContainer(
+  id: string,
+  deleteVolume: boolean,
+): Promise<void> {
+  return del<void>(
+    `/api/mcp-containers/${id}?delete_volume=${deleteVolume}`,
+  );
+}
