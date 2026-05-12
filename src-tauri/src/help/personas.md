@@ -13,12 +13,58 @@ agent sessions without re-entering details each time.
 3. Fill in the required fields:
    - **Name** — A unique identifier for this persona
    - **Agent Type** — Select from registered agents (e.g., Claude Code, Codex)
-   - **Workspace Path** — Local folder path to mount into the sandbox. You can type a path directly or click **Browse** to open a folder picker.
+   - **Workspace Path** — Local folder path to mount into the sandbox (the primary workspace). You can type a path directly or click **Browse** to open a folder picker.
 4. Optionally configure:
+   - **Additional Workspaces** — Extra directories to mount into the sandbox (see below)
    - **Enable Memory** — Toggle long-term memory for this persona
    - **Agent CLI Args** — Additional command-line arguments passed to the agent
    - **MCP Servers** — Additional MCP server entries (name, URL, optional auth headers)
 5. Click **Create**
+
+## Additional Workspaces
+
+Each persona can mount extra directories into the sandbox alongside the
+primary workspace. This is useful for shared libraries, data directories,
+or reference code that multiple personas need access to.
+
+### Adding Additional Workspaces
+
+In the persona form, under **Additional Workspaces**:
+
+1. Click **+ Add Workspace** to add an entry
+2. For each entry, configure:
+   - **Path** — Absolute path to a directory on the host (use Browse or type directly)
+   - **Label** (optional) — A short name (max 64 characters) for easy identification
+   - **Read-only** — Toggle on to mount the directory as read-only (`:ro`)
+3. Use the **↑** / **↓** buttons to reorder entries (order determines mount sequence)
+4. Click **✕** to remove an entry
+
+### Validation Rules
+
+- Paths must be absolute and exist on the host filesystem
+- Paths are canonicalized (symlinks and `..` segments resolved) before storage
+- Duplicate paths (after canonicalization) are rejected
+- A path matching the primary workspace is rejected
+- Labels cannot exceed 64 characters or contain control characters
+- Sensitive directories (`/`, `/etc`, `/sys`, `/proc`, `/dev`, `~/.ssh`,
+  `~/.gnupg`) trigger a warning but are still allowed if confirmed
+
+### Behavior
+
+- Additional workspaces are passed to `sbx create` as positional arguments
+  after the primary workspace
+- Read-only workspaces get the `:ro` suffix (e.g., `/home/user/libs:ro`)
+- Multiple personas can share the same additional workspace path
+- Changes to additional workspaces on a persona with active sessions require
+  a session restart to take effect (the change is saved immediately but only
+  applied when a new session starts)
+
+### Viewing Workspaces
+
+- The persona card on the Personas page lists all workspaces with their
+  labels and read-only badges
+- The **Mounts** tab in the session panel shows which workspaces are mounted
+  in a running session
 
 ## MCP Server Entries
 
@@ -38,6 +84,8 @@ saved to the local database immediately.
 If the persona has active sessions:
 - **Adding** MCP servers or modifying settings takes effect immediately
 - **Removing** MCP servers requires a session restart (you'll see a notification)
+- **Changing** additional workspaces (add, remove, or modify) requires a session
+  restart — the sandbox must be recreated to apply new mount points
 
 ## Deleting a Persona
 

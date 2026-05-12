@@ -32,6 +32,20 @@ upload button. Files are copied into the sandbox workspace via `sbx cp`.
 View forwarded ports from the sandbox. Sandboxes can expose services
 on specific ports, accessible from the host via `sbx ports`.
 
+## Mounts
+
+The **Mounts** tab in the session panel shows all workspace directories
+mounted in the running sandbox:
+
+- The primary workspace is displayed with a **Primary** badge and
+  **Read-Write** indicator
+- Additional workspaces show their label (if set) as the primary text,
+  with the full path available as a tooltip
+- Each workspace displays a **Read-Only** or **Read-Write** badge
+
+This tab is read-only — to change workspace mounts, edit the persona
+configuration and restart the session.
+
 ## Stopping a Session
 
 Click **Stop** on an active session to terminate the sandbox. This runs
