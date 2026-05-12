@@ -1,15 +1,34 @@
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     routing::get,
     Json, Router,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
 use crate::error::OrchestratorError;
-use crate::sbx::{PortMapping, SandboxInfo};
+use crate::sbx::PortMapping;
 use crate::server::AppState;
 use crate::types::PublishPortRequest;
+
+/// Enriched sandbox info with a `managed` flag indicating whether the sandbox
+/// is associated with a Beachead session (i.e., its ID exists in the sessions table).
+#[derive(Debug, Clone, Serialize)]
+pub struct SandboxInfoEnriched {
+    pub name: Option<String>,
+    pub id: Option<String>,
+    pub status: Option<String>,
+    pub managed: bool,
+}
+
+/// Query parameters for `GET /api/sandboxes`.
+#[derive(Debug, Deserialize)]
+struct ListSandboxesQuery {
+    /// When true, return all sandboxes. When false (default), only return managed sandboxes.
+    #[serde(default)]
+    show_all: bool,
+}
 
 /// Build the sandbox routes sub-router.
 pub fn router() -> Router<AppState> {
@@ -21,15 +40,54 @@ pub fn router() -> Router<AppState> {
         )
 }
 
-/// GET /api/sandboxes — list all sandboxes via sbx ls.
+/// GET /api/sandboxes — list sandboxes with managed filtering.
+///
+/// By default (`show_all=false`), only returns sandboxes whose ID matches a
+/// `sandbox_id` in the sessions table. When `show_all=true`, returns all
+/// sandboxes with the `managed` flag set appropriately.
 async fn list_sandboxes(
     State(state): State<AppState>,
-) -> Result<Json<Vec<SandboxInfo>>, OrchestratorError> {
+    Query(query): Query<ListSandboxesQuery>,
+) -> Result<Json<Vec<SandboxInfoEnriched>>, OrchestratorError> {
     let sbx = state.sbx.as_ref().ok_or_else(|| {
         OrchestratorError::SbxError("sbx CLI is not available".to_string())
     })?;
+
     let sandboxes = sbx.ls_json().await?;
-    Ok(Json(sandboxes))
+
+    // Query sessions table for distinct sandbox_id values to determine managed sandboxes
+    let managed_ids: HashSet<String> = state.db.with_conn(|conn| {
+        let mut stmt = conn
+            .prepare("SELECT DISTINCT sandbox_id FROM sessions WHERE sandbox_id IS NOT NULL")
+            .map_err(|e| OrchestratorError::Database(format!("Failed to query sessions: {}", e)))?;
+        let ids = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|e| OrchestratorError::Database(format!("Failed to query sessions: {}", e)))?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(ids)
+    })?;
+
+    // Enrich sandboxes with managed flag
+    let enriched: Vec<SandboxInfoEnriched> = sandboxes
+        .into_iter()
+        .map(|s| {
+            let managed = s
+                .id
+                .as_ref()
+                .map(|id| managed_ids.contains(id))
+                .unwrap_or(false);
+            SandboxInfoEnriched {
+                name: s.name,
+                id: s.id,
+                status: s.status,
+                managed,
+            }
+        })
+        .filter(|s| query.show_all || s.managed)
+        .collect();
+
+    Ok(Json(enriched))
 }
 
 /// GET /api/sandboxes/{id}/ports — list published ports for a sandbox.
