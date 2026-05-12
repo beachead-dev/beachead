@@ -2067,3 +2067,72 @@ body {
 :root[data-theme="dark"] .mount-secondary-path {
   color: #888;
 }
+
+/* Docker page — Sandbox table */
+.sandbox-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 0.5rem;
+}
+
+.sandbox-table th,
+.sandbox-table td {
+  text-align: left;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid #e8e8e8;
+}
+
+.sandbox-table th {
+  font-weight: 600;
+  color: #555;
+  border-bottom: 2px solid #e0e0e0;
+}
+
+/* Docker page — Tab toolbar (Show All toggle) */
+.tab-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.5rem 0;
+}
+
+.toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
+/* Loading indicator */
+.loading-indicator {
+  color: #999;
+  font-style: italic;
+  padding: 1rem 0;
+}
+
+/* Dark mode — sandbox table */
+:root:not([data-theme="light"]) .sandbox-table th,
+:root:not([data-theme="light"]) .sandbox-table td {
+  border-bottom-color: #2d3f6b;
+}
+
+:root:not([data-theme="light"]) .sandbox-table th {
+  color: #aaa;
+}
+
+:root[data-theme="dark"] .sandbox-table th,
+:root[data-theme="dark"] .sandbox-table td {
+  border-bottom-color: #2d3f6b;
+}
+
+:root[data-theme="dark"] .sandbox-table th {
+  color: #aaa;
+}
+
+/* Confirm dialog */
+.confirm-dialog-message {
+  font-size: 0.875rem;
+  line-height: 1.5;
+  margin: 0.5rem 0 0;
+}
