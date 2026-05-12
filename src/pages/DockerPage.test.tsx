@@ -333,6 +333,275 @@ describe("DockerPage — Sandboxes Tab", () => {
   });
 });
 
+describe("DockerPage — Polling Lifecycle", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("stops Sandboxes polling and starts Containers polling when switching tabs", async () => {
+    mockGetSandboxes.mockResolvedValue([]);
+    mockGetMcpContainers.mockResolvedValue([]);
+
+    render(<DockerPage />);
+
+    // Initial fetch for Sandboxes tab
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(mockGetSandboxes).toHaveBeenCalledTimes(1);
+    expect(mockGetMcpContainers).not.toHaveBeenCalled();
+
+    // Advance one poll interval — Sandboxes should poll again
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10000);
+    });
+
+    expect(mockGetSandboxes).toHaveBeenCalledTimes(2);
+    expect(mockGetMcpContainers).not.toHaveBeenCalled();
+
+    // Switch to Containers tab
+    fireEvent.click(screen.getByRole("tab", { name: "Containers" }));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    // Containers should have fetched immediately
+    expect(mockGetMcpContainers).toHaveBeenCalledTimes(1);
+
+    // Reset sandbox call count to verify no more calls
+    const sandboxCallsAtSwitch = mockGetSandboxes.mock.calls.length;
+
+    // Advance one poll interval — only Containers should poll
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10000);
+    });
+
+    expect(mockGetMcpContainers).toHaveBeenCalledTimes(2);
+    expect(mockGetSandboxes).toHaveBeenCalledTimes(sandboxCallsAtSwitch);
+  });
+
+  it("stops Containers polling and resumes Sandboxes polling when switching back", async () => {
+    mockGetSandboxes.mockResolvedValue([]);
+    mockGetMcpContainers.mockResolvedValue([]);
+
+    render(<DockerPage />);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    // Switch to Containers
+    fireEvent.click(screen.getByRole("tab", { name: "Containers" }));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    const containerCallsBeforeSwitch = mockGetMcpContainers.mock.calls.length;
+
+    // Switch back to Sandboxes
+    fireEvent.click(screen.getByRole("tab", { name: "Sandboxes" }));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    const sandboxCallsAfterSwitch = mockGetSandboxes.mock.calls.length;
+
+    // Advance one poll interval — only Sandboxes should poll
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10000);
+    });
+
+    expect(mockGetSandboxes).toHaveBeenCalledTimes(sandboxCallsAfterSwitch + 1);
+    expect(mockGetMcpContainers).toHaveBeenCalledTimes(containerCallsBeforeSwitch);
+  });
+
+  it("stops all polling when component unmounts (navigating away)", async () => {
+    mockGetSandboxes.mockResolvedValue([]);
+
+    const { unmount } = render(<DockerPage />);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(mockGetSandboxes).toHaveBeenCalledTimes(1);
+
+    // Unmount simulates navigating away from /docker
+    unmount();
+
+    // Advance time — no more polling should occur
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30000);
+    });
+
+    expect(mockGetSandboxes).toHaveBeenCalledTimes(1);
+  });
+
+  it("resets poll timer after successful mutation + refresh", async () => {
+    mockGetSandboxes.mockResolvedValue([
+      { name: "sbx", id: "s1", status: "running", managed: true },
+    ]);
+    mockStopSandbox.mockResolvedValue({ id: "s1", status: "stopped" });
+
+    render(<DockerPage />);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(mockGetSandboxes).toHaveBeenCalledTimes(1);
+
+    // Advance 7 seconds (not yet at 10s interval)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(7000);
+    });
+
+    expect(mockGetSandboxes).toHaveBeenCalledTimes(1);
+
+    // Perform a mutation (stop) — this calls refresh() which resets the timer
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText("Stop sandbox sbx"));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    // refresh() triggered an immediate re-fetch
+    expect(mockGetSandboxes).toHaveBeenCalledTimes(2);
+
+    // Advance 7 seconds from the refresh point — should NOT trigger another poll
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(7000);
+    });
+
+    expect(mockGetSandboxes).toHaveBeenCalledTimes(2);
+
+    // Advance 3 more seconds (total 10s from refresh) — should trigger next poll
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+
+    expect(mockGetSandboxes).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe("DockerPage — Stale Data Indication", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("shows stale indicator when poll fails while retaining last data", async () => {
+    mockGetSandboxes
+      .mockResolvedValueOnce([
+        { name: "my-sandbox", id: "abc123", status: "running", managed: true },
+      ])
+      .mockRejectedValueOnce(new Error("Network error"));
+
+    render(<DockerPage />);
+
+    // Initial fetch succeeds
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(screen.getByText("my-sandbox")).toBeInTheDocument();
+    expect(screen.queryByText("Data may be stale. Retrying…")).not.toBeInTheDocument();
+
+    // Second poll fails
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10000);
+    });
+
+    // Stale indicator should appear
+    expect(screen.getByText("Data may be stale. Retrying…")).toBeInTheDocument();
+    // Last data should still be displayed
+    expect(screen.getByText("my-sandbox")).toBeInTheDocument();
+    expect(screen.getByText("abc123")).toBeInTheDocument();
+  });
+
+  it("removes stale indicator on next successful poll", async () => {
+    mockGetSandboxes
+      .mockResolvedValueOnce([
+        { name: "my-sandbox", id: "abc123", status: "running", managed: true },
+      ])
+      .mockRejectedValueOnce(new Error("Network error"))
+      .mockResolvedValueOnce([
+        { name: "my-sandbox", id: "abc123", status: "stopped", managed: true },
+      ]);
+
+    render(<DockerPage />);
+
+    // Initial fetch succeeds
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(screen.queryByText("Data may be stale. Retrying…")).not.toBeInTheDocument();
+
+    // Second poll fails — stale indicator appears
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10000);
+    });
+
+    expect(screen.getByText("Data may be stale. Retrying…")).toBeInTheDocument();
+
+    // Third poll succeeds — stale indicator disappears
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10000);
+    });
+
+    expect(screen.queryByText("Data may be stale. Retrying…")).not.toBeInTheDocument();
+    // Updated data is shown
+    expect(screen.getByText("stopped")).toBeInTheDocument();
+  });
+
+  it("continues polling on regular interval after failure", async () => {
+    mockGetSandboxes
+      .mockResolvedValueOnce([
+        { name: "my-sandbox", id: "abc123", status: "running", managed: true },
+      ])
+      .mockRejectedValueOnce(new Error("Network error"))
+      .mockResolvedValueOnce([
+        { name: "my-sandbox", id: "abc123", status: "running", managed: true },
+      ]);
+
+    render(<DockerPage />);
+
+    // Initial fetch
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(mockGetSandboxes).toHaveBeenCalledTimes(1);
+
+    // Second poll at 10s (fails)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10000);
+    });
+
+    expect(mockGetSandboxes).toHaveBeenCalledTimes(2);
+
+    // Third poll at 20s (succeeds) — polling was not interrupted by the failure
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10000);
+    });
+
+    expect(mockGetSandboxes).toHaveBeenCalledTimes(3);
+  });
+});
+
 describe("DockerPage — Containers Tab — Removal Dialog", () => {
   beforeEach(() => {
     vi.clearAllMocks();
