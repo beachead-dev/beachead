@@ -144,6 +144,58 @@ Deferred improvements, bug fixes, and future features for implementation.
 
 ---
 
+### Application Logging System
+
+**Priority:** High  
+**Affected area:** Backend (all modules), frontend, new log viewer UI
+
+**Description:** Implement structured logging across the entire application. Currently errors go to stderr via `eprintln!` with no persistence, no log levels, and no way for users to view them. Need a unified logging system that captures app errors, sbx CLI output, Docker/container logs, and MCP server logs.
+
+**Scope:**
+- **App logs:** Replace all `eprintln!` with structured logging (e.g., `tracing` crate with file + console subscribers). Log levels: error, warn, info, debug. Persist to rotating log files in the app data directory.
+- **sbx CLI logs:** Capture stdout/stderr from all `sbx` command invocations. Store per-session or per-operation. Include the command that was run, exit code, and full output.
+- **Container logs:** Periodically capture `docker logs` output for MCP containers. Surface errors (container crashes, startup failures) to the user.
+- **MCP server logs:** The Python MCP server already logs to stdout inside the container. Capture via `docker logs` and surface relevant errors.
+- **Log viewer UI:** New page or panel where users can browse logs filtered by source (app, sbx, containers), level, and time range. Searchable. Auto-scrolling tail mode for live logs.
+- **Log retention:** Configurable max size / max age. Auto-rotate old logs.
+
+**Implementation notes:**
+- Use the `tracing` crate (already standard in the Rust/Tokio ecosystem) with `tracing-subscriber` for formatting and `tracing-appender` for file output
+- Frontend: new "Logs" page or tab in system settings area
+- Consider `tauri-plugin-log` for cross-platform log file management
+- Research: VS Code's Output panel, Docker Desktop's log viewer, Warp's error reporting for UX patterns
+
+---
+
+### Error Message UX Overhaul
+
+**Priority:** Medium  
+**Affected area:** Frontend error display components, backend error responses
+
+**Description:** Current error messages have several UX problems: some are too verbose (full stack traces or raw CLI output shown to users), there's no way to dismiss/close error notifications, and error presentation is inconsistent across the app. Research how other desktop applications handle error display and implement a consistent pattern.
+
+**Problems to fix:**
+- Error toasts/banners that can't be closed (block UI or accumulate)
+- Raw technical errors shown to users (e.g., full Docker error strings, SQL errors)
+- No distinction between user-actionable errors ("install Docker") and internal errors ("unexpected state")
+- No error history — once dismissed, errors are gone (ties into logging above)
+- Inconsistent error placement (some inline, some modal, some toast)
+
+**Research:**
+- How VS Code handles errors (notification center with dismiss, "Show Details" expand, "Don't Show Again")
+- How Docker Desktop shows errors (toast with action buttons, log link)
+- How Slack/Discord handle connection errors (inline banner, auto-retry, manual retry button)
+
+**Implementation:**
+- Define error severity levels for the frontend: `info`, `warning`, `error`, `fatal`
+- Create a notification/toast system with: auto-dismiss for info/warning, manual dismiss for errors, persistent banner for fatal
+- Each error has: short user-friendly message, optional "Details" expandable with technical info, optional action button ("Retry", "Open Settings", "View Logs")
+- Backend: structure error responses with `{ message: "...", details: "...", code: "...", actionable: bool }`
+- Add a notification history panel (drawer or page) so dismissed errors can be reviewed later
+- Tie into the logging system — "View Logs" button on errors links to the relevant log entry
+
+---
+
 ## UX Improvements
 
 ### No Visual Indicator When Agent Exits
