@@ -508,4 +508,94 @@ mod tests {
         }
     }
 
+    // Feature: multi-workspace-mounts, Property 8: Additional workspace matching primary is rejected
+    // **Validates: Requirements 7.2**
+
+    /// Strategy to generate a path variation index (0-3) representing different ways
+    /// to express the same path that all resolve to the same canonical location.
+    fn arb_path_variation_index() -> impl Strategy<Value = usize> {
+        0usize..4
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(100))]
+        #[test]
+        fn prop_additional_workspace_matching_primary_is_rejected(
+            variation_index in arb_path_variation_index(),
+            read_only in any::<bool>(),
+            label in arb_label(),
+        ) {
+            // Create a real temp directory to use as both primary and additional workspace
+            let tmp_dir = tempfile::tempdir().unwrap();
+            let primary_path = tmp_dir.path().to_path_buf();
+
+            // Create a subdirectory for `..` segment variations
+            let sub_dir = primary_path.join("subdir");
+            std::fs::create_dir_all(&sub_dir).unwrap();
+
+            // Generate a path variation that resolves to the same directory as primary
+            let additional_path = match variation_index {
+                0 => {
+                    // Exact same path
+                    primary_path.clone()
+                }
+                1 => {
+                    // Path with trailing slash
+                    PathBuf::from(format!("{}/", primary_path.display()))
+                }
+                2 => {
+                    // Path with `/.` appended
+                    primary_path.join(".")
+                }
+                3 => {
+                    // Path with `subdir/..` appended — resolves back to primary
+                    primary_path.join("subdir").join("..")
+                }
+                _ => unreachable!(),
+            };
+
+            let entries = vec![CreateAdditionalWorkspaceEntry {
+                path: additional_path.clone(),
+                read_only,
+                label,
+            }];
+
+            let result = validate_additional_workspaces(&entries, &primary_path);
+
+            // Validation must return an error
+            prop_assert!(
+                result.is_err(),
+                "Expected validation error when additional workspace matches primary. \
+                 Primary: {:?}, Additional (variation {}): {:?}",
+                primary_path, variation_index, additional_path
+            );
+
+            // The error message must contain "Additional workspace path matches primary workspace"
+            match result {
+                Err(OrchestratorError::Validation(msg)) => {
+                    prop_assert!(
+                        msg.contains("Additional workspace path matches primary workspace"),
+                        "Error message should contain 'Additional workspace path matches primary workspace', got: {}",
+                        msg
+                    );
+                }
+                Err(other) => {
+                    prop_assert!(
+                        false,
+                        "Expected Validation error, got: {:?}",
+                        other
+                    );
+                }
+                Ok(_) => {
+                    prop_assert!(
+                        false,
+                        "Expected error when additional workspace matches primary, but got Ok. \
+                         Primary: {:?}, Additional (variation {}): {:?}",
+                        primary_path, variation_index, additional_path
+                    );
+                }
+            }
+        }
+    }
+
 }
