@@ -12,6 +12,7 @@ const navItems = [
   { to: "/personas", label: "Personas" },
   { to: "/agents", label: "Agents" },
   { to: "/policies", label: "Policies" },
+  { to: "/docker", label: "Docker" },
   { to: "/settings", label: "System Settings" },
 ];
 
