@@ -508,6 +508,142 @@ mod tests {
         }
     }
 
+    // Feature: multi-workspace-mounts, Property 5: Update replaces all additional workspaces
+    // **Validates: Requirements 3.2**
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(100))]
+        #[test]
+        fn prop_update_replaces_all_additional_workspaces(
+            agent in arb_agent_type(),
+            persona_name in arb_name(),
+            initial_count in 0usize..10,
+            update_count in 0usize..10,
+            initial_read_only in prop::collection::vec(any::<bool>(), 0..10),
+            update_read_only in prop::collection::vec(any::<bool>(), 0..10),
+            initial_labels in prop::collection::vec(arb_label(), 0..10),
+            update_labels in prop::collection::vec(arb_label(), 0..10),
+        ) {
+            use crate::persona_manager::PersonaManager;
+            use std::sync::Arc;
+
+            // Ensure N != M so we can verify the replacement actually happened
+            prop_assume!(initial_count != update_count);
+
+            // Create temp directories for primary workspace and all additional workspaces
+            let primary_dir = tempfile::tempdir().unwrap();
+
+            // Create N initial workspace directories
+            let mut initial_dirs: Vec<tempfile::TempDir> = Vec::new();
+            for _ in 0..initial_count {
+                initial_dirs.push(tempfile::tempdir().unwrap());
+            }
+
+            // Create M update workspace directories (distinct from initial ones)
+            let mut update_dirs: Vec<tempfile::TempDir> = Vec::new();
+            for _ in 0..update_count {
+                update_dirs.push(tempfile::tempdir().unwrap());
+            }
+
+            // Set up in-memory database and PersonaManager
+            let db = Arc::new(Database::open_in_memory().unwrap());
+            let pm = PersonaManager::new(db.clone());
+
+            // Insert the agent type
+            db.with_conn(|conn| {
+                insert_agent_type(conn, &agent)
+            }).unwrap();
+
+            // Build initial additional workspaces entries
+            let n = initial_count.min(initial_read_only.len()).min(initial_labels.len());
+            let initial_entries: Vec<CreateAdditionalWorkspaceEntry> = (0..n)
+                .map(|i| CreateAdditionalWorkspaceEntry {
+                    path: initial_dirs[i].path().to_path_buf(),
+                    read_only: initial_read_only[i],
+                    label: initial_labels[i].clone(),
+                })
+                .collect();
+
+            // Create persona with N additional workspaces
+            let create_req = CreatePersonaRequest {
+                name: persona_name,
+                agent_type_id: agent.id.clone(),
+                workspace_path: primary_dir.path().to_path_buf(),
+                memory_enabled: None,
+                agent_cli_args: None,
+                mcp_servers: None,
+                additional_workspaces: Some(initial_entries),
+            };
+
+            let persona = pm.create(create_req).unwrap();
+
+            // Verify initial state: N workspaces stored
+            prop_assert_eq!(
+                persona.additional_workspaces.len(), n,
+                "After create, should have {} additional workspaces", n
+            );
+
+            // Build update additional workspaces entries
+            let m = update_count.min(update_read_only.len()).min(update_labels.len());
+            let update_entries: Vec<CreateAdditionalWorkspaceEntry> = (0..m)
+                .map(|i| CreateAdditionalWorkspaceEntry {
+                    path: update_dirs[i].path().to_path_buf(),
+                    read_only: update_read_only[i],
+                    label: update_labels[i].clone(),
+                })
+                .collect();
+
+            // Update persona with M additional workspaces (replace-all semantics)
+            let update_req = UpdatePersonaRequest {
+                name: None,
+                agent_type_id: None,
+                workspace_path: None,
+                memory_enabled: None,
+                agent_cli_args: None,
+                mcp_servers: None,
+                additional_workspaces: Some(update_entries),
+            };
+
+            let update_result = pm.update(&persona.id, update_req).unwrap();
+
+            // Extract the updated persona from the result
+            let updated_persona = match update_result {
+                UpdateResult::Applied { persona } => persona,
+                UpdateResult::RequiresRestart { persona, .. } => persona,
+            };
+
+            // Verify: exactly M workspace records exist after update
+            prop_assert_eq!(
+                updated_persona.additional_workspaces.len(), m,
+                "After update, should have exactly {} additional workspaces, got {}",
+                m, updated_persona.additional_workspaces.len()
+            );
+
+            // Verify: the old N records are completely gone by checking paths
+            // All stored paths should be from the update set, not the initial set
+            let initial_canonical_paths: Vec<PathBuf> = initial_dirs.iter()
+                .map(|d| std::fs::canonicalize(d.path()).unwrap())
+                .collect();
+
+            for ws in &updated_persona.additional_workspaces {
+                prop_assert!(
+                    !initial_canonical_paths.contains(&ws.path),
+                    "Found an old workspace path {:?} that should have been replaced", ws.path
+                );
+            }
+
+            // Also verify via direct DB query
+            let db_workspaces = db.with_conn(|conn| {
+                list_additional_workspaces(conn, &persona.id)
+            }).unwrap();
+
+            prop_assert_eq!(
+                db_workspaces.len(), m,
+                "DB should have exactly {} workspace records, got {}",
+                m, db_workspaces.len()
+            );
+        }
+    }
+
     // Feature: multi-workspace-mounts, Property 8: Additional workspace matching primary is rejected
     // **Validates: Requirements 7.2**
 
