@@ -19,8 +19,14 @@ pub enum OrchestratorError {
     #[error("Not found: {0}")]
     NotFound(String),
 
+    #[error("sbx CLI is not available: {0}")]
+    SbxUnavailable(String),
+
     #[error("sbx CLI error: {0}")]
     SbxError(String),
+
+    #[error("Operation timed out: {0}")]
+    SbxTimeout(String),
 
     #[error("Docker error: {0}")]
     DockerError(String),
@@ -67,6 +73,8 @@ impl OrchestratorError {
             Self::ActiveSessions => StatusCode::CONFLICT,
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::SbxError(_) => StatusCode::BAD_GATEWAY,
+            Self::SbxUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
+            Self::SbxTimeout(_) => StatusCode::GATEWAY_TIMEOUT,
             Self::DockerError(_) => StatusCode::BAD_GATEWAY,
             Self::MissingCredentials(_) => StatusCode::PRECONDITION_FAILED,
             Self::PortExhaustion => StatusCode::SERVICE_UNAVAILABLE,
@@ -86,6 +94,8 @@ impl OrchestratorError {
             Self::ActiveSessions => "ACTIVE_SESSIONS",
             Self::NotFound(_) => "NOT_FOUND",
             Self::SbxError(_) => "SBX_ERROR",
+            Self::SbxUnavailable(_) => "SBX_UNAVAILABLE",
+            Self::SbxTimeout(_) => "SBX_TIMEOUT",
             Self::DockerError(_) => "DOCKER_ERROR",
             Self::MissingCredentials(_) => "MISSING_CREDENTIALS",
             Self::PortExhaustion => "PORT_EXHAUSTION",

@@ -1,19 +1,23 @@
 use axum::{
-    extract::{Query, State},
-    routing::get,
+    extract::{Path, Query, State},
+    routing::{get, post},
     Json, Router,
 };
-use bollard::container::ListContainersOptions;
+use bollard::container::{ListContainersOptions, StartContainerOptions};
 use bollard::Docker;
+use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::error::OrchestratorError;
+use crate::mcp_container_manager::ContainerStatus;
 use crate::server::AppState;
 
 /// Build the MCP containers routes sub-router.
 pub fn router() -> Router<AppState> {
-    Router::new().route("/api/mcp-containers", get(list_mcp_containers))
+    Router::new()
+        .route("/api/mcp-containers", get(list_mcp_containers))
+        .route("/api/mcp-containers/{id}/start", post(start_container))
 }
 
 // --- Query parameters ---
@@ -272,4 +276,130 @@ async fn find_unmanaged_containers(
     }
 
     unmanaged
+}
+
+/// POST /api/mcp-containers/{id}/start — start a stopped MCP container.
+///
+/// Looks up the container by its database primary key `id` (not the Docker container_id).
+/// - If not found in DB, returns 404.
+/// - If already running (confirmed via Docker), returns 200 with current record (idempotent).
+/// - Otherwise, starts the Docker container via bollard, updates DB status to "running",
+///   and returns 200 with the updated container record.
+/// - On Docker failure, updates DB status to "failed" and returns 500.
+async fn start_container(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<McpContainerListResponse>, OrchestratorError> {
+    // 1. Look up the container in the DB by its primary key
+    let db_row: DbContainerRow = state.db.with_conn(|conn| {
+        let mut stmt = conn
+            .prepare(
+                "SELECT mc.id, mc.persona_id, COALESCE(p.name, '') as persona_name,
+                        mc.container_id, mc.port, mc.volume_name, mc.status,
+                        mc.created_at, mc.updated_at
+                 FROM mcp_containers mc
+                 LEFT JOIN personas p ON mc.persona_id = p.id
+                 WHERE mc.id = ?1",
+            )
+            .map_err(|e| OrchestratorError::Database(e.to_string()))?;
+
+        stmt.query_row(rusqlite::params![id], |row| {
+            Ok(DbContainerRow {
+                id: row.get(0)?,
+                persona_id: row.get(1)?,
+                persona_name: row.get(2)?,
+                container_id: row.get(3)?,
+                port: row.get::<_, i64>(4)? as u16,
+                volume_name: row.get(5)?,
+                status: row.get(6)?,
+                created_at: row.get(7)?,
+                updated_at: row.get(8)?,
+            })
+        })
+        .optional()
+        .map_err(|e| OrchestratorError::Database(e.to_string()))
+    })?
+    .ok_or_else(|| OrchestratorError::NotFound(format!("Container '{}' not found", id)))?;
+
+    // 2. Connect to Docker
+    let docker = Docker::connect_with_local_defaults()
+        .map_err(|e| OrchestratorError::DockerError(format!("Failed to connect to Docker: {}", e)))?;
+
+    // 3. Check if already running via Docker inspect
+    if let Some(ref docker_id) = db_row.container_id {
+        if !docker_id.is_empty() {
+            if let Ok(info) = docker.inspect_container(docker_id, None).await {
+                let is_running = info
+                    .state
+                    .as_ref()
+                    .and_then(|s| s.running)
+                    .unwrap_or(false);
+
+                if is_running {
+                    // Already running — return current record (idempotent)
+                    return Ok(Json(McpContainerListResponse {
+                        id: db_row.id,
+                        persona_id: db_row.persona_id,
+                        persona_name: db_row.persona_name,
+                        container_id: db_row.container_id,
+                        port: db_row.port,
+                        volume_name: db_row.volume_name,
+                        status: "running".to_string(),
+                        live_status_confirmed: true,
+                        created_at: db_row.created_at,
+                        updated_at: db_row.updated_at,
+                    }));
+                }
+            }
+        }
+    }
+
+    // 4. Start the container via bollard
+    let docker_id = db_row.container_id.as_deref().ok_or_else(|| {
+        OrchestratorError::DockerError("Container has no Docker container ID".to_string())
+    })?;
+
+    if let Err(e) = docker
+        .start_container(docker_id, None::<StartContainerOptions<String>>)
+        .await
+    {
+        // Docker failure — update status to "failed" and return 500
+        let now = chrono::Utc::now().to_rfc3339();
+        let _ = state.db.with_conn(|conn| {
+            conn.execute(
+                "UPDATE mcp_containers SET status = ?1, updated_at = ?2 WHERE id = ?3",
+                rusqlite::params![ContainerStatus::Failed.as_str(), now, db_row.id],
+            )
+            .map_err(|e| OrchestratorError::Database(e.to_string()))
+        });
+
+        return Err(OrchestratorError::DockerError(format!(
+            "Failed to start container '{}': {}",
+            id, e
+        )));
+    }
+
+    // 5. Update DB status to "running"
+    let now = chrono::Utc::now().to_rfc3339();
+    state.db.with_conn(|conn| {
+        conn.execute(
+            "UPDATE mcp_containers SET status = ?1, updated_at = ?2 WHERE id = ?3",
+            rusqlite::params![ContainerStatus::Running.as_str(), now, db_row.id],
+        )
+        .map_err(|e| OrchestratorError::Database(e.to_string()))
+    })?;
+
+    // 6. Return the updated container record
+    Ok(Json(McpContainerListResponse {
+        id: db_row.id,
+        persona_id: db_row.persona_id,
+        persona_name: db_row.persona_name,
+        container_id: db_row.container_id,
+        port: db_row.port,
+        volume_name: db_row.volume_name,
+        status: "running".to_string(),
+        live_status_confirmed: true,
+        created_at: db_row.created_at,
+        updated_at: now,
+    }))
 }
