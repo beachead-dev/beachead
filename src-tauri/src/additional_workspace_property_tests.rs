@@ -734,4 +734,132 @@ mod tests {
         }
     }
 
+    // Feature: multi-workspace-mounts, Property 12: Workspace changes with active sessions return RequiresRestart
+    // **Validates: Requirements 12.1**
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(100))]
+        #[test]
+        fn prop_workspace_changes_with_active_sessions_return_requires_restart(
+            agent in arb_agent_type(),
+            persona_name in arb_name(),
+            initial_count in 0usize..5,
+            update_count in 0usize..5,
+            initial_read_only in prop::collection::vec(any::<bool>(), 0..5),
+            update_read_only in prop::collection::vec(any::<bool>(), 0..5),
+            initial_labels in prop::collection::vec(arb_label(), 0..5),
+            update_labels in prop::collection::vec(arb_label(), 0..5),
+        ) {
+            use crate::persona_manager::PersonaManager;
+            use std::sync::Arc;
+
+            // Create temp directories for primary workspace and all additional workspaces
+            let primary_dir = tempfile::tempdir().unwrap();
+
+            // Create initial workspace directories
+            let mut initial_dirs: Vec<tempfile::TempDir> = Vec::new();
+            for _ in 0..initial_count {
+                initial_dirs.push(tempfile::tempdir().unwrap());
+            }
+
+            // Create update workspace directories (distinct from initial ones)
+            let mut update_dirs: Vec<tempfile::TempDir> = Vec::new();
+            for _ in 0..update_count {
+                update_dirs.push(tempfile::tempdir().unwrap());
+            }
+
+            // Set up in-memory database and PersonaManager
+            let db = Arc::new(Database::open_in_memory().unwrap());
+            let pm = PersonaManager::new(db.clone());
+
+            // Insert the agent type
+            db.with_conn(|conn| {
+                insert_agent_type(conn, &agent)
+            }).unwrap();
+
+            // Build initial additional workspaces entries
+            let n = initial_count.min(initial_read_only.len()).min(initial_labels.len()).min(initial_dirs.len());
+            let initial_entries: Vec<CreateAdditionalWorkspaceEntry> = (0..n)
+                .map(|i| CreateAdditionalWorkspaceEntry {
+                    path: initial_dirs[i].path().to_path_buf(),
+                    read_only: initial_read_only[i],
+                    label: initial_labels[i].clone(),
+                })
+                .collect();
+
+            // Create persona with initial additional workspaces (or none)
+            let create_req = CreatePersonaRequest {
+                name: persona_name,
+                agent_type_id: agent.id.clone(),
+                workspace_path: primary_dir.path().to_path_buf(),
+                memory_enabled: None,
+                agent_cli_args: None,
+                mcp_servers: None,
+                additional_workspaces: if n > 0 { Some(initial_entries) } else { None },
+            };
+
+            let persona = pm.create(create_req).unwrap();
+
+            // Insert an active session (status = "running") for this persona
+            db.with_conn(|conn| {
+                conn.execute(
+                    "INSERT INTO sessions (id, persona_id, status, created_at, updated_at) \
+                     VALUES (?1, ?2, 'running', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')",
+                    rusqlite::params![
+                        uuid::Uuid::new_v4().to_string(),
+                        persona.id.0,
+                    ],
+                ).map_err(|e| OrchestratorError::Database(e.to_string()))?;
+                Ok(())
+            }).unwrap();
+
+            // Build update additional workspaces entries (different from initial)
+            let m = update_count.min(update_read_only.len()).min(update_labels.len()).min(update_dirs.len());
+            let update_entries: Vec<CreateAdditionalWorkspaceEntry> = (0..m)
+                .map(|i| CreateAdditionalWorkspaceEntry {
+                    path: update_dirs[i].path().to_path_buf(),
+                    read_only: update_read_only[i],
+                    label: update_labels[i].clone(),
+                })
+                .collect();
+
+            // Update persona with different additional workspaces while session is active
+            let update_req = UpdatePersonaRequest {
+                name: None,
+                agent_type_id: None,
+                workspace_path: None,
+                memory_enabled: None,
+                agent_cli_args: None,
+                mcp_servers: None,
+                additional_workspaces: Some(update_entries),
+            };
+
+            let result = pm.update(&persona.id, update_req).unwrap();
+
+            // Verify the result is RequiresRestart
+            match result {
+                UpdateResult::RequiresRestart { reason, persona: updated } => {
+                    // Verify the reason mentions workspace changes
+                    prop_assert!(
+                        reason.contains("Workspace") || reason.contains("workspace"),
+                        "RequiresRestart reason should mention workspace changes, got: {}",
+                        reason
+                    );
+
+                    // Verify the update was still saved (changes applied to DB immediately)
+                    prop_assert_eq!(
+                        updated.additional_workspaces.len(), m,
+                        "Updated persona should have {} additional workspaces, got {}",
+                        m, updated.additional_workspaces.len()
+                    );
+                }
+                UpdateResult::Applied { .. } => {
+                    prop_assert!(
+                        false,
+                        "Expected RequiresRestart when updating workspaces with active session, got Applied"
+                    );
+                }
+            }
+        }
+    }
+
 }
