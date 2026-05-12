@@ -9,10 +9,11 @@ use std::collections::HashSet;
 use std::time::Duration;
 use tokio::time::timeout;
 
+use crate::db_ops;
 use crate::error::OrchestratorError;
-use crate::sbx::PortMapping;
+use crate::sbx::{PortMapping, SbxRunArgs};
 use crate::server::AppState;
-use crate::types::PublishPortRequest;
+use crate::types::{PersonaId, PublishPortRequest};
 
 /// Enriched sandbox info with a `managed` flag indicating whether the sandbox
 /// is associated with a Beachead session (i.e., its ID exists in the sessions table).
@@ -31,6 +32,12 @@ pub struct SandboxActionResponse {
     pub status: String,
 }
 
+/// Response for sandbox start endpoint.
+#[derive(Debug, Clone, Serialize)]
+pub struct SandboxStartResponse {
+    pub id: String,
+}
+
 /// Query parameters for `GET /api/sandboxes`.
 #[derive(Debug, Deserialize)]
 struct ListSandboxesQuery {
@@ -45,6 +52,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/sandboxes", get(list_sandboxes))
         .route("/api/sandboxes/{id}", delete(remove_sandbox))
         .route("/api/sandboxes/{id}/stop", post(stop_sandbox))
+        .route("/api/sandboxes/{id}/start", post(start_sandbox))
         .route(
             "/api/sandboxes/{id}/ports",
             get(list_ports).post(publish_port).delete(unpublish_port),
@@ -173,6 +181,91 @@ async fn stop_sandbox(
         }
         Err(_) => Err(OrchestratorError::SbxTimeout(format!(
             "sbx stop '{}' timed out after 30 seconds",
+            id
+        ))),
+    }
+}
+
+/// POST /api/sandboxes/{id}/start — start a new sandbox instance.
+///
+/// Looks up the session associated with the given sandbox ID to find the
+/// persona's configured agent and workspace, then calls `sbx run` to create
+/// a new running sandbox instance.
+///
+/// Returns HTTP 200 with `{ id }` containing the new sandbox ID.
+/// Error cases: 503 (sbx unavailable), 404 (not found in sessions), 504 (timeout).
+async fn start_sandbox(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<SandboxStartResponse>, OrchestratorError> {
+    let sbx = state.sbx.as_ref().ok_or_else(|| {
+        OrchestratorError::SbxUnavailable("sbx CLI is not available".to_string())
+    })?;
+
+    // Look up the session associated with this sandbox_id to find the persona
+    let persona_id: PersonaId = state.db.with_conn(|conn| {
+        let result = conn.query_row(
+            "SELECT persona_id FROM sessions WHERE sandbox_id = ?1 ORDER BY created_at DESC LIMIT 1",
+            [&id],
+            |row| row.get::<_, String>(0),
+        );
+        match result {
+            Ok(pid) => Ok(PersonaId(pid)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => {
+                Err(OrchestratorError::NotFound(format!(
+                    "Sandbox '{}' not found in sessions",
+                    id
+                )))
+            }
+            Err(e) => Err(OrchestratorError::Database(format!(
+                "Failed to query sessions: {}",
+                e
+            ))),
+        }
+    })?;
+
+    // Get the persona to find agent_type_id and workspace_path
+    let persona = state.db.with_conn(|conn| db_ops::get_persona(conn, &persona_id))?;
+
+    // Get the agent type to find the sbx_agent identifier
+    let agent_type = state.db.with_conn(|conn| db_ops::get_agent_type(conn, &persona.agent_type_id))?;
+    let agent = agent_type
+        .sbx_agent
+        .or(agent_type.kit_ref)
+        .ok_or_else(|| {
+            OrchestratorError::Internal(format!(
+                "Agent type '{}' has no sbx_agent or kit_ref configured",
+                agent_type.name
+            ))
+        })?;
+
+    // Build run args and execute sbx run with timeout
+    let run_args = SbxRunArgs {
+        agent,
+        kit_paths: vec![],
+        workspace: persona.workspace_path,
+        name: None,
+        template: None,
+        agent_args: persona.agent_cli_args,
+    };
+
+    let result = timeout(SBX_COMMAND_TIMEOUT, sbx.run(&run_args)).await;
+
+    match result {
+        Ok(Ok(new_sandbox_id)) => Ok(Json(SandboxStartResponse { id: new_sandbox_id })),
+        Ok(Err(e)) => {
+            let err_msg = e.to_string();
+            if err_msg.contains("not found") || err_msg.contains("No such") {
+                Err(OrchestratorError::NotFound(format!(
+                    "Sandbox '{}' not found",
+                    id
+                )))
+            } else {
+                Err(e)
+            }
+        }
+        Err(_) => Err(OrchestratorError::SbxTimeout(format!(
+            "sbx run for sandbox '{}' timed out after 30 seconds",
             id
         ))),
     }
