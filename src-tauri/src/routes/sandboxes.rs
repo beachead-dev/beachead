@@ -1,7 +1,7 @@
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
-    routing::{delete, get},
+    routing::{delete, get, post},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
@@ -24,6 +24,13 @@ pub struct SandboxInfoEnriched {
     pub managed: bool,
 }
 
+/// Response for sandbox action endpoints (stop).
+#[derive(Debug, Clone, Serialize)]
+pub struct SandboxActionResponse {
+    pub id: String,
+    pub status: String,
+}
+
 /// Query parameters for `GET /api/sandboxes`.
 #[derive(Debug, Deserialize)]
 struct ListSandboxesQuery {
@@ -37,6 +44,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/sandboxes", get(list_sandboxes))
         .route("/api/sandboxes/{id}", delete(remove_sandbox))
+        .route("/api/sandboxes/{id}/stop", post(stop_sandbox))
         .route(
             "/api/sandboxes/{id}/ports",
             get(list_ports).post(publish_port).delete(unpublish_port),
@@ -95,6 +103,80 @@ async fn list_sandboxes(
 
 /// Timeout duration for sbx CLI commands (30 seconds per requirements).
 const SBX_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// POST /api/sandboxes/{id}/stop — stop a running sandbox.
+///
+/// Calls `sbx stop {id}` with a 30-second timeout.
+/// Returns HTTP 200 with `{ id, status }` on success.
+/// If the sandbox is already stopped, returns 200 with current status (idempotent).
+/// Error cases: 503 (sbx unavailable), 404 (not found), 504 (timeout).
+async fn stop_sandbox(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<SandboxActionResponse>, OrchestratorError> {
+    let sbx = state.sbx.as_ref().ok_or_else(|| {
+        OrchestratorError::SbxUnavailable("sbx CLI is not available".to_string())
+    })?;
+
+    // First, check current status to handle idempotent case
+    let sandboxes = timeout(SBX_COMMAND_TIMEOUT, sbx.ls_json()).await;
+    let sandboxes = match sandboxes {
+        Ok(Ok(list)) => list,
+        Ok(Err(e)) => return Err(e),
+        Err(_) => {
+            return Err(OrchestratorError::SbxTimeout(
+                "sbx ls timed out while checking sandbox status".to_string(),
+            ))
+        }
+    };
+
+    let sandbox = sandboxes
+        .iter()
+        .find(|s| s.id.as_deref() == Some(&id))
+        .ok_or_else(|| OrchestratorError::NotFound(format!("Sandbox '{}' not found", id)))?;
+
+    // If already stopped, return current status without calling stop
+    if sandbox.status.as_deref() == Some("stopped") {
+        return Ok(Json(SandboxActionResponse {
+            id: id.clone(),
+            status: "stopped".to_string(),
+        }));
+    }
+
+    // Execute sbx stop with timeout
+    let result = timeout(SBX_COMMAND_TIMEOUT, sbx.stop(&id)).await;
+
+    match result {
+        Ok(Ok(())) => {
+            // After stopping, query status to confirm
+            let status = match timeout(SBX_COMMAND_TIMEOUT, sbx.ls_json()).await {
+                Ok(Ok(list)) => list
+                    .iter()
+                    .find(|s| s.id.as_deref() == Some(&id))
+                    .and_then(|s| s.status.clone())
+                    .unwrap_or_else(|| "stopped".to_string()),
+                _ => "stopped".to_string(),
+            };
+
+            Ok(Json(SandboxActionResponse { id, status }))
+        }
+        Ok(Err(e)) => {
+            let err_msg = e.to_string();
+            if err_msg.contains("not found") || err_msg.contains("No such") {
+                Err(OrchestratorError::NotFound(format!(
+                    "Sandbox '{}' not found",
+                    id
+                )))
+            } else {
+                Err(e)
+            }
+        }
+        Err(_) => Err(OrchestratorError::SbxTimeout(format!(
+            "sbx stop '{}' timed out after 30 seconds",
+            id
+        ))),
+    }
+}
 
 /// DELETE /api/sandboxes/{id} — remove a sandbox permanently.
 ///
