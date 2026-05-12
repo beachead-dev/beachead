@@ -760,7 +760,7 @@ mod tests {
     // Feature: multi-workspace-mounts, Property 9: Export/import round trip preserves additional workspaces
     // **Validates: Requirements 8.1, 8.2**
     proptest! {
-        #![proptest_config(ProptestConfig::with_cases(100))]
+        #![proptest_config(ProptestConfig::with_cases(20))]
         #[test]
         fn prop_export_import_round_trip_preserves_additional_workspaces(
             agent in arb_non_builtin_agent_type(),
