@@ -734,6 +734,139 @@ mod tests {
         }
     }
 
+    // Feature: multi-workspace-mounts, Property 9: Export/import round trip preserves additional workspaces
+    // **Validates: Requirements 8.1, 8.2**
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(100))]
+        #[test]
+        fn prop_export_import_round_trip_preserves_additional_workspaces(
+            agent in arb_agent_type(),
+            persona_name in arb_name(),
+            workspace_count in 0usize..10,
+            read_only_flags in prop::collection::vec(any::<bool>(), 0..10),
+            labels in prop::collection::vec(arb_label(), 0..10),
+        ) {
+            use crate::export_import_manager::*;
+            use std::sync::Arc;
+            use std::collections::HashMap;
+
+            // Create temp directories for primary workspace and additional workspaces
+            let primary_dir = tempfile::tempdir().unwrap();
+            let mut additional_dirs: Vec<tempfile::TempDir> = Vec::new();
+            for _ in 0..workspace_count {
+                additional_dirs.push(tempfile::tempdir().unwrap());
+            }
+
+            let n = workspace_count.min(read_only_flags.len()).min(labels.len()).min(additional_dirs.len());
+
+            // Set up source database
+            let source_db = Arc::new(Database::open_in_memory().unwrap());
+
+            // Insert agent type
+            source_db.with_conn(|conn| {
+                insert_agent_type(conn, &agent)
+            }).unwrap();
+
+            // Insert persona
+            let now = Utc::now();
+            let persona_id = PersonaId::new();
+            let persona = Persona {
+                id: persona_id.clone(),
+                name: persona_name.clone(),
+                agent_type_id: agent.id.clone(),
+                workspace_path: primary_dir.path().to_path_buf(),
+                memory_enabled: false,
+                agent_cli_args: vec![],
+                mcp_servers: vec![],
+                additional_workspaces: vec![],
+                created_at: now,
+                updated_at: now,
+            };
+            source_db.with_conn(|conn| {
+                insert_persona(conn, &persona)
+            }).unwrap();
+
+            // Insert N additional workspaces
+            let mut original_workspaces: Vec<(PathBuf, bool, i32, Option<String>)> = Vec::new();
+            source_db.with_conn(|conn| {
+                for i in 0..n {
+                    let canonical_path = std::fs::canonicalize(additional_dirs[i].path()).unwrap();
+                    let ws = AdditionalWorkspace {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        persona_id: persona_id.clone(),
+                        path: canonical_path.clone(),
+                        read_only: read_only_flags[i],
+                        position: i as i32,
+                        label: labels[i].clone(),
+                        created_at: now,
+                    };
+                    insert_additional_workspace(conn, &ws)?;
+                    original_workspaces.push((canonical_path, read_only_flags[i], i as i32, labels[i].clone()));
+                }
+                Ok(())
+            }).unwrap();
+
+            // Export from source database
+            let export_manager = ExportImportManager::new(source_db.clone());
+            let password = "test-export-password";
+            let exported_data = export_manager.export(password).unwrap();
+
+            // Import into a fresh target database (no conflicts)
+            let target_db = Arc::new(Database::open_in_memory().unwrap());
+            let import_manager = ExportImportManager::new(target_db.clone());
+
+            // Empty resolutions since there should be no conflicts on a fresh DB
+            let resolutions = ConflictResolutions {
+                persona_resolutions: HashMap::new(),
+            };
+
+            let summary = import_manager.import(&exported_data, password, &resolutions).unwrap();
+            prop_assert_eq!(summary.personas_imported, 1, "Should import exactly 1 persona");
+            prop_assert_eq!(summary.personas_skipped, 0, "Should skip 0 personas");
+
+            // Retrieve the imported persona's additional workspaces from the target DB
+            let imported_personas = target_db.with_conn(|conn| {
+                list_personas(conn)
+            }).unwrap();
+
+            prop_assert_eq!(imported_personas.len(), 1, "Target DB should have exactly 1 persona");
+            let imported_persona = &imported_personas[0];
+
+            // Verify the imported persona has the same number of additional workspaces
+            prop_assert_eq!(
+                imported_persona.additional_workspaces.len(), n,
+                "Imported persona should have {} additional workspaces, got {}",
+                n, imported_persona.additional_workspaces.len()
+            );
+
+            // Verify each workspace matches the original (path, read_only, position, label)
+            for (i, imported_ws) in imported_persona.additional_workspaces.iter().enumerate() {
+                let (ref orig_path, orig_read_only, orig_position, ref orig_label) = original_workspaces[i];
+
+                prop_assert_eq!(
+                    &imported_ws.path, orig_path,
+                    "Workspace {} path mismatch: expected {:?}, got {:?}",
+                    i, orig_path, imported_ws.path
+                );
+                prop_assert_eq!(
+                    imported_ws.read_only, orig_read_only,
+                    "Workspace {} read_only mismatch: expected {}, got {}",
+                    i, orig_read_only, imported_ws.read_only
+                );
+                prop_assert_eq!(
+                    imported_ws.position, orig_position,
+                    "Workspace {} position mismatch: expected {}, got {}",
+                    i, orig_position, imported_ws.position
+                );
+                prop_assert_eq!(
+                    &imported_ws.label, orig_label,
+                    "Workspace {} label mismatch: expected {:?}, got {:?}",
+                    i, orig_label, imported_ws.label
+                );
+            }
+        }
+    }
+
     // Feature: multi-workspace-mounts, Property 12: Workspace changes with active sessions return RequiresRestart
     // **Validates: Requirements 12.1**
     proptest! {
@@ -859,6 +992,116 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    // Feature: multi-workspace-mounts, Property 6: sbx create argument construction
+    // **Validates: Requirements 4.2, 4.3, 4.4, 4.5, 4.6, 13.2**
+
+    /// Generate a random additional workspace arg with a path and read_only flag
+    fn arb_additional_workspace_arg() -> impl Strategy<Value = AdditionalWorkspaceArg> {
+        (arb_workspace_path(), any::<bool>()).prop_map(|(path, read_only)| {
+            AdditionalWorkspaceArg { path, read_only }
+        })
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(100))]
+        #[test]
+        fn prop_sbx_create_argument_construction(
+            agent_name in arb_name(),
+            primary_workspace in arb_workspace_path(),
+            additional_workspaces in prop::collection::vec(arb_additional_workspace_arg(), 0..10),
+            kit_count in 0usize..3,
+            kit_paths in prop::collection::vec(arb_workspace_path(), 0..3),
+            use_name in any::<bool>(),
+            sandbox_name in arb_name(),
+            use_template in any::<bool>(),
+            template_name in arb_name(),
+        ) {
+            use crate::sbx::{build_create_args, SbxCreateArgs};
+
+            let kit_paths_clamped: Vec<PathBuf> = kit_paths.into_iter().take(kit_count).collect();
+
+            let args = SbxCreateArgs {
+                agent: agent_name.clone(),
+                kit_paths: kit_paths_clamped.clone(),
+                workspace: primary_workspace.clone(),
+                name: if use_name { Some(sandbox_name.clone()) } else { None },
+                template: if use_template { Some(template_name.clone()) } else { None },
+                additional_workspaces: additional_workspaces.clone(),
+            };
+
+            let cmd_args = build_create_args(&args);
+
+            // Find the index of the primary workspace in the args vector.
+            // It comes after agent, -q, optional --kit pairs, optional --name pair, optional -t pair.
+            let primary_ws_str = primary_workspace.to_string_lossy().to_string();
+
+            // The primary workspace must appear in the args
+            let primary_idx = cmd_args.iter().position(|a| *a == primary_ws_str);
+            prop_assert!(
+                primary_idx.is_some(),
+                "Primary workspace path '{}' must appear in the args vector. Args: {:?}",
+                primary_ws_str, cmd_args
+            );
+            let primary_idx = primary_idx.unwrap();
+
+            // Everything after the primary workspace index should be the additional workspaces
+            let after_primary = &cmd_args[primary_idx + 1..];
+            prop_assert_eq!(
+                after_primary.len(),
+                additional_workspaces.len(),
+                "Number of args after primary workspace should equal number of additional workspaces. \
+                 Expected {}, got {}. After primary: {:?}",
+                additional_workspaces.len(), after_primary.len(), after_primary
+            );
+
+            // Verify each additional workspace in position order
+            for (i, ws) in additional_workspaces.iter().enumerate() {
+                let expected_path_str = ws.path.to_string_lossy().to_string();
+                let expected_arg = if ws.read_only {
+                    format!("{}:ro", expected_path_str)
+                } else {
+                    expected_path_str.clone()
+                };
+
+                prop_assert_eq!(
+                    &after_primary[i], &expected_arg,
+                    "Additional workspace at position {} should be '{}', got '{}'. read_only={}",
+                    i, expected_arg, after_primary[i], ws.read_only
+                );
+
+                // Verify each workspace path is a separate element (not concatenated with others)
+                // This is inherently true since each is a separate element in the Vec,
+                // but let's verify no element contains multiple paths separated by spaces
+                prop_assert!(
+                    !after_primary[i].contains(' '),
+                    "Workspace arg at position {} should not contain spaces (no concatenation): '{}'",
+                    i, after_primary[i]
+                );
+            }
+
+            // When N=0, only the primary workspace appears (no additional args after it)
+            if additional_workspaces.is_empty() {
+                prop_assert_eq!(
+                    after_primary.len(), 0,
+                    "When no additional workspaces, nothing should follow the primary workspace. Got: {:?}",
+                    after_primary
+                );
+            }
+
+            // Verify the primary workspace is the first positional argument
+            // (i.e., it's not preceded by another positional workspace path)
+            // All elements before primary_idx should be flags/options or their values
+            prop_assert_eq!(
+                &cmd_args[0], &agent_name,
+                "First arg should be the agent name"
+            );
+            prop_assert_eq!(
+                &cmd_args[1], "-q",
+                "Second arg should be -q (quiet mode)"
+            );
         }
     }
 

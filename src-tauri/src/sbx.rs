@@ -154,6 +154,47 @@ pub struct SbxCli {
     sbx_path: PathBuf,
 }
 
+/// Build the argument vector for `sbx create` from the given args.
+/// This is extracted as a standalone function for testability.
+pub fn build_create_args(args: &SbxCreateArgs) -> Vec<String> {
+    let mut cmd_args: Vec<String> = Vec::new();
+
+    cmd_args.push(args.agent.clone());
+
+    // Quiet mode to get just the sandbox name on stdout
+    cmd_args.push("-q".to_string());
+
+    for kit_path in &args.kit_paths {
+        cmd_args.push("--kit".to_string());
+        cmd_args.push(kit_path.to_string_lossy().to_string());
+    }
+
+    if let Some(name) = &args.name {
+        cmd_args.push("--name".to_string());
+        cmd_args.push(name.clone());
+    }
+
+    if let Some(template) = &args.template {
+        cmd_args.push("-t".to_string());
+        cmd_args.push(template.clone());
+    }
+
+    // Workspace path as positional argument
+    cmd_args.push(args.workspace.to_string_lossy().to_string());
+
+    // Additional workspace paths as separate positional arguments
+    for ws in &args.additional_workspaces {
+        let path_str = ws.path.to_string_lossy().to_string();
+        if ws.read_only {
+            cmd_args.push(format!("{}:ro", path_str));
+        } else {
+            cmd_args.push(path_str);
+        }
+    }
+
+    cmd_args
+}
+
 impl SbxCli {
     /// Create a new SbxCli instance by resolving the `sbx` binary from PATH.
     pub fn new() -> Result<Self, OrchestratorError> {
@@ -394,40 +435,7 @@ impl SbxCli {
 
     /// Create a sandbox without starting it: `sbx create <agent> --kit <path> -v <workspace>`
     pub async fn create(&self, args: &SbxCreateArgs) -> Result<String, OrchestratorError> {
-        let mut cmd_args: Vec<String> = Vec::new();
-
-        cmd_args.push(args.agent.clone());
-
-        // Quiet mode to get just the sandbox name on stdout
-        cmd_args.push("-q".to_string());
-
-        for kit_path in &args.kit_paths {
-            cmd_args.push("--kit".to_string());
-            cmd_args.push(kit_path.to_string_lossy().to_string());
-        }
-
-        if let Some(name) = &args.name {
-            cmd_args.push("--name".to_string());
-            cmd_args.push(name.clone());
-        }
-
-        if let Some(template) = &args.template {
-            cmd_args.push("-t".to_string());
-            cmd_args.push(template.clone());
-        }
-
-        // Workspace path as positional argument
-        cmd_args.push(args.workspace.to_string_lossy().to_string());
-
-        // Additional workspace paths as separate positional arguments
-        for ws in &args.additional_workspaces {
-            let path_str = ws.path.to_string_lossy().to_string();
-            if ws.read_only {
-                cmd_args.push(format!("{}:ro", path_str));
-            } else {
-                cmd_args.push(path_str);
-            }
-        }
+        let cmd_args = build_create_args(args);
 
         let output = self.exec_command_owned("create", &cmd_args).await?;
         if !output.success {
