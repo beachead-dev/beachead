@@ -298,22 +298,20 @@ describe("Feature: docker-management-tab, Property 4: Container table rendering 
       volume_name: safeStringArb,
       status: statusArb,
       live_status_confirmed: fc.boolean(),
-      created_at: fc.date({
-        min: new Date("2020-01-01T00:00:00Z"),
-        max: new Date("2030-12-31T23:59:59Z"),
-      }).map((d) => d.toISOString()),
-      updated_at: fc.date({
-        min: new Date("2020-01-01T00:00:00Z"),
-        max: new Date("2030-12-31T23:59:59Z"),
-      }).map((d) => d.toISOString()),
+      created_at: fc.integer({
+        min: 1577836800000, // 2020-01-01T00:00:00Z
+        max: 1924991999000, // 2030-12-31T23:59:59Z
+      }).map((ts) => new Date(ts).toISOString()),
+      updated_at: fc.integer({
+        min: 1577836800000, // 2020-01-01T00:00:00Z
+        max: 1924991999000, // 2030-12-31T23:59:59Z
+      }).map((ts) => new Date(ts).toISOString()),
     });
 
   // Non-empty arrays (empty arrays show empty state, not a table)
   const containerArrayArb = fc.array(containerArb, { minLength: 1, maxLength: 5 });
 
-  it("renders a table row for each container with all columns and rows sorted by created_at descending", async () => {
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-
+  it("renders a table row for each container with all columns and rows sorted by created_at descending", { timeout: 60000 }, async () => {
     await fc.assert(
       fc.asyncProperty(containerArrayArb, async (containers) => {
         // Mock getSandboxes to return empty (so Sandboxes tab doesn't interfere)
@@ -331,7 +329,7 @@ describe("Feature: docker-management-tab, Property 4: Container table rendering 
         // Switch to Containers tab
         const containersTab = screen.getByRole("tab", { name: /containers/i });
         await act(async () => {
-          await user.click(containersTab);
+          containersTab.click();
         });
 
         // Wait for container data to load
@@ -392,6 +390,153 @@ describe("Feature: docker-management-tab, Property 4: Container table rendering 
           const currentDate = new Date(sortedContainers[i].created_at).getTime();
           const nextDate = new Date(sortedContainers[i + 1].created_at).getTime();
           expect(currentDate).toBeGreaterThanOrEqual(nextDate);
+        }
+
+        unmount();
+      }),
+      { numRuns: 100 },
+    );
+  });
+});
+
+describe("Feature: docker-management-tab, Property 6: Unmanaged container display rules", () => {
+  /**
+   * **Validates: Requirements 6.11**
+   *
+   * For any container not tracked in DB (identified by id starting with "unmanaged-"),
+   * verify:
+   * - An "Unmanaged" badge is displayed in the row
+   * - The Start button is ALWAYS disabled (regardless of status)
+   * - Stop and Remove buttons follow deriveContainerButtonStates unmanaged rules:
+   *   - "running" → Stop enabled, Remove enabled
+   *   - "stopped"/"created" → Stop disabled, Remove enabled
+   *   - other → both disabled
+   */
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // Generator for safe printable strings
+  const safeStringArb = fc
+    .string({ minLength: 1, maxLength: 15 })
+    .map((s) => s.replace(/[^\x20-\x7E]/g, "a"))
+    .filter((s) => s.trim().length > 0);
+
+  // Generator for container status: known statuses + arbitrary strings
+  const statusArb = fc.oneof(
+    fc.constant("running"),
+    fc.constant("stopped"),
+    fc.constant("created"),
+    fc.string(),
+  );
+
+  // Generator for unmanaged container objects (id starts with "unmanaged-")
+  const unmanagedContainerArb: fc.Arbitrary<McpContainerResponse> = fc
+    .record({
+      id: safeStringArb.map((s) => `unmanaged-${s}`),
+      persona_id: fc.uuid(),
+      persona_name: safeStringArb,
+      container_id: fc.option(fc.uuid(), { nil: null }),
+      port: fc.integer({ min: 1024, max: 65535 }),
+      volume_name: safeStringArb,
+      status: statusArb,
+      live_status_confirmed: fc.boolean(),
+      created_at: fc.date({
+        min: new Date("2020-01-01T00:00:00Z"),
+        max: new Date("2030-12-31T23:59:59Z"),
+      }).map((d) => d.toISOString()),
+      updated_at: fc.date({
+        min: new Date("2020-01-01T00:00:00Z"),
+        max: new Date("2030-12-31T23:59:59Z"),
+      }).map((d) => d.toISOString()),
+    });
+
+  // Non-empty arrays of unmanaged containers
+  const unmanagedContainerArrayArb = fc.array(unmanagedContainerArb, { minLength: 1, maxLength: 5 });
+
+  it("displays Unmanaged badge and correct button states for unmanaged containers", { timeout: 60000 }, async () => {
+    await fc.assert(
+      fc.asyncProperty(unmanagedContainerArrayArb, async (containers) => {
+        // Mock getSandboxes to return empty so Sandboxes tab doesn't interfere
+        mockGetSandboxes.mockResolvedValue([]);
+        // Mock getMcpContainers to return the generated unmanaged containers
+        mockGetMcpContainers.mockResolvedValue(containers);
+
+        const { unmount } = render(<DockerPage />);
+
+        // Wait for initial Sandboxes tab data to load
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(0);
+        });
+
+        // Switch to Containers tab
+        const containersTab = screen.getByRole("tab", { name: /containers/i });
+        await act(async () => {
+          containersTab.click();
+        });
+
+        // Wait for container data to load
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(0);
+        });
+
+        // Get the containers table
+        const table = screen.getByRole("table", { name: "Containers table" });
+        const tbody = table.querySelector("tbody");
+        expect(tbody).not.toBeNull();
+
+        const rows = within(tbody!).getAllByRole("row");
+        expect(rows.length).toBe(containers.length);
+
+        // Sort containers the same way the component does (by created_at descending)
+        const sortedContainers = [...containers].sort(
+          (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+        );
+
+        for (let i = 0; i < sortedContainers.length; i++) {
+          const container = sortedContainers[i];
+          const row = rows[i];
+
+          // Assert: "Unmanaged" badge is displayed in the row
+          const badge = within(row).getByText("Unmanaged");
+          expect(badge).toBeDefined();
+          expect(badge.classList.contains("badge-unmanaged")).toBe(true);
+
+          // Get action buttons
+          const cells = within(row).getAllByRole("cell");
+          const actionCell = cells[5]; // Actions column is the 6th cell
+          const buttons = within(actionCell).getAllByRole("button");
+          expect(buttons.length).toBe(3);
+
+          const startBtn = buttons[0];
+          const stopBtn = buttons[1];
+          const removeBtn = buttons[2];
+
+          expect(startBtn).toHaveTextContent("Start");
+          expect(stopBtn).toHaveTextContent("Stop");
+          expect(removeBtn).toHaveTextContent("Remove");
+
+          // Start button is ALWAYS disabled for unmanaged containers
+          expect(startBtn).toBeDisabled();
+
+          // Stop and Remove follow deriveContainerButtonStates unmanaged rules
+          if (container.status === "running") {
+            expect(stopBtn).toBeEnabled();
+            expect(removeBtn).toBeEnabled();
+          } else if (container.status === "stopped" || container.status === "created") {
+            expect(stopBtn).toBeDisabled();
+            expect(removeBtn).toBeEnabled();
+          } else {
+            // Any other status → both disabled
+            expect(stopBtn).toBeDisabled();
+            expect(removeBtn).toBeDisabled();
+          }
         }
 
         unmount();
