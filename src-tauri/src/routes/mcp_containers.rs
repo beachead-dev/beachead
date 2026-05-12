@@ -1,9 +1,12 @@
 use axum::{
     extract::{Path, Query, State},
-    routing::{get, post},
+    http::StatusCode,
+    routing::{delete, get, post},
     Json, Router,
 };
-use bollard::container::{ListContainersOptions, StartContainerOptions, StopContainerOptions};
+use bollard::container::{
+    ListContainersOptions, RemoveContainerOptions, StartContainerOptions, StopContainerOptions,
+};
 use bollard::Docker;
 use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
@@ -19,6 +22,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/mcp-containers", get(list_mcp_containers))
         .route("/api/mcp-containers/{id}/start", post(start_container))
         .route("/api/mcp-containers/{id}/stop", post(stop_container))
+        .route("/api/mcp-containers/{id}", delete(remove_container))
 }
 
 // --- Query parameters ---
@@ -29,6 +33,14 @@ struct ListContainersQuery {
     /// Defaults to false (only show DB-tracked containers).
     #[serde(default)]
     show_all: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct DeleteContainerQuery {
+    /// When true, also delete the Docker volume `beachead-memory-{persona_id}`.
+    /// Defaults to false.
+    #[serde(default)]
+    delete_volume: bool,
 }
 
 // --- Response types ---
@@ -516,4 +528,108 @@ async fn stop_container(
         created_at: db_row.created_at,
         updated_at: now,
     }))
+}
+
+/// DELETE /api/mcp-containers/{id} — remove an MCP container.
+///
+/// Looks up the container by its database primary key `id`.
+/// - If not found in DB, returns 404.
+/// - Stops the Docker container (best-effort, errors ignored).
+/// - Removes the Docker container with force (best-effort, errors ignored).
+/// - If `delete_volume=true`, deletes the Docker volume `beachead-memory-{persona_id}`.
+/// - Releases the allocated port and deletes the DB record.
+/// - Returns HTTP 204 on success.
+///
+/// Per requirement 8.9: port release and DB record deletion MUST happen even if
+/// Docker operations fail (best-effort cleanup).
+async fn remove_container(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(params): Query<DeleteContainerQuery>,
+) -> Result<StatusCode, OrchestratorError> {
+    // 1. Look up the container in the DB by its primary key
+    let db_row: DbContainerRow = state.db.with_conn(|conn| {
+        let mut stmt = conn
+            .prepare(
+                "SELECT mc.id, mc.persona_id, COALESCE(p.name, '') as persona_name,
+                        mc.container_id, mc.port, mc.volume_name, mc.status,
+                        mc.created_at, mc.updated_at
+                 FROM mcp_containers mc
+                 LEFT JOIN personas p ON mc.persona_id = p.id
+                 WHERE mc.id = ?1",
+            )
+            .map_err(|e| OrchestratorError::Database(e.to_string()))?;
+
+        stmt.query_row(rusqlite::params![id], |row| {
+            Ok(DbContainerRow {
+                id: row.get(0)?,
+                persona_id: row.get(1)?,
+                persona_name: row.get(2)?,
+                container_id: row.get(3)?,
+                port: row.get::<_, i64>(4)? as u16,
+                volume_name: row.get(5)?,
+                status: row.get(6)?,
+                created_at: row.get(7)?,
+                updated_at: row.get(8)?,
+            })
+        })
+        .optional()
+        .map_err(|e| OrchestratorError::Database(e.to_string()))
+    })?
+    .ok_or_else(|| OrchestratorError::NotFound(format!("Container '{}' not found", id)))?;
+
+    // 2. Connect to Docker (best-effort — if unavailable, skip Docker operations)
+    let docker = Docker::connect_with_local_defaults().ok();
+
+    // 3. Docker operations (best-effort — errors are logged but do not prevent cleanup)
+    if let Some(ref docker) = docker {
+        if let Some(ref docker_id) = db_row.container_id {
+            if !docker_id.is_empty() {
+                // 3a. Stop container (best-effort, ignore errors)
+                let _ = docker
+                    .stop_container(docker_id, Some(StopContainerOptions { t: 10 }))
+                    .await;
+
+                // 3b. Remove container with force (best-effort, ignore errors)
+                let _ = docker
+                    .remove_container(
+                        docker_id,
+                        Some(RemoveContainerOptions {
+                            force: true,
+                            ..Default::default()
+                        }),
+                    )
+                    .await;
+            }
+        }
+
+        // 3c. If delete_volume=true, delete the Docker volume
+        if params.delete_volume {
+            let volume_name = format!("beachead-memory-{}", db_row.persona_id);
+            let _ = docker.remove_volume(&volume_name, None).await;
+        }
+    }
+
+    // 4. Release the allocated port (MUST happen even if Docker ops failed)
+    state.db.with_conn(|conn| {
+        conn.execute(
+            "DELETE FROM port_allocations WHERE port = ?1",
+            rusqlite::params![db_row.port as i64],
+        )
+        .map_err(|e| OrchestratorError::Database(e.to_string()))?;
+        Ok(())
+    })?;
+
+    // 5. Delete the DB record (MUST happen even if Docker ops failed)
+    state.db.with_conn(|conn| {
+        conn.execute(
+            "DELETE FROM mcp_containers WHERE id = ?1",
+            rusqlite::params![db_row.id],
+        )
+        .map_err(|e| OrchestratorError::Database(e.to_string()))?;
+        Ok(())
+    })?;
+
+    // 6. Return HTTP 204 No Content
+    Ok(StatusCode::NO_CONTENT)
 }
