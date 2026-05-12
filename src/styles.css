@@ -1915,6 +1915,13 @@ body {
   font-weight: 600;
 }
 
+.field-error {
+  display: block;
+  color: #c0392b;
+  font-size: 0.75rem;
+  margin-top: 0.25rem;
+}
+
 /* Dark mode overrides for additional workspaces */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .workspace-entry {
@@ -1941,6 +1948,10 @@ body {
     background: rgba(230, 81, 0, 0.2);
     color: #ffab91;
   }
+
+  :root:not([data-theme="light"]) .field-error {
+    color: #f5c6cb;
+  }
 }
 
 :root[data-theme="dark"] .workspace-entry {
@@ -1956,6 +1967,10 @@ body {
 
 :root[data-theme="dark"] .workspace-readonly-label {
   color: #aaa;
+}
+
+:root[data-theme="dark"] .field-error {
+  color: #f5c6cb;
 }
 
 :root[data-theme="dark"] .badge-primary {

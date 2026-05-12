@@ -90,6 +90,7 @@ export function PersonasPage() {
   const [formCliArgs, setFormCliArgs] = useState("");
   const [formMcpServers, setFormMcpServers] = useState<McpEntry[]>([]);
   const [formAdditionalWorkspaces, setFormAdditionalWorkspaces] = useState<AdditionalWorkspaceEntry[]>([]);
+  const [workspaceErrors, setWorkspaceErrors] = useState<Map<number, string>>(new Map());
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -126,9 +127,63 @@ export function PersonasPage() {
     setFormCliArgs("");
     setFormMcpServers([]);
     setFormAdditionalWorkspaces([]);
+    setWorkspaceErrors(new Map());
     setFormError(null);
     setEditingPersona(null);
   };
+
+  /** Normalize a path for duplicate comparison: trim whitespace and trailing slashes. */
+  const normalizePath = (p: string): string => {
+    const trimmed = p.trim();
+    // Remove trailing slashes but keep root "/" intact
+    if (trimmed.length > 1 && trimmed.endsWith("/")) {
+      return trimmed.replace(/\/+$/, "");
+    }
+    return trimmed;
+  };
+
+  /**
+   * Validate additional workspaces for duplicates.
+   * Returns a Map of index → error message for entries with issues.
+   */
+  const validateWorkspaces = useCallback(
+    (workspaces: AdditionalWorkspaceEntry[], primaryPath: string): Map<number, string> => {
+      const errors = new Map<number, string>();
+      const normalizedPrimary = normalizePath(primaryPath);
+
+      for (let i = 0; i < workspaces.length; i++) {
+        const entry = workspaces[i]!;
+        const normalizedPath = normalizePath(entry.path);
+
+        // Skip empty paths for duplicate checking (they'll be caught on submit)
+        if (!normalizedPath) continue;
+
+        // Check against primary workspace
+        if (normalizedPrimary && normalizedPath === normalizedPrimary) {
+          errors.set(i, "Path matches the primary workspace");
+          continue;
+        }
+
+        // Check against other additional workspaces (flag the later duplicate)
+        for (let j = 0; j < i; j++) {
+          const other = workspaces[j]!;
+          if (normalizePath(other.path) === normalizedPath) {
+            errors.set(i, "Duplicate workspace path");
+            break;
+          }
+        }
+      }
+
+      return errors;
+    },
+    []
+  );
+
+  // Re-validate whenever workspaces or primary path change
+  useEffect(() => {
+    const errors = validateWorkspaces(formAdditionalWorkspaces, formWorkspace);
+    setWorkspaceErrors(errors);
+  }, [formAdditionalWorkspaces, formWorkspace, validateWorkspaces]);
 
   const openCreateForm = () => {
     resetForm();
@@ -191,6 +246,18 @@ export function PersonasPage() {
       }
     }
 
+    // Validate additional workspaces
+    const hasEmptyPaths = formAdditionalWorkspaces.some((ws) => !ws.path.trim());
+    if (hasEmptyPaths) {
+      setFormError("All additional workspace entries must have a path");
+      return;
+    }
+
+    if (workspaceErrors.size > 0) {
+      setFormError("Fix duplicate workspace path errors before saving");
+      return;
+    }
+
     setSubmitting(true);
     try {
       const mcpServers = formMcpServers.map((s) => ({
@@ -208,7 +275,6 @@ export function PersonasPage() {
         agent_cli_args: formCliArgs.trim() ? formCliArgs.trim().split(/\s+/) : [],
         mcp_servers: mcpServers.length > 0 ? mcpServers : undefined,
         additional_workspaces: formAdditionalWorkspaces
-          .filter((ws) => ws.path.trim() !== "")
           .map((ws) => ({
             path: ws.path.trim(),
             read_only: ws.readOnly,
@@ -475,6 +541,8 @@ export function PersonasPage() {
                         value={entry.path}
                         onChange={(e) => updateWorkspaceEntry(i, "path", e.target.value)}
                         aria-label={`Additional workspace ${i + 1} path`}
+                        aria-invalid={workspaceErrors.has(i) ? "true" : undefined}
+                        aria-describedby={workspaceErrors.has(i) ? `workspace-error-${i}` : undefined}
                       />
                       <button
                         type="button"
@@ -490,6 +558,11 @@ export function PersonasPage() {
                         Browse
                       </button>
                     </div>
+                    {workspaceErrors.has(i) && (
+                      <span id={`workspace-error-${i}`} className="field-error" role="alert">
+                        {workspaceErrors.get(i)}
+                      </span>
+                    )}
                   </div>
                   <div className="workspace-entry-label">
                     <input
