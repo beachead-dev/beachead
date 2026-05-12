@@ -91,14 +91,21 @@ async fn list_sandboxes(
     let enriched: Vec<SandboxInfoEnriched> = sandboxes
         .into_iter()
         .map(|s| {
+            // sbx ls --json uses `name` as the sandbox identifier.
+            // The sessions table stores the sandbox name as `sandbox_id`.
+            // Check both `id` and `name` fields against managed_ids.
             let managed = s
                 .id
                 .as_ref()
                 .map(|id| managed_ids.contains(id))
-                .unwrap_or(false);
+                .unwrap_or(false)
+                || s.name
+                    .as_ref()
+                    .map(|name| managed_ids.contains(name))
+                    .unwrap_or(false);
             SandboxInfoEnriched {
-                name: s.name,
-                id: s.id,
+                name: s.name.clone(),
+                id: s.id.or(s.name),
                 status: s.status,
                 managed,
             }

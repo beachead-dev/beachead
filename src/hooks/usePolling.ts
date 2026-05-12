@@ -32,7 +32,14 @@ export function usePolling<T>(
   // Keep fetchFn ref current without triggering effect re-runs
   useEffect(() => {
     fetchFnRef.current = fetchFn;
-  }, [fetchFn]);
+    // When fetchFn changes while enabled, trigger an immediate re-fetch
+    // so that parameter changes (like showAll toggle) take effect immediately
+    if (enabled && hasFetchedRef.current) {
+      clearPollingInterval();
+      doFetch();
+      intervalRef.current = setInterval(doFetch, intervalMs);
+    }
+  }, [fetchFn]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const clearPollingInterval = useCallback(() => {
     if (intervalRef.current !== null) {
