@@ -419,6 +419,16 @@ impl SbxCli {
         // Workspace path as positional argument
         cmd_args.push(args.workspace.to_string_lossy().to_string());
 
+        // Additional workspace paths as separate positional arguments
+        for ws in &args.additional_workspaces {
+            let path_str = ws.path.to_string_lossy().to_string();
+            if ws.read_only {
+                cmd_args.push(format!("{}:ro", path_str));
+            } else {
+                cmd_args.push(path_str);
+            }
+        }
+
         let output = self.exec_command_owned("create", &cmd_args).await?;
         if !output.success {
             return Err(OrchestratorError::SbxError(format!(
