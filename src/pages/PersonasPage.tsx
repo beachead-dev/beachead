@@ -420,8 +420,19 @@ export function PersonasPage() {
                 <dl className="detail-list">
                   <dt>Agent Type</dt>
                   <dd>{getAgentName(persona.agent_type_id)}</dd>
-                  <dt>Workspace</dt>
-                  <dd><code>{persona.workspace_path}</code></dd>
+                  <dt>Workspaces</dt>
+                  <dd>
+                    <div className="workspace-list-summary">
+                      <div><code>{persona.workspace_path}</code> <span className="badge badge-primary">Primary</span></div>
+                      {persona.additional_workspaces.map((ws) => (
+                        <div key={ws.id}>
+                          <code>{ws.path}</code>
+                          {ws.label && <span className="workspace-label-tag">{ws.label}</span>}
+                          {ws.read_only && <span className="badge badge-readonly">RO</span>}
+                        </div>
+                      ))}
+                    </div>
+                  </dd>
                   <dt>Memory</dt>
                   <dd>
                     {persona.memory_enabled ? "Enabled" : "Disabled"}

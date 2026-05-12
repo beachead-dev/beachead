@@ -1835,6 +1835,39 @@ body {
   color: #f6f6f6;
 }
 
+/* Workspace list in persona cards */
+.workspace-list-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.workspace-list-summary code {
+  font-size: 0.85em;
+}
+
+.workspace-label-tag {
+  display: inline-block;
+  margin-left: 0.4rem;
+  padding: 0.1rem 0.4rem;
+  font-size: 0.75em;
+  border-radius: 3px;
+  background: #e8e8e8;
+  color: #555;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .workspace-label-tag {
+    background: #2a2a4a;
+    color: #ccc;
+  }
+}
+
+:root[data-theme="dark"] .workspace-label-tag {
+  background: #2a2a4a;
+  color: #ccc;
+}
+
 /* Additional Workspaces */
 .workspace-entry {
   display: flex;
