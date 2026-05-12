@@ -29,6 +29,11 @@ mod export_import_property_tests;
 mod token_property_tests;
 #[cfg(test)]
 mod additional_workspace_property_tests;
+#[cfg(test)]
+#[path = "routes/mcp_containers_test.rs"]
+mod mcp_containers_test;
+#[cfg(test)]
+mod sandboxes_test;
 mod server;
 pub mod session_manager;
 pub mod system_manager;

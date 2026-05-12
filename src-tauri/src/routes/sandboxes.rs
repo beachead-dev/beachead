@@ -26,14 +26,14 @@ pub struct SandboxInfoEnriched {
 }
 
 /// Response for sandbox action endpoints (stop).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SandboxActionResponse {
     pub id: String,
     pub status: String,
 }
 
 /// Response for sandbox start endpoint.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SandboxStartResponse {
     pub id: String,
 }

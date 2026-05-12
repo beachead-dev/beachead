@@ -47,7 +47,7 @@ struct DeleteContainerQuery {
 
 /// Enriched MCP container response with persona name and live status confirmation.
 /// Excludes bearer_token for security.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpContainerListResponse {
     pub id: String,
     pub persona_id: String,
