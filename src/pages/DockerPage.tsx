@@ -1,7 +1,9 @@
 import { useState, useCallback } from "react";
-import { getSandboxes, stopSandbox, startSandbox, removeSandbox, SandboxInfo, getMcpContainers, McpContainerResponse } from "../lib/api";
+import { getSandboxes, stopSandbox, startSandbox, removeSandbox, SandboxInfo, getMcpContainers, McpContainerResponse, startContainer, stopContainer, removeContainer } from "../lib/api";
 import { usePolling } from "../hooks/usePolling";
 import { deriveSandboxButtonStates } from "../lib/sandboxButtonStates";
+import { deriveContainerButtonStates } from "../lib/containerButtonStates";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 
 type DockerTab = "sandboxes" | "containers";
 
@@ -9,6 +11,7 @@ function SandboxesTab({ active }: { active: boolean }) {
   const [showAll, setShowAll] = useState(false);
   const [pendingActions, setPendingActions] = useState<Set<string>>(new Set());
   const [actionError, setActionError] = useState<string | null>(null);
+  const [removeTarget, setRemoveTarget] = useState<{ id: string; name: string } | null>(null);
 
   const fetchFn = useCallback(() => getSandboxes(showAll), [showAll]);
 
@@ -34,7 +37,6 @@ function SandboxesTab({ active }: { active: boolean }) {
           await startSandbox(id);
           break;
         case "remove":
-          // TODO: Task 5.4 will add confirmation dialog before this call
           await removeSandbox(id);
           break;
       }
@@ -51,6 +53,21 @@ function SandboxesTab({ active }: { active: boolean }) {
         return next;
       });
     }
+  };
+
+  const handleRemoveClick = (id: string, name: string) => {
+    setRemoveTarget({ id, name });
+  };
+
+  const handleRemoveConfirm = () => {
+    if (removeTarget) {
+      handleSandboxAction(removeTarget.id, "remove");
+      setRemoveTarget(null);
+    }
+  };
+
+  const handleRemoveCancel = () => {
+    setRemoveTarget(null);
   };
 
   const sandboxes = data ?? [];
@@ -142,7 +159,7 @@ function SandboxesTab({ active }: { active: boolean }) {
                     <button
                       className="btn btn-sm btn-danger"
                       disabled={isPending || !buttonStates.removeEnabled}
-                      onClick={() => handleSandboxAction(id, "remove")}
+                      onClick={() => handleRemoveClick(id, sandbox.name ?? id)}
                       aria-label={`Remove sandbox ${sandbox.name ?? id}`}
                     >
                       Remove
@@ -154,16 +171,29 @@ function SandboxesTab({ active }: { active: boolean }) {
           </tbody>
         </table>
       )}
+
+      <ConfirmDialog
+        open={removeTarget !== null}
+        title="Remove Sandbox"
+        message={`This will permanently remove the sandbox '${removeTarget?.name ?? ""}'. This action is irreversible.`}
+        confirmLabel="Remove"
+        onConfirm={handleRemoveConfirm}
+        onCancel={handleRemoveCancel}
+      />
     </div>
   );
 }
 
 function ContainersTab({ active }: { active: boolean }) {
   const [showAll, setShowAll] = useState(false);
+  const [pendingActions, setPendingActions] = useState<Set<string>>(new Set());
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [removeTarget, setRemoveTarget] = useState<{ id: string; name: string } | null>(null);
+  const [deleteVolume, setDeleteVolume] = useState(false);
 
   const fetchFn = useCallback(() => getMcpContainers(showAll), [showAll]);
 
-  const { data, error, loading, stale, refresh: _refresh } = usePolling<McpContainerResponse[]>(
+  const { data, error, loading, stale, refresh } = usePolling<McpContainerResponse[]>(
     fetchFn,
     10000,
     active,
@@ -185,6 +215,58 @@ function ContainersTab({ active }: { active: boolean }) {
     }
   };
 
+  const handleContainerAction = async (
+    id: string,
+    action: "start" | "stop" | "remove",
+    deleteVol = false,
+  ) => {
+    setPendingActions((prev) => new Set(prev).add(id));
+    setActionError(null);
+
+    try {
+      switch (action) {
+        case "start":
+          await startContainer(id);
+          break;
+        case "stop":
+          await stopContainer(id);
+          break;
+        case "remove":
+          await removeContainer(id, deleteVol);
+          break;
+      }
+      refresh();
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Action failed";
+      setActionError(`Failed to ${action} container: ${message}`);
+      refresh();
+    } finally {
+      setPendingActions((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }
+  };
+
+  const handleRemoveClick = (id: string, name: string) => {
+    setRemoveTarget({ id, name });
+  };
+
+  const handleRemoveConfirm = () => {
+    if (removeTarget) {
+      handleContainerAction(removeTarget.id, "remove", deleteVolume);
+      setRemoveTarget(null);
+      setDeleteVolume(false);
+    }
+  };
+
+  const handleRemoveCancel = () => {
+    setRemoveTarget(null);
+    setDeleteVolume(false);
+  };
+
   return (
     <div role="tabpanel" aria-label="Containers tab content">
       <div className="tab-toolbar">
@@ -201,6 +283,19 @@ function ContainersTab({ active }: { active: boolean }) {
       {stale && (
         <div className="alert alert-warning" role="status">
           Data may be stale. Retrying…
+        </div>
+      )}
+
+      {actionError && (
+        <div className="alert alert-error" role="alert">
+          {actionError}
+          <button
+            className="btn btn-sm"
+            onClick={() => setActionError(null)}
+            aria-label="Dismiss error"
+          >
+            ✕
+          </button>
         </div>
       )}
 
@@ -231,46 +326,73 @@ function ContainersTab({ active }: { active: boolean }) {
             </tr>
           </thead>
           <tbody>
-            {containers.map((container) => (
-              <tr key={container.id}>
-                <td>
-                  {container.persona_name}
-                  {isUnmanaged(container) && (
-                    <span className="badge badge-unmanaged">Unmanaged</span>
-                  )}
-                </td>
-                <td>{container.port}</td>
-                <td>{container.status}</td>
-                <td>{container.volume_name}</td>
-                <td>{formatDate(container.created_at)}</td>
-                <td className="action-buttons">
-                  <button
-                    className="btn btn-sm"
-                    disabled
-                    aria-label={`Start container ${container.persona_name}`}
-                  >
-                    Start
-                  </button>
-                  <button
-                    className="btn btn-sm"
-                    disabled
-                    aria-label={`Stop container ${container.persona_name}`}
-                  >
-                    Stop
-                  </button>
-                  <button
-                    className="btn btn-sm btn-danger"
-                    disabled
-                    aria-label={`Remove container ${container.persona_name}`}
-                  >
-                    Remove
-                  </button>
-                </td>
-              </tr>
-            ))}
+            {containers.map((container) => {
+              const unmanaged = isUnmanaged(container);
+              const isPending = pendingActions.has(container.id);
+              const buttonStates = deriveContainerButtonStates(container.status, unmanaged);
+
+              return (
+                <tr key={container.id}>
+                  <td>
+                    {container.persona_name}
+                    {unmanaged && (
+                      <span className="badge badge-unmanaged">Unmanaged</span>
+                    )}
+                  </td>
+                  <td>{container.port}</td>
+                  <td>{container.status}</td>
+                  <td>{container.volume_name}</td>
+                  <td>{formatDate(container.created_at)}</td>
+                  <td className="action-buttons">
+                    <button
+                      className="btn btn-sm"
+                      disabled={isPending || !buttonStates.startEnabled}
+                      onClick={() => handleContainerAction(container.id, "start")}
+                      aria-label={`Start container ${container.persona_name}`}
+                    >
+                      Start
+                    </button>
+                    <button
+                      className="btn btn-sm"
+                      disabled={isPending || !buttonStates.stopEnabled}
+                      onClick={() => handleContainerAction(container.id, "stop")}
+                      aria-label={`Stop container ${container.persona_name}`}
+                    >
+                      Stop
+                    </button>
+                    <button
+                      className="btn btn-sm btn-danger"
+                      disabled={isPending || !buttonStates.removeEnabled}
+                      onClick={() => handleRemoveClick(container.id, container.persona_name)}
+                      aria-label={`Remove container ${container.persona_name}`}
+                    >
+                      Remove
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       )}
+
+      <ConfirmDialog
+        open={removeTarget !== null}
+        title="Remove Container"
+        message={`This will permanently remove the container '${removeTarget?.name ?? ""}'. This action is irreversible.`}
+        confirmLabel="Remove"
+        onConfirm={handleRemoveConfirm}
+        onCancel={handleRemoveCancel}
+      >
+        <label className="confirm-dialog-checkbox">
+          <input
+            type="checkbox"
+            checked={deleteVolume}
+            onChange={(e) => setDeleteVolume(e.target.checked)}
+          />
+          Also delete associated Docker volume
+        </label>
+      </ConfirmDialog>
     </div>
   );
 }
