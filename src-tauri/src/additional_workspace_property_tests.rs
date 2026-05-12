@@ -357,4 +357,155 @@ mod tests {
         }
     }
 
+    // Feature: multi-workspace-mounts, Property 4: Paths containing null bytes are rejected
+    // **Validates: Requirements 2.8**
+
+    /// Generate a string that contains at least one null byte, then make it an absolute path.
+    fn arb_path_with_null_bytes() -> impl Strategy<Value = PathBuf> {
+        (
+            prop::string::string_regex("[a-zA-Z0-9_/.-]{0,20}").unwrap(),
+            prop::string::string_regex("[a-zA-Z0-9_/.-]{0,20}").unwrap(),
+        )
+            .prop_map(|(prefix, suffix)| {
+                // Build a path with at least one embedded null byte, made absolute
+                let path_str = format!("/{}\0{}", prefix, suffix);
+                PathBuf::from(path_str)
+            })
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(100))]
+        #[test]
+        fn prop_paths_containing_null_bytes_are_rejected(
+            path_with_null in arb_path_with_null_bytes(),
+            read_only in any::<bool>(),
+            label in arb_label(),
+        ) {
+            // Verify the generated path actually contains a null byte
+            let path_str = path_with_null.to_string_lossy();
+            prop_assume!(path_str.contains('\0'));
+
+            let entries = vec![CreateAdditionalWorkspaceEntry {
+                path: path_with_null.clone(),
+                read_only,
+                label,
+            }];
+
+            // Use /tmp as the primary workspace
+            let primary = std::path::Path::new("/tmp");
+            let result = validate_additional_workspaces(&entries, primary);
+
+            // Validation must return an error
+            prop_assert!(result.is_err(), "Expected validation error for path with null bytes: {:?}", path_with_null);
+
+            // The error message must contain "null bytes"
+            match result {
+                Err(OrchestratorError::Validation(msg)) => {
+                    prop_assert!(
+                        msg.contains("null bytes"),
+                        "Error message should contain 'null bytes', got: {}",
+                        msg
+                    );
+                }
+                Err(other) => {
+                    prop_assert!(false, "Expected Validation error, got: {:?}", other);
+                }
+                Ok(_) => {
+                    prop_assert!(false, "Expected error for path with null bytes {:?}, but got Ok", path_with_null);
+                }
+            }
+        }
+    }
+
+    // Feature: multi-workspace-mounts, Property 7: Duplicate canonicalized paths are rejected
+    // **Validates: Requirements 7.1, 7.3, 7.5**
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(100))]
+        #[test]
+        fn prop_duplicate_canonicalized_paths_are_rejected(
+            extra_count in 0usize..5,
+            read_only_flags in prop::collection::vec(any::<bool>(), 2..10),
+            labels in prop::collection::vec(arb_label(), 2..10),
+            use_dot_dot_variant in any::<bool>(),
+        ) {
+            // Create a real temp directory so paths exist and can be canonicalized
+            let temp_dir = tempfile::tempdir().unwrap();
+            let base_path = temp_dir.path().to_path_buf();
+
+            // Create a subdirectory to use as the duplicate workspace
+            let dup_dir = base_path.join("workspace_dup");
+            std::fs::create_dir_all(&dup_dir).unwrap();
+
+            // Create a primary workspace that is different from the duplicate
+            let primary_dir = base_path.join("primary");
+            std::fs::create_dir_all(&primary_dir).unwrap();
+
+            // Create additional unique directories for non-duplicate entries
+            let mut unique_dirs: Vec<PathBuf> = Vec::new();
+            for i in 0..extra_count {
+                let dir = base_path.join(format!("unique_{}", i));
+                std::fs::create_dir_all(&dir).unwrap();
+                unique_dirs.push(dir);
+            }
+
+            // Build the entries list with at least two entries pointing to the same canonicalized path
+            let mut entries: Vec<CreateAdditionalWorkspaceEntry> = Vec::new();
+
+            // First entry: the duplicate path directly
+            entries.push(CreateAdditionalWorkspaceEntry {
+                path: dup_dir.clone(),
+                read_only: *read_only_flags.get(0).unwrap_or(&false),
+                label: labels.get(0).cloned().unwrap_or(None),
+            });
+
+            // Add unique entries in between (to test that duplicates are detected regardless of position)
+            for (i, unique_path) in unique_dirs.iter().enumerate() {
+                entries.push(CreateAdditionalWorkspaceEntry {
+                    path: unique_path.clone(),
+                    read_only: *read_only_flags.get(i + 1).unwrap_or(&false),
+                    label: labels.get(i + 1).cloned().unwrap_or(None),
+                });
+            }
+
+            // Second entry: same path but potentially via `..` to test canonicalization
+            let duplicate_path = if use_dot_dot_variant {
+                // Create a child dir so we can use `..` to resolve back to dup_dir
+                let child = dup_dir.join("child");
+                std::fs::create_dir_all(&child).unwrap();
+                child.join("..")
+            } else {
+                // Same path repeated directly
+                dup_dir.clone()
+            };
+
+            let last_idx = entries.len();
+            entries.push(CreateAdditionalWorkspaceEntry {
+                path: duplicate_path,
+                read_only: *read_only_flags.get(last_idx).unwrap_or(&false),
+                label: labels.get(last_idx).cloned().unwrap_or(None),
+            });
+
+            // Call validate_additional_workspaces
+            let result = validate_additional_workspaces(&entries, &primary_dir);
+
+            // Validation must return an error
+            prop_assert!(result.is_err(), "Expected validation error for duplicate paths, but got Ok");
+
+            // The error message must contain "Duplicate additional workspace path"
+            match result {
+                Err(OrchestratorError::Validation(msg)) => {
+                    prop_assert!(
+                        msg.contains("Duplicate additional workspace path"),
+                        "Error message should contain 'Duplicate additional workspace path', got: {}",
+                        msg
+                    );
+                }
+                Err(other) => {
+                    prop_assert!(false, "Expected Validation error, got: {:?}", other);
+                }
+                Ok(_) => unreachable!(),
+            }
+        }
+    }
+
 }
