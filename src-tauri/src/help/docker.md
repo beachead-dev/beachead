@@ -16,6 +16,7 @@ By default, only sandboxes associated with a Beachead session are shown (managed
 
 The table displays:
 - **Name** — The sandbox name (if assigned)
+- **Agent** — The AI agent running in the sandbox (e.g., kiro, claude, codex)
 - **Status** — Current state (running, stopped, etc.)
 - **ID** — The unique sandbox identifier
 
@@ -29,30 +30,31 @@ Buttons are disabled when an action is not applicable to the current sandbox sta
 
 ## Containers Tab
 
-MCP Memory Containers are Docker containers running the `beachead-memory-mcp` image, providing per-persona vector memory storage.
+The Containers tab shows Docker containers managed by Beachead. When **Show All** is enabled, it displays all Docker containers on the system.
 
 ### Viewing Containers
 
-By default, only containers tracked in the Beachead database are shown. Enable the **Show All** toggle to include unmanaged containers (those running the memory MCP image but not created by Beachead). Unmanaged containers display an "Unmanaged" badge.
+By default, only containers tracked in the Beachead database are shown (MCP memory containers). Enable the **Show All** toggle to see all Docker containers on the system. Containers not tracked by Beachead display an "Unmanaged" badge.
 
 The table displays:
-- **Persona Name** — The persona associated with this container
+- **Persona Name** — The persona associated with this container (or the Docker container name for unmanaged containers)
+- **Image** — The Docker image the container is running (e.g., beachead-memory-mcp:latest, hello-world, nginx)
 - **Port** — The localhost port the container is listening on
-- **Status** — Current Docker state (running, stopped, etc.)
-- **Volume Name** — The Docker volume used for persistent memory storage
+- **Status** — Current Docker state (running, exited, stopped, created, etc.)
+- **Volume Name** — The Docker volume used for persistent storage (if any)
 - **Created Date** — When the container was created
 
 ### Actions
 
-- **Start** — Starts a stopped container. Available when status is stopped or created.
+- **Start** — Starts a stopped container. Available when status is stopped, exited, or created.
 - **Stop** — Stops a running container with a 10-second timeout. Available when status is running.
-- **Remove** — Permanently removes the container. A confirmation dialog offers the option to also delete the associated Docker volume. Available when status is stopped or created.
+- **Remove** — Permanently removes the container. For managed containers, a confirmation dialog offers the option to also delete the associated Docker volume. Available when status is stopped, exited, or created.
 
 For unmanaged containers, only Stop and Remove are available (no Start).
 
 ## Data Freshness
 
-The Docker page automatically polls for updates every 10 seconds while a tab is visible. After performing an action, data refreshes immediately. If a poll fails, the last successful data is retained with a "stale" indicator until the next successful refresh.
+The Docker page automatically polls for updates every 10 seconds while a tab is visible. After performing an action, data refreshes immediately. Toggling "Show All" also triggers an immediate refresh. If a poll fails, the last successful data is retained with a "stale" indicator until the next successful refresh.
 
 ## Error Handling
 
