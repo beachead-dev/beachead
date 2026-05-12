@@ -14,13 +14,15 @@ vi.mock("../lib/api", () => ({
   removeContainer: vi.fn(),
 }));
 
-import { getSandboxes, stopSandbox, startSandbox, removeSandbox, getMcpContainers, removeContainer } from "../lib/api";
+import { getSandboxes, stopSandbox, startSandbox, removeSandbox, getMcpContainers, startContainer, stopContainer, removeContainer } from "../lib/api";
 
 const mockGetSandboxes = getSandboxes as ReturnType<typeof vi.fn>;
 const mockStopSandbox = stopSandbox as ReturnType<typeof vi.fn>;
 const mockStartSandbox = startSandbox as ReturnType<typeof vi.fn>;
 const mockRemoveSandbox = removeSandbox as ReturnType<typeof vi.fn>;
 const mockGetMcpContainers = getMcpContainers as ReturnType<typeof vi.fn>;
+const mockStartContainer = startContainer as ReturnType<typeof vi.fn>;
+const mockStopContainer = stopContainer as ReturnType<typeof vi.fn>;
 const mockRemoveContainer = removeContainer as ReturnType<typeof vi.fn>;
 
 describe("DockerPage — Sandboxes Tab", () => {
@@ -799,5 +801,349 @@ describe("DockerPage — Containers Tab — Removal Dialog", () => {
     fireEvent.click(screen.getByLabelText("Remove container Test Persona"));
     const checkbox = screen.getByLabelText("Also delete associated Docker volume");
     expect(checkbox).not.toBeChecked();
+  });
+});
+
+describe("DockerPage — Tab Switching Content", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("displays Sandboxes tab content by default", async () => {
+    mockGetSandboxes.mockResolvedValue([
+      { name: "sandbox-1", id: "s1", status: "running", managed: true },
+    ]);
+
+    render(<DockerPage />);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    // Sandboxes table should be visible
+    expect(screen.getByRole("table", { name: "Sandboxes table" })).toBeInTheDocument();
+    expect(screen.getByText("sandbox-1")).toBeInTheDocument();
+    // Containers table should not be visible
+    expect(screen.queryByRole("table", { name: "Containers table" })).not.toBeInTheDocument();
+  });
+
+  it("shows Containers content when Containers tab is clicked", async () => {
+    mockGetSandboxes.mockResolvedValue([
+      { name: "sandbox-1", id: "s1", status: "running", managed: true },
+    ]);
+    mockGetMcpContainers.mockResolvedValue([
+      {
+        id: "c1",
+        persona_id: "p1",
+        persona_name: "Memory Bot",
+        container_id: "docker-abc",
+        port: 9001,
+        volume_name: "beachead-memory-p1",
+        status: "running",
+        live_status_confirmed: true,
+        created_at: "2024-06-01T12:00:00Z",
+        updated_at: "2024-06-01T12:00:00Z",
+      },
+    ]);
+
+    render(<DockerPage />);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    // Switch to Containers tab
+    fireEvent.click(screen.getByRole("tab", { name: "Containers" }));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    // Containers table should be visible with correct columns
+    expect(screen.getByRole("table", { name: "Containers table" })).toBeInTheDocument();
+    expect(screen.getByText("Memory Bot")).toBeInTheDocument();
+    expect(screen.getByText("9001")).toBeInTheDocument();
+    // Sandboxes table should not be visible
+    expect(screen.queryByRole("table", { name: "Sandboxes table" })).not.toBeInTheDocument();
+  });
+
+  it("shows Sandboxes content again when switching back from Containers", async () => {
+    mockGetSandboxes.mockResolvedValue([
+      { name: "sandbox-1", id: "s1", status: "stopped", managed: true },
+    ]);
+    mockGetMcpContainers.mockResolvedValue([
+      {
+        id: "c1",
+        persona_id: "p1",
+        persona_name: "Memory Bot",
+        container_id: "docker-abc",
+        port: 9001,
+        volume_name: "beachead-memory-p1",
+        status: "running",
+        live_status_confirmed: true,
+        created_at: "2024-06-01T12:00:00Z",
+        updated_at: "2024-06-01T12:00:00Z",
+      },
+    ]);
+
+    render(<DockerPage />);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    // Switch to Containers
+    fireEvent.click(screen.getByRole("tab", { name: "Containers" }));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    // Switch back to Sandboxes
+    fireEvent.click(screen.getByRole("tab", { name: "Sandboxes" }));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    // Sandboxes content should be visible again
+    expect(screen.getByRole("table", { name: "Sandboxes table" })).toBeInTheDocument();
+    expect(screen.getByText("sandbox-1")).toBeInTheDocument();
+    expect(screen.queryByRole("table", { name: "Containers table" })).not.toBeInTheDocument();
+  });
+});
+
+describe("DockerPage — Error State Recovery", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("clears error and shows data when fetch recovers after initial failure", async () => {
+    // First fetch fails (no prior data)
+    mockGetSandboxes
+      .mockRejectedValueOnce(new Error("Server unavailable"))
+      .mockResolvedValueOnce([
+        { name: "recovered-sbx", id: "r1", status: "running", managed: true },
+      ]);
+
+    render(<DockerPage />);
+
+    // Initial fetch fails
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    // Error should be displayed
+    expect(screen.getByText("Server unavailable")).toBeInTheDocument();
+    expect(screen.queryByText("recovered-sbx")).not.toBeInTheDocument();
+
+    // Next poll succeeds
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10000);
+    });
+
+    // Error should be cleared and data displayed
+    expect(screen.queryByText("Server unavailable")).not.toBeInTheDocument();
+    expect(screen.getByText("recovered-sbx")).toBeInTheDocument();
+  });
+
+  it("clears error on Containers tab when fetch recovers", async () => {
+    mockGetSandboxes.mockResolvedValue([]);
+    mockGetMcpContainers
+      .mockRejectedValueOnce(new Error("Docker daemon unreachable"))
+      .mockResolvedValueOnce([
+        {
+          id: "c1",
+          persona_id: "p1",
+          persona_name: "Recovered Container",
+          container_id: "docker-xyz",
+          port: 9002,
+          volume_name: "beachead-memory-p1",
+          status: "stopped",
+          live_status_confirmed: true,
+          created_at: "2024-06-01T12:00:00Z",
+          updated_at: "2024-06-01T12:00:00Z",
+        },
+      ]);
+
+    render(<DockerPage />);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    // Switch to Containers tab
+    fireEvent.click(screen.getByRole("tab", { name: "Containers" }));
+
+    // Initial containers fetch fails
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(screen.getByText("Docker daemon unreachable")).toBeInTheDocument();
+
+    // Next poll succeeds
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10000);
+    });
+
+    expect(screen.queryByText("Docker daemon unreachable")).not.toBeInTheDocument();
+    expect(screen.getByText("Recovered Container")).toBeInTheDocument();
+  });
+});
+
+describe("DockerPage — Container Action → Refresh → Poll Reset", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    mockGetSandboxes.mockResolvedValue([]);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("refreshes container list and resets poll timer after stop action", async () => {
+    mockGetMcpContainers.mockResolvedValue([
+      {
+        id: "c1",
+        persona_id: "p1",
+        persona_name: "Active Container",
+        container_id: "docker-abc",
+        port: 9001,
+        volume_name: "beachead-memory-p1",
+        status: "running",
+        live_status_confirmed: true,
+        created_at: "2024-06-01T12:00:00Z",
+        updated_at: "2024-06-01T12:00:00Z",
+      },
+    ]);
+    mockStopContainer.mockResolvedValue({
+      id: "c1",
+      persona_id: "p1",
+      persona_name: "Active Container",
+      container_id: "docker-abc",
+      port: 9001,
+      volume_name: "beachead-memory-p1",
+      status: "stopped",
+      live_status_confirmed: true,
+      created_at: "2024-06-01T12:00:00Z",
+      updated_at: "2024-06-01T12:00:00Z",
+    });
+
+    render(<DockerPage />);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    // Switch to Containers tab
+    fireEvent.click(screen.getByRole("tab", { name: "Containers" }));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(mockGetMcpContainers).toHaveBeenCalledTimes(1);
+
+    // Advance 7 seconds (not yet at 10s interval)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(7000);
+    });
+
+    expect(mockGetMcpContainers).toHaveBeenCalledTimes(1);
+
+    // Perform stop action — triggers refresh() which resets the timer
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText("Stop container Active Container"));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    // refresh() triggered an immediate re-fetch
+    expect(mockGetMcpContainers).toHaveBeenCalledTimes(2);
+
+    // Advance 7 seconds from the refresh point — should NOT trigger another poll
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(7000);
+    });
+
+    expect(mockGetMcpContainers).toHaveBeenCalledTimes(2);
+
+    // Advance 3 more seconds (total 10s from refresh) — should trigger next poll
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+
+    expect(mockGetMcpContainers).toHaveBeenCalledTimes(3);
+  });
+
+  it("refreshes container list and resets poll timer after start action", async () => {
+    mockGetMcpContainers.mockResolvedValue([
+      {
+        id: "c2",
+        persona_id: "p2",
+        persona_name: "Stopped Container",
+        container_id: "docker-def",
+        port: 9002,
+        volume_name: "beachead-memory-p2",
+        status: "stopped",
+        live_status_confirmed: true,
+        created_at: "2024-06-01T12:00:00Z",
+        updated_at: "2024-06-01T12:00:00Z",
+      },
+    ]);
+    mockStartContainer.mockResolvedValue({
+      id: "c2",
+      persona_id: "p2",
+      persona_name: "Stopped Container",
+      container_id: "docker-def",
+      port: 9002,
+      volume_name: "beachead-memory-p2",
+      status: "running",
+      live_status_confirmed: true,
+      created_at: "2024-06-01T12:00:00Z",
+      updated_at: "2024-06-01T12:00:00Z",
+    });
+
+    render(<DockerPage />);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    // Switch to Containers tab
+    fireEvent.click(screen.getByRole("tab", { name: "Containers" }));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(mockGetMcpContainers).toHaveBeenCalledTimes(1);
+
+    // Perform start action
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText("Start container Stopped Container"));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    // refresh() triggered an immediate re-fetch
+    expect(mockGetMcpContainers).toHaveBeenCalledTimes(2);
+
+    // Full 10s from refresh should trigger next poll
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10000);
+    });
+
+    expect(mockGetMcpContainers).toHaveBeenCalledTimes(3);
   });
 });
