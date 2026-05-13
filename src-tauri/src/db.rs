@@ -164,6 +164,12 @@ static MIGRATIONS: &[Migration] = &[
         description: "Create additional_workspaces table",
         sql: MIGRATION_005_ADDITIONAL_WORKSPACES,
     },
+    // Repo sync tables
+    Migration {
+        version: 6,
+        description: "Create repo sync tables",
+        sql: MIGRATION_006_REPO_SYNC,
+    },
 ];
 
 /// Migration 1: Phase 1 core tables (agent_types, personas, persona_mcp_servers, sessions)
@@ -279,6 +285,36 @@ CREATE INDEX idx_additional_workspaces_persona_id
     ON additional_workspaces(persona_id);
 ";
 
+/// Migration 6: Repo sync tables (managed_repos and repo_credentials)
+const MIGRATION_006_REPO_SYNC: &str = "
+CREATE TABLE managed_repos (
+    id TEXT PRIMARY KEY,
+    persona_id TEXT NOT NULL REFERENCES personas(id) ON DELETE CASCADE,
+    workspace_path TEXT NOT NULL,
+    mirror_path TEXT NOT NULL,
+    remote_url TEXT,
+    remote_provider TEXT CHECK(remote_provider IN ('github','gitlab','bitbucket','custom')),
+    branch_strategy TEXT NOT NULL DEFAULT 'direct' CHECK(branch_strategy IN ('direct','feature_branch')),
+    branch_pattern TEXT DEFAULT 'ai/<persona-name>/<date>',
+    attribution_mode TEXT NOT NULL DEFAULT 'keep_agent' CHECK(attribution_mode IN ('keep_agent','rewrite_user','co_authored_by')),
+    sync_mode TEXT NOT NULL DEFAULT 'remote' CHECK(sync_mode IN ('local_only','remote')),
+    secret_scan_mode TEXT NOT NULL DEFAULT 'block' CHECK(secret_scan_mode IN ('block','warn_only')),
+    check_interval_seconds INTEGER NOT NULL DEFAULT 300,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(persona_id, workspace_path)
+);
+
+CREATE TABLE repo_credentials (
+    id TEXT PRIMARY KEY,
+    repo_id TEXT NOT NULL REFERENCES managed_repos(id) ON DELETE CASCADE,
+    keyring_service_name TEXT NOT NULL,
+    credential_type TEXT NOT NULL CHECK(credential_type IN ('token','username_password')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+";
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -289,7 +325,7 @@ mod tests {
 
         db.with_conn(|conn| {
             let version = get_current_version(conn)?;
-            assert_eq!(version, 5, "All migrations should have been applied");
+            assert_eq!(version, 6, "All migrations should have been applied");
             Ok(())
         })
         .unwrap();
@@ -470,7 +506,7 @@ mod tests {
         let db2 = Database::open(&db_path).expect("Second open should succeed");
         db2.with_conn(|conn| {
             let version = get_current_version(conn)?;
-            assert_eq!(version, 5);
+            assert_eq!(version, 6);
             Ok(())
         })
         .unwrap();
@@ -548,6 +584,249 @@ mod tests {
                 )
                 .map_err(|e| OrchestratorError::Database(e.to_string()))?;
             assert_eq!(count, 0, "Additional workspace entries should be cascade-deleted");
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_repo_sync_tables_exist() {
+        let db = Database::open_in_memory().expect("Failed to open in-memory database");
+
+        db.with_conn(|conn| {
+            let tables = vec!["managed_repos", "repo_credentials"];
+
+            for table in tables {
+                let count: i64 = conn
+                    .query_row(
+                        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                        params![table],
+                        |row| row.get(0),
+                    )
+                    .map_err(|e| OrchestratorError::Database(e.to_string()))?;
+                assert_eq!(count, 1, "Table '{}' should exist", table);
+            }
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_managed_repos_unique_constraint() {
+        let db = Database::open_in_memory().expect("Failed to open in-memory database");
+
+        db.with_conn(|conn| {
+            // Insert agent type and persona
+            conn.execute(
+                "INSERT INTO agent_types (id, name, sbx_agent, is_builtin, metadata, created_at, updated_at)
+                 VALUES ('a1', 'claude', 'claude', 1, '{}', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')",
+                [],
+            ).map_err(|e| OrchestratorError::Database(e.to_string()))?;
+
+            conn.execute(
+                "INSERT INTO personas (id, name, agent_type_id, workspace_path, memory_enabled, created_at, updated_at)
+                 VALUES ('p1', 'test-persona', 'a1', '/tmp', 0, '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')",
+                [],
+            ).map_err(|e| OrchestratorError::Database(e.to_string()))?;
+
+            // Insert first managed repo
+            conn.execute(
+                "INSERT INTO managed_repos (id, persona_id, workspace_path, mirror_path, sync_mode, created_at, updated_at)
+                 VALUES ('r1', 'p1', '/home/user/project', '/mirrors/project', 'remote', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')",
+                [],
+            ).map_err(|e| OrchestratorError::Database(e.to_string()))?;
+
+            // Attempt duplicate (same persona_id + workspace_path)
+            let result = conn.execute(
+                "INSERT INTO managed_repos (id, persona_id, workspace_path, mirror_path, sync_mode, created_at, updated_at)
+                 VALUES ('r2', 'p1', '/home/user/project', '/mirrors/project2', 'remote', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')",
+                [],
+            );
+            assert!(result.is_err(), "UNIQUE(persona_id, workspace_path) should prevent duplicate");
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_managed_repos_cascade_delete_on_persona() {
+        let db = Database::open_in_memory().expect("Failed to open in-memory database");
+
+        db.with_conn(|conn| {
+            // Insert agent type and persona
+            conn.execute(
+                "INSERT INTO agent_types (id, name, sbx_agent, is_builtin, metadata, created_at, updated_at)
+                 VALUES ('a1', 'claude', 'claude', 1, '{}', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')",
+                [],
+            ).map_err(|e| OrchestratorError::Database(e.to_string()))?;
+
+            conn.execute(
+                "INSERT INTO personas (id, name, agent_type_id, workspace_path, memory_enabled, created_at, updated_at)
+                 VALUES ('p1', 'test-persona', 'a1', '/tmp', 0, '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')",
+                [],
+            ).map_err(|e| OrchestratorError::Database(e.to_string()))?;
+
+            // Insert managed repo
+            conn.execute(
+                "INSERT INTO managed_repos (id, persona_id, workspace_path, mirror_path, sync_mode, created_at, updated_at)
+                 VALUES ('r1', 'p1', '/home/user/project', '/mirrors/project', 'remote', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')",
+                [],
+            ).map_err(|e| OrchestratorError::Database(e.to_string()))?;
+
+            // Insert repo credential
+            conn.execute(
+                "INSERT INTO repo_credentials (id, repo_id, keyring_service_name, credential_type, created_at, updated_at)
+                 VALUES ('c1', 'r1', 'beachead-repo-sync-r1', 'token', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')",
+                [],
+            ).map_err(|e| OrchestratorError::Database(e.to_string()))?;
+
+            // Delete persona — managed_repos and repo_credentials should cascade
+            conn.execute("DELETE FROM personas WHERE id = 'p1'", [])
+                .map_err(|e| OrchestratorError::Database(e.to_string()))?;
+
+            let repo_count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM managed_repos WHERE persona_id = 'p1'",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(|e| OrchestratorError::Database(e.to_string()))?;
+            assert_eq!(repo_count, 0, "Managed repos should be cascade-deleted when persona is deleted");
+
+            let cred_count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM repo_credentials WHERE repo_id = 'r1'",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(|e| OrchestratorError::Database(e.to_string()))?;
+            assert_eq!(cred_count, 0, "Repo credentials should be cascade-deleted when managed repo is deleted");
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_repo_credentials_cascade_delete_on_repo() {
+        let db = Database::open_in_memory().expect("Failed to open in-memory database");
+
+        db.with_conn(|conn| {
+            // Insert agent type and persona
+            conn.execute(
+                "INSERT INTO agent_types (id, name, sbx_agent, is_builtin, metadata, created_at, updated_at)
+                 VALUES ('a1', 'claude', 'claude', 1, '{}', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')",
+                [],
+            ).map_err(|e| OrchestratorError::Database(e.to_string()))?;
+
+            conn.execute(
+                "INSERT INTO personas (id, name, agent_type_id, workspace_path, memory_enabled, created_at, updated_at)
+                 VALUES ('p1', 'test-persona', 'a1', '/tmp', 0, '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')",
+                [],
+            ).map_err(|e| OrchestratorError::Database(e.to_string()))?;
+
+            // Insert managed repo
+            conn.execute(
+                "INSERT INTO managed_repos (id, persona_id, workspace_path, mirror_path, sync_mode, created_at, updated_at)
+                 VALUES ('r1', 'p1', '/home/user/project', '/mirrors/project', 'remote', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')",
+                [],
+            ).map_err(|e| OrchestratorError::Database(e.to_string()))?;
+
+            // Insert repo credential
+            conn.execute(
+                "INSERT INTO repo_credentials (id, repo_id, keyring_service_name, credential_type, created_at, updated_at)
+                 VALUES ('c1', 'r1', 'beachead-repo-sync-r1', 'token', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')",
+                [],
+            ).map_err(|e| OrchestratorError::Database(e.to_string()))?;
+
+            // Delete managed repo directly — repo_credentials should cascade
+            conn.execute("DELETE FROM managed_repos WHERE id = 'r1'", [])
+                .map_err(|e| OrchestratorError::Database(e.to_string()))?;
+
+            let cred_count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM repo_credentials WHERE repo_id = 'r1'",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(|e| OrchestratorError::Database(e.to_string()))?;
+            assert_eq!(cred_count, 0, "Repo credentials should be cascade-deleted when repo is deleted");
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_managed_repos_check_constraints() {
+        let db = Database::open_in_memory().expect("Failed to open in-memory database");
+
+        db.with_conn(|conn| {
+            // Insert agent type and persona
+            conn.execute(
+                "INSERT INTO agent_types (id, name, sbx_agent, is_builtin, metadata, created_at, updated_at)
+                 VALUES ('a1', 'claude', 'claude', 1, '{}', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')",
+                [],
+            ).map_err(|e| OrchestratorError::Database(e.to_string()))?;
+
+            conn.execute(
+                "INSERT INTO personas (id, name, agent_type_id, workspace_path, memory_enabled, created_at, updated_at)
+                 VALUES ('p1', 'test-persona', 'a1', '/tmp', 0, '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')",
+                [],
+            ).map_err(|e| OrchestratorError::Database(e.to_string()))?;
+
+            // Invalid remote_provider
+            let result = conn.execute(
+                "INSERT INTO managed_repos (id, persona_id, workspace_path, mirror_path, remote_provider, sync_mode, created_at, updated_at)
+                 VALUES ('r1', 'p1', '/project', '/mirror', 'invalid_provider', 'remote', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')",
+                [],
+            );
+            assert!(result.is_err(), "CHECK constraint should reject invalid remote_provider");
+
+            // Invalid branch_strategy
+            let result = conn.execute(
+                "INSERT INTO managed_repos (id, persona_id, workspace_path, mirror_path, branch_strategy, sync_mode, created_at, updated_at)
+                 VALUES ('r2', 'p1', '/project2', '/mirror2', 'invalid_strategy', 'remote', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')",
+                [],
+            );
+            assert!(result.is_err(), "CHECK constraint should reject invalid branch_strategy");
+
+            // Invalid attribution_mode
+            let result = conn.execute(
+                "INSERT INTO managed_repos (id, persona_id, workspace_path, mirror_path, attribution_mode, sync_mode, created_at, updated_at)
+                 VALUES ('r3', 'p1', '/project3', '/mirror3', 'invalid_mode', 'remote', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')",
+                [],
+            );
+            assert!(result.is_err(), "CHECK constraint should reject invalid attribution_mode");
+
+            // Invalid sync_mode
+            let result = conn.execute(
+                "INSERT INTO managed_repos (id, persona_id, workspace_path, mirror_path, sync_mode, created_at, updated_at)
+                 VALUES ('r4', 'p1', '/project4', '/mirror4', 'invalid_sync', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')",
+                [],
+            );
+            assert!(result.is_err(), "CHECK constraint should reject invalid sync_mode");
+
+            // Invalid secret_scan_mode
+            let result = conn.execute(
+                "INSERT INTO managed_repos (id, persona_id, workspace_path, mirror_path, secret_scan_mode, sync_mode, created_at, updated_at)
+                 VALUES ('r5', 'p1', '/project5', '/mirror5', 'invalid_scan', 'remote', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')",
+                [],
+            );
+            assert!(result.is_err(), "CHECK constraint should reject invalid secret_scan_mode");
+
+            // Invalid credential_type in repo_credentials
+            conn.execute(
+                "INSERT INTO managed_repos (id, persona_id, workspace_path, mirror_path, sync_mode, created_at, updated_at)
+                 VALUES ('r6', 'p1', '/project6', '/mirror6', 'remote', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')",
+                [],
+            ).map_err(|e| OrchestratorError::Database(e.to_string()))?;
+
+            let result = conn.execute(
+                "INSERT INTO repo_credentials (id, repo_id, keyring_service_name, credential_type, created_at, updated_at)
+                 VALUES ('c1', 'r6', 'service', 'invalid_type', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')",
+                [],
+            );
+            assert!(result.is_err(), "CHECK constraint should reject invalid credential_type");
+
             Ok(())
         })
         .unwrap();
