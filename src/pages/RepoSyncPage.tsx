@@ -3,6 +3,10 @@ import {
   getRepos,
   scanWorkspaces,
   enableRepo,
+  pullFromAgent,
+  pushToRemote,
+  fetchFromRemote,
+  pushToAgent,
   ManagedRepoResponse,
   DetectedRepo,
 } from "../lib/api";
@@ -58,6 +62,14 @@ function formatSyncMode(mode: string): string {
   }
 }
 
+type SyncOperation = "pull_from_agent" | "push_to_remote" | "fetch_from_remote" | "push_to_agent";
+
+interface OperationState {
+  repoId: string;
+  operation: SyncOperation;
+}
+
+
 export function RepoSyncPage() {
   const [pageVisible, setPageVisible] = useState(!document.hidden);
   const [scanning, setScanning] = useState(false);
@@ -67,6 +79,8 @@ export function RepoSyncPage() {
   const [enableError, setEnableError] = useState<string | null>(null);
   const [linkRemoteTarget, setLinkRemoteTarget] = useState<DetectedRepo | null>(null);
   const [linkRemoteUrl, setLinkRemoteUrl] = useState("");
+  const [activeOperation, setActiveOperation] = useState<OperationState | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
 
   useEffect(() => {
     const handleVisibility = () => {
@@ -193,6 +207,34 @@ export function RepoSyncPage() {
     setLinkRemoteUrl("");
   };
 
+  const handleSyncOperation = async (repoId: string, operation: SyncOperation) => {
+    setActiveOperation({ repoId, operation });
+    setSyncError(null);
+    try {
+      switch (operation) {
+        case "pull_from_agent":
+          await pullFromAgent(repoId);
+          break;
+        case "push_to_remote":
+          // For now, call pushToRemote directly. Commit review modal is task 11.5.
+          await pushToRemote(repoId, { commit_shas: [], squash: false });
+          break;
+        case "fetch_from_remote":
+          await fetchFromRemote(repoId);
+          break;
+        case "push_to_agent":
+          await pushToAgent(repoId);
+          break;
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Sync operation failed";
+      setSyncError(message);
+    } finally {
+      refresh();
+      setActiveOperation(null);
+    }
+  };
+
   return (
     <div className="repo-sync-page">
       <div className="page-header">
@@ -227,6 +269,19 @@ export function RepoSyncPage() {
             className="btn btn-sm"
             onClick={() => setEnableError(null)}
             aria-label="Dismiss enable error"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {syncError && (
+        <div className="alert alert-error" role="alert">
+          {syncError}
+          <button
+            className="btn btn-sm"
+            onClick={() => setSyncError(null)}
+            aria-label="Dismiss sync error"
           >
             ✕
           </button>
@@ -329,7 +384,12 @@ export function RepoSyncPage() {
               <h3 className="repo-sync-group-title">{group.personaName}</h3>
               <div className="repo-sync-repo-list">
                 {group.repos.map((repo) => (
-                  <RepoCard key={repo.id} repo={repo} />
+                  <RepoCard
+                    key={repo.id}
+                    repo={repo}
+                    activeOperation={activeOperation}
+                    onSyncOperation={handleSyncOperation}
+                  />
                 ))}
               </div>
             </div>
@@ -402,8 +462,19 @@ function DetectedRepoCard({
   );
 }
 
-function RepoCard({ repo }: { repo: ManagedRepoResponse }) {
+function RepoCard({
+  repo,
+  activeOperation,
+  onSyncOperation,
+}: {
+  repo: ManagedRepoResponse;
+  activeOperation: OperationState | null;
+  onSyncOperation: (repoId: string, operation: SyncOperation) => void;
+}) {
   const projectName = folderName(repo.workspace_path);
+  const isLocalOnly = repo.sync_mode === "local_only";
+  const isOperationInProgress = activeOperation?.repoId === repo.id;
+  const currentOp = isOperationInProgress ? activeOperation.operation : null;
 
   return (
     <div className="card repo-sync-card">
@@ -419,6 +490,40 @@ function RepoCard({ repo }: { repo: ManagedRepoResponse }) {
         )}
         <div className="repo-sync-status">
           <SyncStatusIndicators status={repo.sync_status} syncMode={repo.sync_mode} />
+        </div>
+        <div className="repo-sync-buttons">
+          <button
+            className="btn btn-sm"
+            disabled={isOperationInProgress}
+            onClick={() => onSyncOperation(repo.id, "pull_from_agent")}
+            aria-label={`Pull from agent for ${projectName}`}
+          >
+            {currentOp === "pull_from_agent" ? "Pulling…" : "Pull from agent"}
+          </button>
+          <button
+            className="btn btn-sm"
+            disabled={isOperationInProgress || isLocalOnly}
+            onClick={() => onSyncOperation(repo.id, "push_to_remote")}
+            aria-label={`Push to remote for ${projectName}`}
+          >
+            {currentOp === "push_to_remote" ? "Pushing…" : "Push to remote"}
+          </button>
+          <button
+            className="btn btn-sm"
+            disabled={isOperationInProgress || isLocalOnly}
+            onClick={() => onSyncOperation(repo.id, "fetch_from_remote")}
+            aria-label={`Fetch from remote for ${projectName}`}
+          >
+            {currentOp === "fetch_from_remote" ? "Fetching…" : "Fetch from remote"}
+          </button>
+          <button
+            className="btn btn-sm"
+            disabled={isOperationInProgress}
+            onClick={() => onSyncOperation(repo.id, "push_to_agent")}
+            aria-label={`Push to agent for ${projectName}`}
+          >
+            {currentOp === "push_to_agent" ? "Pushing…" : "Push to agent"}
+          </button>
         </div>
       </div>
     </div>
