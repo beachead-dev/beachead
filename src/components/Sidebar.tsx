@@ -1,7 +1,7 @@
-import { useRef, useState, useEffect } from "react";
+import { useRef, useState, useEffect, useCallback } from "react";
 import { NavLink } from "react-router-dom";
 import { ResizeHandle } from "./ResizeHandle";
-import { api } from "../lib/api";
+import { api, RepoSyncStatusResponse } from "../lib/api";
 import logoDark from "../assets/logo-dark.png";
 import logoLight from "../assets/logo-light.png";
 import iconDark from "../assets/icon-dark.png";
@@ -12,6 +12,7 @@ const navItems = [
   { to: "/personas", label: "Personas" },
   { to: "/agents", label: "Agents" },
   { to: "/policies", label: "Policies" },
+  { to: "/repo-sync", label: "Repo Sync" },
   { to: "/docker", label: "Docker" },
   { to: "/settings", label: "System Settings" },
 ];
@@ -31,6 +32,7 @@ function applyTheme(theme: Theme) {
 export function Sidebar() {
   const sidebarRef = useRef<HTMLElement>(null);
   const [theme, setTheme] = useState<Theme>("system");
+  const [hasPending, setHasPending] = useState(false);
   const [systemDark, setSystemDark] = useState(
     () => window.matchMedia("(prefers-color-scheme: dark)").matches
   );
@@ -46,6 +48,22 @@ export function Sidebar() {
   const isDark = theme === "dark" || (theme === "system" && systemDark);
   const logo = isDark ? logoDark : logoLight;
   const icon = isDark ? iconDark : iconLight;
+
+  // Poll repo sync status every 60 seconds for notification badge
+  const fetchRepoSyncStatus = useCallback(async () => {
+    try {
+      const res = await api.get<RepoSyncStatusResponse>("/api/repo-sync/status");
+      setHasPending(res.has_pending);
+    } catch {
+      // Non-critical — badge just won't update
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchRepoSyncStatus();
+    const interval = setInterval(fetchRepoSyncStatus, 60000);
+    return () => clearInterval(interval);
+  }, [fetchRepoSyncStatus]);
 
   // Load saved theme on mount
   useEffect(() => {
@@ -97,6 +115,9 @@ export function Sidebar() {
               }
             >
               {item.label}
+              {item.to === "/repo-sync" && hasPending && (
+                <span className="sidebar-link-badge" aria-label="Pending sync available" />
+              )}
             </NavLink>
           </li>
         ))}

@@ -244,6 +244,16 @@ body {
   padding-left: calc(1rem - 3px);
 }
 
+.sidebar-link-badge {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: #6c63ff;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
 /* Main content */
 .main-content {
   flex: 1;
