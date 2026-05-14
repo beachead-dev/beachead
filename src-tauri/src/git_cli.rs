@@ -157,6 +157,71 @@ impl GitCli {
         Ok(output.stdout.clone())
     }
 
+    /// Execute a git command in a directory that may not contain `.git`.
+    ///
+    /// Use this for operations like `git clone` or `git init` where the cwd
+    /// is not itself a git repository. Validates that the directory exists but
+    /// does NOT check for `.git`.
+    ///
+    /// - `cwd`: Working directory (must exist, but need not be a git repo).
+    /// - `args`: Git command arguments (e.g., `["clone", src, dst]`).
+    /// - `network_op`: If true, uses 120s timeout; otherwise 30s.
+    pub async fn exec_in_dir(
+        &self,
+        cwd: &Path,
+        args: &[&str],
+        network_op: bool,
+    ) -> Result<GitOutput, GitError> {
+        if !cwd.exists() {
+            return Err(GitError::InvalidPath {
+                path: cwd.display().to_string(),
+                reason: "directory does not exist".to_string(),
+            });
+        }
+
+        let timeout_duration = if network_op {
+            Duration::from_secs(NETWORK_TIMEOUT_SECS)
+        } else {
+            Duration::from_secs(LOCAL_TIMEOUT_SECS)
+        };
+
+        let mut cmd = Command::new(&self.git_path);
+        cmd.args(args)
+            .current_dir(cwd)
+            .env("GIT_TERMINAL_PROMPT", "0");
+
+        let args_owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+
+        let result = timeout(timeout_duration, cmd.output()).await;
+
+        match result {
+            Err(_elapsed) => Err(GitError::Timeout {
+                args: args_owned,
+                timeout_secs: if network_op {
+                    NETWORK_TIMEOUT_SECS
+                } else {
+                    LOCAL_TIMEOUT_SECS
+                },
+            }),
+            Ok(Err(_io_err)) => Err(GitError::NotFound(self.git_path.clone())),
+            Ok(Ok(output)) => {
+                let stdout = truncate_output(&output.stdout);
+                let stderr = truncate_output(&output.stderr);
+                let exit_code = output.status.code().unwrap_or(-1);
+
+                if exit_code == 0 {
+                    Ok(GitOutput {
+                        exit_code,
+                        stdout,
+                        stderr,
+                    })
+                } else {
+                    Err(classify_git_error(&stderr, exit_code, args_owned))
+                }
+            }
+        }
+    }
+
     /// Execute a git command with credential injection and timeout.
     ///
     /// - `cwd`: Working directory (must contain `.git`).

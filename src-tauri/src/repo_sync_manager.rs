@@ -1200,6 +1200,300 @@ mod tests {
         assert_eq!(stored.check_interval_seconds, 300);
     }
 
+    // --- Tests for enable (existing repo with remotes) ---
+
+    #[tokio::test]
+    async fn test_enable_clones_workspace_to_mirror() {
+        let workspace = create_test_workspace();
+        // Add a remote to the workspace
+        std::process::Command::new("git")
+            .args(["remote", "add", "origin", "https://github.com/user/repo.git"])
+            .current_dir(workspace.path())
+            .output()
+            .unwrap();
+
+        let mirrors_dir = tempfile::tempdir().unwrap();
+        let db = setup_db_with_persona("p1", "my-agent");
+        let git = Arc::new(GitCli::new("git".to_string()));
+        let manager = RepoSyncManager::new(db, git.clone(), mirrors_dir.path().to_path_buf());
+
+        let result = manager
+            .enable(&PersonaId("p1".to_string()), workspace.path())
+            .await;
+
+        assert!(result.is_ok(), "enable failed: {:?}", result.err());
+        let repo = result.unwrap();
+
+        // Verify mirror was created and is a valid git repo
+        let mirror_path = Path::new(&repo.mirror_path);
+        assert!(mirror_path.exists());
+        assert!(mirror_path.join(".git").exists());
+
+        // Verify mirror has the README from the workspace
+        assert!(mirror_path.join("README.md").exists());
+    }
+
+    #[tokio::test]
+    async fn test_enable_strips_remotes_from_workspace() {
+        let workspace = create_test_workspace();
+        std::process::Command::new("git")
+            .args(["remote", "add", "origin", "https://github.com/user/repo.git"])
+            .current_dir(workspace.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["remote", "add", "upstream", "https://github.com/org/repo.git"])
+            .current_dir(workspace.path())
+            .output()
+            .unwrap();
+
+        let mirrors_dir = tempfile::tempdir().unwrap();
+        let db = setup_db_with_persona("p1", "my-agent");
+        let git = Arc::new(GitCli::new("git".to_string()));
+        let manager = RepoSyncManager::new(db, git.clone(), mirrors_dir.path().to_path_buf());
+
+        let result = manager
+            .enable(&PersonaId("p1".to_string()), workspace.path())
+            .await;
+
+        assert!(result.is_ok());
+
+        // Verify all remotes stripped from workspace
+        let remotes = git.list_remote_names(workspace.path()).await.unwrap();
+        assert!(remotes.is_empty(), "Workspace should have no remotes after enable");
+    }
+
+    #[tokio::test]
+    async fn test_enable_preserves_remotes_in_mirror() {
+        let workspace = create_test_workspace();
+        std::process::Command::new("git")
+            .args(["remote", "add", "origin", "https://github.com/user/repo.git"])
+            .current_dir(workspace.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["remote", "add", "upstream", "https://github.com/org/repo.git"])
+            .current_dir(workspace.path())
+            .output()
+            .unwrap();
+
+        let mirrors_dir = tempfile::tempdir().unwrap();
+        let db = setup_db_with_persona("p1", "my-agent");
+        let git = Arc::new(GitCli::new("git".to_string()));
+        let manager = RepoSyncManager::new(db, git.clone(), mirrors_dir.path().to_path_buf());
+
+        let repo = manager
+            .enable(&PersonaId("p1".to_string()), workspace.path())
+            .await
+            .unwrap();
+
+        // Verify mirror has origin pointing to the real remote URL
+        let mirror_path = Path::new(&repo.mirror_path);
+        let origin_url = git.get_remote_url(mirror_path, "origin").await.unwrap();
+        assert_eq!(origin_url.as_deref(), Some("https://github.com/user/repo.git"));
+
+        // Verify mirror also has the upstream remote
+        let upstream_url = git.get_remote_url(mirror_path, "upstream").await.unwrap();
+        assert_eq!(upstream_url.as_deref(), Some("https://github.com/org/repo.git"));
+    }
+
+    #[tokio::test]
+    async fn test_enable_uses_origin_as_primary_remote() {
+        let workspace = create_test_workspace();
+        // Add remotes in non-origin-first order
+        std::process::Command::new("git")
+            .args(["remote", "add", "upstream", "https://github.com/org/repo.git"])
+            .current_dir(workspace.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["remote", "add", "origin", "https://github.com/user/repo.git"])
+            .current_dir(workspace.path())
+            .output()
+            .unwrap();
+
+        let mirrors_dir = tempfile::tempdir().unwrap();
+        let db = setup_db_with_persona("p1", "my-agent");
+        let git = Arc::new(GitCli::new("git".to_string()));
+        let manager = RepoSyncManager::new(db, git.clone(), mirrors_dir.path().to_path_buf());
+
+        let repo = manager
+            .enable(&PersonaId("p1".to_string()), workspace.path())
+            .await
+            .unwrap();
+
+        // The primary remote_url stored should be origin's URL
+        assert_eq!(repo.remote_url.as_deref(), Some("https://github.com/user/repo.git"));
+    }
+
+    #[tokio::test]
+    async fn test_enable_uses_first_remote_when_no_origin() {
+        let workspace = create_test_workspace();
+        // Add a remote that's not named "origin"
+        std::process::Command::new("git")
+            .args(["remote", "add", "upstream", "https://github.com/org/repo.git"])
+            .current_dir(workspace.path())
+            .output()
+            .unwrap();
+
+        let mirrors_dir = tempfile::tempdir().unwrap();
+        let db = setup_db_with_persona("p1", "my-agent");
+        let git = Arc::new(GitCli::new("git".to_string()));
+        let manager = RepoSyncManager::new(db, git.clone(), mirrors_dir.path().to_path_buf());
+
+        let repo = manager
+            .enable(&PersonaId("p1".to_string()), workspace.path())
+            .await
+            .unwrap();
+
+        // Should use the first (and only) remote's URL
+        assert_eq!(repo.remote_url.as_deref(), Some("https://github.com/org/repo.git"));
+    }
+
+    #[tokio::test]
+    async fn test_enable_rejects_if_mirror_exists() {
+        let workspace = create_test_workspace();
+        std::process::Command::new("git")
+            .args(["remote", "add", "origin", "https://github.com/user/repo.git"])
+            .current_dir(workspace.path())
+            .output()
+            .unwrap();
+
+        let mirrors_dir = tempfile::tempdir().unwrap();
+        let db = setup_db_with_persona("p1", "my-agent");
+        let git = Arc::new(GitCli::new("git".to_string()));
+        let manager = RepoSyncManager::new(db, git.clone(), mirrors_dir.path().to_path_buf());
+
+        // Pre-create the mirror directory
+        let project_name = workspace.path().file_name().unwrap();
+        let mirror_path = mirrors_dir.path().join("my-agent").join(project_name);
+        std::fs::create_dir_all(&mirror_path).unwrap();
+
+        let result = manager
+            .enable(&PersonaId("p1".to_string()), workspace.path())
+            .await;
+
+        assert!(result.is_err());
+        let err_msg = format!("{:?}", result.err().unwrap());
+        assert!(err_msg.contains("already exists"), "Error should mention mirror already exists: {}", err_msg);
+
+        // Verify workspace remotes were NOT stripped (rollback behavior)
+        let remotes = git.list_remote_names(workspace.path()).await.unwrap();
+        assert!(remotes.contains(&"origin".to_string()), "Workspace remotes should be preserved on error");
+    }
+
+    #[tokio::test]
+    async fn test_enable_rejects_workspace_without_remotes() {
+        let workspace = create_test_workspace();
+        // No remotes added
+
+        let mirrors_dir = tempfile::tempdir().unwrap();
+        let db = setup_db_with_persona("p1", "my-agent");
+        let git = Arc::new(GitCli::new("git".to_string()));
+        let manager = RepoSyncManager::new(db, git.clone(), mirrors_dir.path().to_path_buf());
+
+        let result = manager
+            .enable(&PersonaId("p1".to_string()), workspace.path())
+            .await;
+
+        assert!(result.is_err());
+        let err_msg = format!("{:?}", result.err().unwrap());
+        assert!(err_msg.contains("no remotes"), "Error should mention no remotes: {}", err_msg);
+    }
+
+    #[tokio::test]
+    async fn test_enable_stores_correct_defaults() {
+        let workspace = create_test_workspace();
+        std::process::Command::new("git")
+            .args(["remote", "add", "origin", "https://github.com/user/repo.git"])
+            .current_dir(workspace.path())
+            .output()
+            .unwrap();
+
+        let mirrors_dir = tempfile::tempdir().unwrap();
+        let db = setup_db_with_persona("p1", "my-agent");
+        let git = Arc::new(GitCli::new("git".to_string()));
+        let manager = RepoSyncManager::new(db.clone(), git.clone(), mirrors_dir.path().to_path_buf());
+
+        let repo = manager
+            .enable(&PersonaId("p1".to_string()), workspace.path())
+            .await
+            .unwrap();
+
+        // Verify defaults per requirement 5.5
+        assert_eq!(repo.branch_strategy, BranchStrategy::Direct);
+        assert_eq!(repo.attribution_mode, AttributionMode::KeepAgent);
+        assert_eq!(repo.sync_mode, SyncMode::Remote);
+        assert_eq!(repo.secret_scan_mode, SecretScanMode::Block);
+        assert_eq!(repo.check_interval_seconds, 300);
+        assert_eq!(repo.branch_pattern.as_deref(), Some("ai/<persona-name>/<date>"));
+
+        // Verify DB record was stored
+        let stored = db.with_conn(|conn| {
+            db_ops::get_managed_repo(conn, &repo.id)
+        }).unwrap();
+        assert_eq!(stored.persona_id.0, "p1");
+        assert_eq!(stored.workspace_path, workspace.path().to_string_lossy().to_string());
+    }
+
+    #[tokio::test]
+    async fn test_enable_detects_github_provider() {
+        let workspace = create_test_workspace();
+        std::process::Command::new("git")
+            .args(["remote", "add", "origin", "https://github.com/user/repo.git"])
+            .current_dir(workspace.path())
+            .output()
+            .unwrap();
+
+        let mirrors_dir = tempfile::tempdir().unwrap();
+        let db = setup_db_with_persona("p1", "my-agent");
+        let git = Arc::new(GitCli::new("git".to_string()));
+        let manager = RepoSyncManager::new(db, git.clone(), mirrors_dir.path().to_path_buf());
+
+        let repo = manager
+            .enable(&PersonaId("p1".to_string()), workspace.path())
+            .await
+            .unwrap();
+
+        assert_eq!(repo.remote_provider, Some(RemoteProvider::Github));
+    }
+
+    #[test]
+    fn test_detect_remote_provider_github() {
+        assert_eq!(
+            RepoSyncManager::detect_remote_provider("https://github.com/user/repo.git"),
+            Some(RemoteProvider::Github)
+        );
+        assert_eq!(
+            RepoSyncManager::detect_remote_provider("git@github.com:user/repo.git"),
+            Some(RemoteProvider::Github)
+        );
+    }
+
+    #[test]
+    fn test_detect_remote_provider_gitlab() {
+        assert_eq!(
+            RepoSyncManager::detect_remote_provider("https://gitlab.com/org/project.git"),
+            Some(RemoteProvider::Gitlab)
+        );
+    }
+
+    #[test]
+    fn test_detect_remote_provider_bitbucket() {
+        assert_eq!(
+            RepoSyncManager::detect_remote_provider("https://bitbucket.org/user/repo.git"),
+            Some(RemoteProvider::Bitbucket)
+        );
+    }
+
+    #[test]
+    fn test_detect_remote_provider_unknown() {
+        assert_eq!(
+            RepoSyncManager::detect_remote_provider("https://custom-git.example.com/repo.git"),
+            None
+        );
+    }
+
     // --- pull_from_agent tests ---
 
     /// Helper to set up a workspace + mirror pair for pull_from_agent tests.
