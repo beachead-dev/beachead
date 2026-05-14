@@ -8,11 +8,28 @@ use crate::git_cli::GitCli;
 const SCAN_TIMEOUT_SECS: u64 = 30;
 
 /// A pattern used to detect potential secrets in file names or content.
-struct SecretPattern {
+pub struct SecretPattern {
     name: &'static str,
     regex: Regex,
     /// true = match against filename only, false = match against file content.
     file_only: bool,
+}
+
+impl SecretPattern {
+    /// Returns the pattern name.
+    pub fn name(&self) -> &str {
+        self.name
+    }
+
+    /// Returns a reference to the compiled regex.
+    pub fn regex(&self) -> &Regex {
+        &self.regex
+    }
+
+    /// Returns whether this pattern matches filenames only (vs content).
+    pub fn file_only(&self) -> bool {
+        self.file_only
+    }
 }
 
 /// A finding from the secret scanner indicating a potential secret was detected.
@@ -64,6 +81,11 @@ impl SecretScanner {
                 },
             ],
         }
+    }
+
+    /// Returns a reference to the internal patterns list (for testing).
+    pub fn patterns_ref(&self) -> &[SecretPattern] {
+        &self.patterns
     }
 
     /// Scan commits for secrets. Returns Ok(vec![]) if clean, Err(findings) if secrets detected.
