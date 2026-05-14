@@ -79,7 +79,8 @@ async fn logout(
 /// Resolve a help topic identifier to its static markdown content.
 ///
 /// Valid topics: "getting-started", "agents", "credentials", "policies",
-/// "templates", "personas", "sessions", "docker", "system-settings", "troubleshooting", "glossary"
+/// "templates", "personas", "sessions", "docker", "repo-sync",
+/// "system-settings", "troubleshooting", "glossary"
 ///
 /// Returns the embedded markdown content for valid topics, or `OrchestratorError::NotFound`
 /// for unrecognized topic identifiers.
@@ -94,6 +95,7 @@ pub fn resolve_help_topic(topic: &str) -> Result<&'static str, OrchestratorError
         "docker" => Ok(include_str!("../help/docker.md")),
         "templates" => Ok(include_str!("../help/templates.md")),
         "shared-memory" => Ok(include_str!("../help/shared-memory.md")),
+        "repo-sync" => Ok(include_str!("../help/repo-sync.md")),
         "system-settings" => Ok(include_str!("../help/system-settings.md")),
         "troubleshooting" => Ok(include_str!("../help/troubleshooting.md")),
         "glossary" => Ok(include_str!("../help/glossary.md")),
@@ -197,6 +199,7 @@ mod tests {
         "personas",
         "sessions",
         "shared-memory",
+        "repo-sync",
         "system-settings",
         "troubleshooting",
         "glossary",

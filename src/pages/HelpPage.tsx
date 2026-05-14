@@ -12,6 +12,7 @@ const HELP_TOPICS: HelpTopic[] = [
   { id: "personas", label: "Personas" },
   { id: "agents", label: "Agents" },
   { id: "sessions", label: "Sessions" },
+  { id: "repo-sync", label: "Repo Sync" },
   { id: "policies", label: "Policies" },
   { id: "docker", label: "Docker" },
   { id: "system-settings", label: "System Settings" },
