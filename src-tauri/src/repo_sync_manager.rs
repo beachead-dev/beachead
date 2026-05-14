@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use chrono::Utc;
@@ -34,7 +34,7 @@ use crate::types::{
 pub struct RepoSyncManager {
     pub db: Arc<Database>,
     pub git: Arc<GitCli>,
-    pub mirrors_dir: PathBuf,
+    pub mirrors_dir: RwLock<PathBuf>,
     pub scanner: SecretScanner,
     /// Background task handle for periodic commit checks.
     pub check_handle: Option<JoinHandle<()>>,
@@ -56,7 +56,7 @@ impl RepoSyncManager {
         Self {
             db,
             git,
-            mirrors_dir,
+            mirrors_dir: RwLock::new(mirrors_dir),
             scanner: SecretScanner::new(),
             check_handle: None,
             cached_status: Arc::new(DashMap::new()),
@@ -279,7 +279,7 @@ impl RepoSyncManager {
             })?
             .to_string_lossy()
             .to_string();
-        let mirror_path = self.mirrors_dir.join(&persona_name).join(&project_name);
+        let mirror_path = self.mirrors_dir.read().unwrap().join(&persona_name).join(&project_name);
 
         // 5. Check if mirror path already exists → error
         if mirror_path.exists() {
@@ -426,7 +426,7 @@ impl RepoSyncManager {
             })?
             .to_string_lossy()
             .to_string();
-        let mirror_path = self.mirrors_dir.join(&persona_name).join(&project_name);
+        let mirror_path = self.mirrors_dir.read().unwrap().join(&persona_name).join(&project_name);
 
         // 4. Check if mirror path already exists → error
         if mirror_path.exists() {
@@ -1675,7 +1675,7 @@ impl RepoSyncManager {
     /// in all affected ManagedRepo records to reflect the new base directory.
     ///
     /// # Requirements: 14.3, 14.4, 14.5, 14.6
-    pub fn update_mirrors_dir(&mut self, new_path: &str) -> Result<PathBuf, OrchestratorError> {
+    pub fn update_mirrors_dir(&self, new_path: &str) -> Result<PathBuf, OrchestratorError> {
         // 1. Validate path
         if new_path.is_empty() {
             return Err(OrchestratorError::Validation(
@@ -1706,7 +1706,7 @@ impl RepoSyncManager {
         }
 
         // 3. Update mirror_path in all affected ManagedRepo records
-        let old_dir = self.mirrors_dir.clone();
+        let old_dir = self.mirrors_dir.read().unwrap().clone();
         let old_dir_str = old_dir.to_string_lossy().to_string();
 
         self.db.with_conn(|conn| {
@@ -1735,9 +1735,14 @@ impl RepoSyncManager {
         })?;
 
         // 4. Update the manager's mirrors_dir
-        self.mirrors_dir = new_dir.clone();
+        *self.mirrors_dir.write().unwrap() = new_dir.clone();
 
         Ok(new_dir)
+    }
+
+    /// Returns the current mirrors directory path.
+    pub fn get_mirrors_dir(&self) -> PathBuf {
+        self.mirrors_dir.read().unwrap().clone()
     }
 }
 
@@ -4336,7 +4341,7 @@ mod tests {
         let mirrors_dir = tempfile::tempdir().unwrap();
         let db = setup_db_with_persona("p1", "my-agent");
         let git = Arc::new(GitCli::new("git".to_string()));
-        let mut manager =
+        let manager =
             RepoSyncManager::new(db.clone(), git.clone(), mirrors_dir.path().to_path_buf());
 
         let new_dir = mirrors_dir.path().join("new-mirrors-location");
@@ -4345,7 +4350,7 @@ mod tests {
         let result = manager.update_mirrors_dir(new_dir.to_str().unwrap());
         assert!(result.is_ok());
         assert!(new_dir.exists());
-        assert_eq!(manager.mirrors_dir, new_dir);
+        assert_eq!(manager.get_mirrors_dir(), new_dir);
     }
 
     #[tokio::test]
@@ -4353,7 +4358,7 @@ mod tests {
         let mirrors_dir = tempfile::tempdir().unwrap();
         let db = setup_db_with_persona("p1", "my-agent");
         let git = Arc::new(GitCli::new("git".to_string()));
-        let mut manager =
+        let manager =
             RepoSyncManager::new(db.clone(), git.clone(), mirrors_dir.path().to_path_buf());
 
         let result = manager.update_mirrors_dir("");
@@ -4365,7 +4370,7 @@ mod tests {
         let mirrors_dir = tempfile::tempdir().unwrap();
         let db = setup_db_with_persona("p1", "my-agent");
         let git = Arc::new(GitCli::new("git".to_string()));
-        let mut manager =
+        let manager =
             RepoSyncManager::new(db.clone(), git.clone(), mirrors_dir.path().to_path_buf());
 
         let result = manager.update_mirrors_dir("relative/path");
@@ -4377,7 +4382,7 @@ mod tests {
         let mirrors_dir = tempfile::tempdir().unwrap();
         let db = setup_db_with_persona("p1", "my-agent");
         let git = Arc::new(GitCli::new("git".to_string()));
-        let mut manager =
+        let manager =
             RepoSyncManager::new(db.clone(), git.clone(), mirrors_dir.path().to_path_buf());
 
         let long_path = format!("/{}", "a".repeat(4096));
@@ -4391,7 +4396,7 @@ mod tests {
         let mirrors_dir = tempfile::tempdir().unwrap();
         let db = setup_db_with_persona("p1", "my-agent");
         let git = Arc::new(GitCli::new("git".to_string()));
-        let mut manager =
+        let manager =
             RepoSyncManager::new(db.clone(), git.clone(), mirrors_dir.path().to_path_buf());
 
         let repo = manager

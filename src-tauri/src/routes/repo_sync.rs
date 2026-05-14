@@ -4,14 +4,16 @@
 //! repository CRUD, sync operations, credential management, and status polling.
 
 use axum::{
-    extract::State,
-    routing::get,
+    extract::{Path, State},
+    routing::{get, post},
     Json, Router,
 };
+use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::error::OrchestratorError;
 use crate::server::AppState;
+use crate::types::ManagedRepoId;
 
 /// Response for the lightweight status endpoint used by the sidebar badge.
 #[derive(Debug, Serialize)]
@@ -31,6 +33,55 @@ pub struct UpdateMirrorsDirRequest {
     pub path: String,
 }
 
+/// Request body for the push-to-remote endpoint.
+#[derive(Debug, Deserialize)]
+pub struct PushToRemoteRequest {
+    pub commit_shas: Vec<String>,
+    pub squash: bool,
+    pub squash_message: Option<String>,
+}
+
+/// Per-repo operation lock to prevent concurrent sync operations.
+///
+/// If a repo ID is present in this map, a sync operation is in progress for it.
+/// Handlers try to acquire before starting an operation and release on completion.
+/// Returns HTTP 409 if the repo already has an operation in progress.
+static OPERATION_LOCKS: std::sync::LazyLock<DashMap<String, ()>> =
+    std::sync::LazyLock::new(DashMap::new);
+
+/// Guard that removes the repo ID from the operation lock map on drop.
+/// Ensures the lock is always released, even on early returns or panics.
+struct OperationGuard {
+    repo_id: String,
+}
+
+impl OperationGuard {
+    /// Try to acquire the operation lock for a repo.
+    /// Returns `Ok(Self)` if acquired, or `Err(OrchestratorError::SyncInProgress)` if busy.
+    fn try_acquire(repo_id: &str) -> Result<Self, OrchestratorError> {
+        match OPERATION_LOCKS.entry(repo_id.to_string()) {
+            dashmap::mapref::entry::Entry::Occupied(_) => {
+                Err(OrchestratorError::SyncInProgress(format!(
+                    "A sync operation is already in progress for repo '{}'",
+                    repo_id
+                )))
+            }
+            dashmap::mapref::entry::Entry::Vacant(entry) => {
+                entry.insert(());
+                Ok(Self {
+                    repo_id: repo_id.to_string(),
+                })
+            }
+        }
+    }
+}
+
+impl Drop for OperationGuard {
+    fn drop(&mut self) {
+        OPERATION_LOCKS.remove(&self.repo_id);
+    }
+}
+
 /// Build the repo-sync routes sub-router.
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -39,6 +90,23 @@ pub fn router() -> Router<AppState> {
             "/api/repo-sync/settings/mirrors-dir",
             get(get_mirrors_dir).put(update_mirrors_dir),
         )
+        .route(
+            "/api/repo-sync/repos/{id}/pull-from-agent",
+            post(pull_from_agent),
+        )
+        .route(
+            "/api/repo-sync/repos/{id}/push-to-remote",
+            post(push_to_remote),
+        )
+        .route(
+            "/api/repo-sync/repos/{id}/fetch-from-remote",
+            post(fetch_from_remote),
+        )
+        .route(
+            "/api/repo-sync/repos/{id}/push-to-agent",
+            post(push_to_agent),
+        )
+        .route("/api/repo-sync/repos/{id}/commits", get(list_commits))
 }
 
 /// GET /api/repo-sync/status — lightweight endpoint for sidebar badge.
