@@ -16,9 +16,12 @@ vi.mock("../lib/api", () => ({
     put: vi.fn(),
     del: vi.fn(),
   },
+  getRepos: vi.fn(),
+  deleteRepo: vi.fn(),
 }));
 
 import { api } from "../lib/api";
+import { getRepos, deleteRepo } from "../lib/api";
 
 const mockApi = api as {
   get: ReturnType<typeof vi.fn>;
@@ -26,6 +29,9 @@ const mockApi = api as {
   put: ReturnType<typeof vi.fn>;
   del: ReturnType<typeof vi.fn>;
 };
+
+const mockGetRepos = getRepos as ReturnType<typeof vi.fn>;
+const mockDeleteRepo = deleteRepo as ReturnType<typeof vi.fn>;
 
 const mockAgents = [
   {
@@ -249,5 +255,134 @@ describe("PersonasPage - Additional Workspaces", () => {
 
     // No remove buttons should be present
     expect(screen.queryByLabelText(/Remove additional workspace/)).not.toBeInTheDocument();
+  });
+});
+
+describe("PersonasPage - Mirror Cleanup on Persona Deletion", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("shows mirror cleanup dialog when deleting persona with managed repos", async () => {
+    setupApiMocks();
+    mockGetRepos.mockResolvedValue([
+      {
+        id: "repo-1",
+        persona_id: "persona-1",
+        persona_name: "Test Persona",
+        workspace_path: "/home/user/project",
+        mirror_path: "/home/user/.local/share/beachead/mirrors/Test Persona/project",
+        remote_url: "https://github.com/user/project.git",
+        remote_provider: "github",
+        branch_strategy: "direct",
+        branch_pattern: null,
+        attribution_mode: "keep_agent",
+        sync_mode: "remote",
+        secret_scan_mode: "block",
+        check_interval_seconds: 300,
+        sync_status: { workspace_ahead: 0, mirror_ahead: 0, remote_ahead: 0 },
+        credential_status: "configured",
+        mirror_exists: true,
+        created_at: "2024-01-01T00:00:00Z",
+        updated_at: "2024-01-01T00:00:00Z",
+      },
+    ]);
+    mockDeleteRepo.mockResolvedValue(undefined);
+    mockApi.del.mockResolvedValue(undefined);
+
+    render(<PersonasPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText("+ New Persona")).toBeInTheDocument();
+    });
+
+    // Click delete on the persona
+    await userEvent.click(screen.getByLabelText("Delete Test Persona"));
+
+    // Should show the mirror cleanup dialog with mirror path
+    await waitFor(() => {
+      expect(screen.getByText(/managed/)).toBeInTheDocument();
+      expect(screen.getByText(/mirror directories/i)).toBeInTheDocument();
+    });
+
+    // Should show the mirror path
+    expect(screen.getByText("/home/user/.local/share/beachead/mirrors/Test Persona/project")).toBeInTheDocument();
+
+    // Should show both options: "Keep mirrors" and "Delete mirrors"
+    expect(screen.getByRole("button", { name: /Keep mirrors/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Delete mirrors/i })).toBeInTheDocument();
+  });
+
+  it("calls deleteRepo with deleteMirror=true when 'Delete mirrors' is clicked", async () => {
+    setupApiMocks();
+    mockGetRepos.mockResolvedValue([
+      {
+        id: "repo-1",
+        persona_id: "persona-1",
+        persona_name: "Test Persona",
+        workspace_path: "/home/user/project",
+        mirror_path: "/home/user/.local/share/beachead/mirrors/Test Persona/project",
+        remote_url: "https://github.com/user/project.git",
+        remote_provider: "github",
+        branch_strategy: "direct",
+        branch_pattern: null,
+        attribution_mode: "keep_agent",
+        sync_mode: "remote",
+        secret_scan_mode: "block",
+        check_interval_seconds: 300,
+        sync_status: { workspace_ahead: 0, mirror_ahead: 0, remote_ahead: 0 },
+        credential_status: "configured",
+        mirror_exists: true,
+        created_at: "2024-01-01T00:00:00Z",
+        updated_at: "2024-01-01T00:00:00Z",
+      },
+    ]);
+    mockDeleteRepo.mockResolvedValue(undefined);
+    mockApi.del.mockResolvedValue(undefined);
+
+    render(<PersonasPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText("+ New Persona")).toBeInTheDocument();
+    });
+
+    await userEvent.click(screen.getByLabelText("Delete Test Persona"));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Delete mirrors/i })).toBeInTheDocument();
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: /Delete mirrors/i }));
+
+    await waitFor(() => {
+      expect(mockDeleteRepo).toHaveBeenCalledWith("repo-1", true);
+    });
+  });
+
+  it("shows simple delete dialog when persona has no managed repos", async () => {
+    setupApiMocks();
+    mockGetRepos.mockResolvedValue([]);
+    mockApi.del.mockResolvedValue(undefined);
+
+    render(<PersonasPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText("+ New Persona")).toBeInTheDocument();
+    });
+
+    await userEvent.click(screen.getByLabelText("Delete Test Persona"));
+
+    // Should show simple confirmation without mirror options
+    await waitFor(() => {
+      expect(screen.getByText(/Are you sure you want to delete this persona/)).toBeInTheDocument();
+    });
+
+    expect(screen.queryByRole("button", { name: /Keep mirrors/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Delete mirrors/i })).not.toBeInTheDocument();
+    // The simple dialog has a "Delete" button (not "Keep mirrors" / "Delete mirrors")
+    const deleteBtn = screen.getAllByRole("button").find(
+      (btn) => btn.textContent === "Delete"
+    );
+    expect(deleteBtn).toBeInTheDocument();
   });
 });
