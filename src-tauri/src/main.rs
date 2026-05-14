@@ -35,6 +35,8 @@ mod additional_workspace_property_tests;
 mod mcp_containers_test;
 #[cfg(test)]
 mod sandboxes_test;
+#[cfg(test)]
+mod db_ops_repo_sync_tests;
 mod server;
 pub mod session_manager;
 pub mod system_manager;
