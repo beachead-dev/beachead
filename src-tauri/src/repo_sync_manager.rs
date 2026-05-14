@@ -2332,6 +2332,203 @@ mod tests {
         assert!(result.unwrap_err().to_string().contains("not found"));
     }
 
+    // --- Tests for push_to_remote ---
+
+    /// Helper to set up a mirror repo for push_to_remote tests.
+    /// Returns (manager, repo_id, mirror_dir) with a managed repo record.
+    async fn setup_push_to_remote_test(
+        branch_strategy: BranchStrategy,
+        secret_scan_mode: SecretScanMode,
+    ) -> (RepoSyncManager, ManagedRepoId, tempfile::TempDir) {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        db.with_conn(|conn| {
+            conn.execute_batch(
+                "INSERT INTO agent_types (id, name, sbx_agent, is_builtin, metadata, created_at, updated_at)
+                 VALUES ('a1', 'claude', 'claude', 1, '{}', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z');
+                 INSERT INTO personas (id, name, agent_type_id, workspace_path, memory_enabled, created_at, updated_at)
+                 VALUES ('p1', 'my-agent', 'a1', '/tmp/workspace', 0, '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z');",
+            ).map_err(|e| OrchestratorError::Database(e.to_string()))?;
+            Ok(())
+        }).unwrap();
+
+        // Create mirror repo with some commits
+        let mirror_dir = tempfile::tempdir().unwrap();
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(mirror_dir.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["config", "user.email", "test@test.com"])
+            .current_dir(mirror_dir.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["config", "user.name", "Test"])
+            .current_dir(mirror_dir.path())
+            .output()
+            .unwrap();
+        std::fs::write(mirror_dir.path().join("README.md"), "# Test").unwrap();
+        std::process::Command::new("git")
+            .args(["add", "."])
+            .current_dir(mirror_dir.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["commit", "-m", "initial"])
+            .current_dir(mirror_dir.path())
+            .output()
+            .unwrap();
+
+        // Insert managed repo record
+        let repo_id = ManagedRepoId::new();
+        let now = Utc::now();
+        let repo = ManagedRepo {
+            id: repo_id.clone(),
+            persona_id: PersonaId("p1".to_string()),
+            workspace_path: "/tmp/workspace".to_string(),
+            mirror_path: mirror_dir.path().to_string_lossy().to_string(),
+            remote_url: Some("https://github.com/user/repo.git".to_string()),
+            remote_provider: Some(RemoteProvider::Github),
+            branch_strategy,
+            branch_pattern: Some("ai/<persona-name>/<date>".to_string()),
+            attribution_mode: AttributionMode::KeepAgent,
+            sync_mode: SyncMode::Remote,
+            secret_scan_mode,
+            check_interval_seconds: 300,
+            created_at: now,
+            updated_at: now,
+        };
+        db.with_conn(|conn| db_ops::insert_managed_repo(conn, &repo)).unwrap();
+
+        let git = Arc::new(GitCli::new("git".to_string()));
+        let manager = RepoSyncManager::new(db, git, PathBuf::from("/tmp/mirrors"));
+
+        (manager, repo_id, mirror_dir)
+    }
+
+    #[tokio::test]
+    async fn test_push_to_remote_fails_without_credentials() {
+        let (manager, repo_id, _mirror_dir) =
+            setup_push_to_remote_test(BranchStrategy::Direct, SecretScanMode::Block).await;
+
+        let result = manager
+            .push_to_remote(&repo_id, &["abc123".to_string()], false, None)
+            .await;
+
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("Credentials") || err_msg.contains("credentials"),
+            "Expected credentials error, got: {}",
+            err_msg
+        );
+    }
+
+    #[tokio::test]
+    async fn test_push_to_remote_repo_not_found() {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        db.with_conn(|conn| {
+            conn.execute_batch(
+                "INSERT INTO agent_types (id, name, sbx_agent, is_builtin, metadata, created_at, updated_at)
+                 VALUES ('a1', 'claude', 'claude', 1, '{}', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z');",
+            ).map_err(|e| OrchestratorError::Database(e.to_string()))?;
+            Ok(())
+        }).unwrap();
+
+        let git = Arc::new(GitCli::new("git".to_string()));
+        let manager = RepoSyncManager::new(db, git, PathBuf::from("/tmp/mirrors"));
+
+        let result = manager
+            .push_to_remote(
+                &ManagedRepoId("nonexistent".to_string()),
+                &["abc123".to_string()],
+                false,
+                None,
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn test_squash_commits_combines_into_one() {
+        let (_manager, _repo_id, mirror_dir) =
+            setup_push_to_remote_test(BranchStrategy::Direct, SecretScanMode::Block).await;
+
+        // Add multiple commits to the mirror
+        std::fs::write(mirror_dir.path().join("file1.txt"), "content1").unwrap();
+        std::process::Command::new("git")
+            .args(["add", "."])
+            .current_dir(mirror_dir.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["commit", "-m", "add file1"])
+            .current_dir(mirror_dir.path())
+            .output()
+            .unwrap();
+
+        std::fs::write(mirror_dir.path().join("file2.txt"), "content2").unwrap();
+        std::process::Command::new("git")
+            .args(["add", "."])
+            .current_dir(mirror_dir.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["commit", "-m", "add file2"])
+            .current_dir(mirror_dir.path())
+            .output()
+            .unwrap();
+
+        // Get the two commit SHAs
+        let log_output = std::process::Command::new("git")
+            .args(["log", "--format=%H", "-2"])
+            .current_dir(mirror_dir.path())
+            .output()
+            .unwrap();
+        let shas: Vec<String> = String::from_utf8_lossy(&log_output.stdout)
+            .trim()
+            .lines()
+            .rev() // oldest first
+            .map(|s| s.to_string())
+            .collect();
+
+        assert_eq!(shas.len(), 2);
+
+        // Squash the commits
+        let result = _manager
+            .squash_commits(mirror_dir.path(), &shas, "Squashed: file1 + file2", "master")
+            .await;
+        assert!(result.is_ok(), "squash_commits failed: {:?}", result.err());
+
+        // Verify there's now only one commit after the initial
+        let count_output = std::process::Command::new("git")
+            .args(["rev-list", "--count", "HEAD"])
+            .current_dir(mirror_dir.path())
+            .output()
+            .unwrap();
+        let count: u32 = String::from_utf8_lossy(&count_output.stdout)
+            .trim()
+            .parse()
+            .unwrap();
+        // Should be 2: initial + squashed
+        assert_eq!(count, 2, "Expected 2 commits (initial + squashed), got {}", count);
+
+        // Verify the squash commit message
+        let msg_output = std::process::Command::new("git")
+            .args(["log", "-1", "--format=%s"])
+            .current_dir(mirror_dir.path())
+            .output()
+            .unwrap();
+        let msg = String::from_utf8_lossy(&msg_output.stdout).trim().to_string();
+        assert_eq!(msg, "Squashed: file1 + file2");
+
+        // Verify both files still exist
+        assert!(mirror_dir.path().join("file1.txt").exists());
+        assert!(mirror_dir.path().join("file2.txt").exists());
+    }
+
     // --- fetch_from_remote tests ---
 
     #[tokio::test]
