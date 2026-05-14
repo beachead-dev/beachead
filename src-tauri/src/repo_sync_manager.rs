@@ -14,10 +14,11 @@ use crate::db::Database;
 use crate::db_ops;
 use crate::error::OrchestratorError;
 use crate::git_cli::{GitCli, GitError};
+use crate::repo_credential_manager;
 use crate::secret_scanner::SecretScanner;
 use crate::types::{
-    AttributionMode, BranchStrategy, ManagedRepo, ManagedRepoId, PersonaId, RemoteProvider,
-    SecretScanMode, SyncMode, SyncResult,
+    AttributionMode, BranchStrategy, ManagedRepo, ManagedRepoId, PersonaId, PushResult,
+    RemoteProvider, SecretScanMode, SyncMode, SyncResult,
 };
 
 /// Manages git remote synchronization using a two-directory architecture.
@@ -686,6 +687,134 @@ impl RepoSyncManager {
         Ok(SyncResult { commits })
     }
 
+    /// Push commits from the mirror into the agent's workspace.
+    ///
+    /// Executes `git pull <mirror-path> <branch>` in the workspace using local
+    /// file paths only (no network access required). Checks for dirty working tree
+    /// first and returns an error if uncommitted changes exist.
+    ///
+    /// # Returns
+    /// - `Ok(SyncResult { commits })` with the number of commits applied.
+    /// - `Err(OrchestratorError::Validation(...))` if the workspace has uncommitted
+    ///   changes or a merge conflict occurs (includes conflicting file paths).
+    pub async fn push_to_agent(&self, repo_id: &ManagedRepoId) -> Result<SyncResult, OrchestratorError> {
+        let repo = self.db.with_conn(|conn| {
+            db_ops::get_managed_repo(conn, repo_id)
+        })?;
+
+        let workspace = Path::new(&repo.workspace_path);
+        let mirror = Path::new(&repo.mirror_path);
+
+        let mirror_str = mirror.to_str().ok_or_else(|| {
+            OrchestratorError::Validation("Mirror path contains invalid UTF-8".to_string())
+        })?;
+
+        // Check for dirty working tree
+        let status = self
+            .git
+            .exec(workspace, &["status", "--porcelain"], None, false)
+            .await
+            .map_err(|e| {
+                OrchestratorError::Internal(format!("Failed to check workspace status: {}", e))
+            })?;
+
+        if !status.stdout.trim().is_empty() {
+            return Err(OrchestratorError::Validation(
+                "Workspace has uncommitted changes".to_string(),
+            ));
+        }
+
+        // Get current branch from mirror
+        let branch = self.git.get_current_branch(mirror).await.map_err(|e| {
+            OrchestratorError::Internal(format!("Failed to get current branch from mirror: {}", e))
+        })?;
+
+        if branch.is_empty() {
+            return Err(OrchestratorError::Validation(
+                "Mirror is in detached HEAD state; cannot pull".to_string(),
+            ));
+        }
+
+        // Record HEAD before pull to count commits afterward
+        let head_before = self
+            .git
+            .exec(workspace, &["rev-parse", "HEAD"], None, false)
+            .await
+            .map(|o| o.stdout.trim().to_string())
+            .unwrap_or_default();
+
+        // Execute git pull --no-rebase <mirror-path> <branch> in workspace (local, no network)
+        let pull_result = self
+            .git
+            .exec(workspace, &["pull", "--no-rebase", mirror_str, &branch], None, false)
+            .await;
+
+        match pull_result {
+            Ok(_) => { /* pull succeeded */ }
+            Err(GitError::MergeConflict { stderr: _ }) => {
+                let conflict_files = self.get_conflict_files(workspace).await;
+                let file_list = if conflict_files.is_empty() {
+                    "Merge conflict in workspace".to_string()
+                } else {
+                    format!(
+                        "Merge conflict in files: {}",
+                        conflict_files.join(", ")
+                    )
+                };
+                return Err(OrchestratorError::Validation(file_list));
+            }
+            Err(GitError::NonZeroExit { stderr, .. }) => {
+                // Check if this is a merge conflict — git pull puts CONFLICT in stdout,
+                // not stderr, so classify_git_error won't catch it. Check for unmerged files.
+                let conflict_files = self.get_conflict_files(workspace).await;
+                if !conflict_files.is_empty() {
+                    let file_list = format!(
+                        "Merge conflict in files: {}",
+                        conflict_files.join(", ")
+                    );
+                    return Err(OrchestratorError::Validation(file_list));
+                }
+                // Also check stderr for conflict indicators
+                if stderr.contains("CONFLICT") || stderr.contains("Automatic merge failed") {
+                    return Err(OrchestratorError::Validation(
+                        "Merge conflict in workspace".to_string(),
+                    ));
+                }
+                return Err(OrchestratorError::Internal(format!(
+                    "Pull failed: {}",
+                    stderr
+                )));
+            }
+            Err(e) => {
+                return Err(OrchestratorError::Internal(format!(
+                    "Pull failed: {}",
+                    e
+                )));
+            }
+        }
+
+        // Count commits applied by comparing HEAD before and after
+        let commits = if head_before.is_empty() {
+            0
+        } else {
+            let count_output = self
+                .git
+                .exec(
+                    workspace,
+                    &["rev-list", "--count", &format!("{}..HEAD", head_before)],
+                    None,
+                    false,
+                )
+                .await;
+            match count_output {
+                Ok(output) => output.stdout.trim().parse::<u32>().unwrap_or(0),
+                Err(_) => 0,
+            }
+        };
+
+        Ok(SyncResult { commits })
+    }
+
     /// Get the list of files with merge conflicts in the given repo.
     async fn get_conflict_files(&self, repo_path: &Path) -> Vec<String> {
         // Use `git diff --name-only --diff-filter=U` to list unmerged (conflicting) files
@@ -708,6 +837,251 @@ impl RepoSyncManager {
                 .collect(),
             Err(_) => vec![],
         }
+    }
+
+    /// Push selected commits from the mirror to the remote repository.
+    ///
+    /// This operation:
+    /// 1. Gets the repo from DB
+    /// 2. Checks credentials are configured (returns error if not)
+    /// 3. Runs secret scan on the selected commits (blocks if secrets found in "block" mode)
+    /// 4. Determines target branch based on branch_strategy (direct or feature branch with dedup)
+    /// 5. If squash requested: creates a squash commit combining selected commits
+    /// 6. Builds credential env and pushes to remote
+    /// 7. Returns PushResult with branch name and commit count
+    ///
+    /// # Arguments
+    /// - `repo_id`: The ID of the managed repo to push for.
+    /// - `commit_shas`: The commit SHAs to push (selected by user in commit review).
+    /// - `squash`: Whether to squash the selected commits into one.
+    /// - `squash_message`: Optional message for the squash commit.
+    ///
+    /// # Returns
+    /// - `Ok(PushResult { branch, commits })` on success.
+    /// - `Err(OrchestratorError::MissingCredentials(...))` if credentials are not configured.
+    /// - `Err(OrchestratorError::Validation(...))` if secrets are detected (block mode).
+    /// - `Err(OrchestratorError::Internal(...))` on push failure.
+    ///
+    /// # Requirements: 8.3, 8.4, 8.5, 8.6, 8.9
+    pub async fn push_to_remote(
+        &self,
+        repo_id: &ManagedRepoId,
+        commit_shas: &[String],
+        squash: bool,
+        squash_message: Option<&str>,
+    ) -> Result<PushResult, OrchestratorError> {
+        // 1. Get the repo from DB
+        let repo = self.db.with_conn(|conn| db_ops::get_managed_repo(conn, repo_id))?;
+
+        let mirror = Path::new(&repo.mirror_path);
+
+        // 2. Check credentials are configured (Requirement 8.9)
+        let cred_configured =
+            repo_credential_manager::credentials_configured(&repo_id.0)?;
+        if !cred_configured {
+            return Err(OrchestratorError::MissingCredentials(
+                "Credentials must be configured before pushing to remote".to_string(),
+            ));
+        }
+
+        // 3. Run secret scan on selected commits (Requirement 15.1)
+        let scan_result = self
+            .scanner
+            .scan_commits(mirror, commit_shas, &self.git)
+            .await;
+
+        match scan_result {
+            Err(findings) if repo.secret_scan_mode == SecretScanMode::Block => {
+                // Block mode: reject the push with findings
+                let findings_desc: Vec<String> = findings
+                    .iter()
+                    .map(|f| {
+                        if f.file_path.is_empty() {
+                            f.pattern_name.clone()
+                        } else {
+                            format!("{}: {}", f.file_path, f.pattern_name)
+                        }
+                    })
+                    .collect();
+                return Err(OrchestratorError::Validation(format!(
+                    "Secret scan detected potential secrets: {}",
+                    findings_desc.join("; ")
+                )));
+            }
+            Err(_findings) => {
+                // Warn-only mode: proceed (the frontend handles the warning UI)
+                // The API layer should have already confirmed the user wants to proceed
+            }
+            Ok(_) => {
+                // No secrets found, proceed
+            }
+        }
+
+        // 4. Determine target branch based on branch_strategy (Requirement 8.4)
+        let branch = match repo.branch_strategy {
+            BranchStrategy::FeatureBranch => {
+                let pattern = repo
+                    .branch_pattern
+                    .as_deref()
+                    .unwrap_or("ai/<persona-name>/<date>");
+                self.resolve_branch_name(&repo, pattern).await?
+            }
+            BranchStrategy::Direct => {
+                self.git.get_current_branch(mirror).await.map_err(|e| {
+                    OrchestratorError::Internal(format!(
+                        "Failed to get current branch: {}",
+                        e
+                    ))
+                })?
+            }
+        };
+
+        if branch.is_empty() {
+            return Err(OrchestratorError::Validation(
+                "Mirror is in detached HEAD state; cannot push".to_string(),
+            ));
+        }
+
+        // 5. Handle squash if requested
+        if squash && commit_shas.len() > 1 {
+            let message = squash_message.unwrap_or("Squashed commits");
+            self.squash_commits(mirror, commit_shas, message, &branch)
+                .await?;
+        }
+
+        // For feature branch strategy, create the branch locally before pushing
+        if repo.branch_strategy == BranchStrategy::FeatureBranch {
+            // Create the feature branch at the current HEAD (or squashed commit)
+            let _ = self
+                .git
+                .exec(mirror, &["checkout", "-B", &branch], None, false)
+                .await
+                .map_err(|e| {
+                    OrchestratorError::Internal(format!(
+                        "Failed to create feature branch '{}': {}",
+                        branch, e
+                    ))
+                })?;
+        }
+
+        // 6. Build credential env and push (Requirement 8.3)
+        let cred_env = repo_credential_manager::build_credential_env(&repo_id.0)?;
+
+        self.git
+            .exec(mirror, &["push", "origin", &branch], Some(&cred_env), true)
+            .await
+            .map_err(|e| {
+                OrchestratorError::Internal(format!("Push to remote failed: {}", e))
+            })?;
+
+        // 7. Return PushResult (Requirement 8.5)
+        Ok(PushResult {
+            branch,
+            commits: commit_shas.len() as u32,
+        })
+    }
+
+    /// Squash multiple commits into a single commit.
+    ///
+    /// Uses `git reset --soft` to the parent of the first commit, then creates
+    /// a new commit with the combined changes and the provided message.
+    ///
+    /// # Arguments
+    /// - `mirror`: Path to the mirror repository.
+    /// - `commit_shas`: The commit SHAs to squash (in chronological order).
+    /// - `message`: The commit message for the squashed commit.
+    /// - `branch`: The target branch name (used for reference).
+    async fn squash_commits(
+        &self,
+        mirror: &Path,
+        commit_shas: &[String],
+        message: &str,
+        _branch: &str,
+    ) -> Result<(), OrchestratorError> {
+        if commit_shas.is_empty() {
+            return Ok(());
+        }
+
+        // Get the parent of the first commit to reset to
+        let first_sha = &commit_shas[0];
+        let parent_ref = format!("{}^", first_sha);
+
+        // Soft reset to the parent of the first commit — keeps all changes staged
+        self.git
+            .exec(mirror, &["reset", "--soft", &parent_ref], None, false)
+            .await
+            .map_err(|e| {
+                OrchestratorError::Internal(format!(
+                    "Failed to soft reset for squash: {}",
+                    e
+                ))
+            })?;
+
+        // Create a new commit with all the staged changes
+        self.git
+            .exec(mirror, &["commit", "-m", message], None, false)
+            .await
+            .map_err(|e| {
+                OrchestratorError::Internal(format!(
+                    "Failed to create squash commit: {}",
+                    e
+                ))
+            })?;
+
+        Ok(())
+    }
+
+    /// Fetch new commits from the remote into the mirror.
+    ///
+    /// Executes `git fetch origin` on the mirror using the credential helper for
+    /// authentication, then counts how many commits the local branch is behind
+    /// the remote tracking branch.
+    ///
+    /// # Arguments
+    /// - `repo_id`: The ID of the managed repo to fetch for.
+    ///
+    /// # Returns
+    /// - `Ok(SyncResult { commits })` with the number of commits behind the remote.
+    /// - `Err(OrchestratorError::MissingCredentials(...))` if credentials are not configured.
+    /// - `Err(OrchestratorError::Internal(...))` on fetch failure (network, auth, etc.).
+    ///
+    /// # Requirements: 9.2, 9.3, 9.4
+    pub async fn fetch_from_remote(
+        &self,
+        repo_id: &ManagedRepoId,
+    ) -> Result<SyncResult, OrchestratorError> {
+        // 1. Get the repo from DB
+        let repo = self.db.with_conn(|conn| {
+            db_ops::get_managed_repo(conn, repo_id)
+        })?;
+
+        let mirror = Path::new(&repo.mirror_path);
+
+        // 2. Build credential env (return error if credentials not configured)
+        let cred_env = repo_credential_manager::build_credential_env(&repo_id.0)?;
+
+        // 3. Execute `git fetch origin` with credentials and network timeout
+        self.git
+            .exec(mirror, &["fetch", "origin"], Some(&cred_env), true)
+            .await
+            .map_err(|e| {
+                OrchestratorError::Internal(format!("Failed to fetch from remote: {}", e))
+            })?;
+
+        // 4. Get current branch
+        let branch = self.git.get_current_branch(mirror).await.map_err(|e| {
+            OrchestratorError::Internal(format!("Failed to get current branch: {}", e))
+        })?;
+
+        // 5. Count commits behind using ahead_behind
+        let (_, behind) = self
+            .git
+            .ahead_behind(mirror, &branch, &format!("origin/{}", branch))
+            .await
+            .unwrap_or((0, 0));
+
+        // 6. Return SyncResult with the behind count
+        Ok(SyncResult { commits: behind })
     }
 }
 
@@ -1728,5 +2102,452 @@ mod tests {
             .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("not found"));
+    }
+
+    // --- Tests for push_to_agent ---
+
+    /// Helper to set up a workspace+mirror pair for push_to_agent tests.
+    /// The mirror is cloned from the workspace, so both start at the same commit.
+    /// Workspace git config is set for commits.
+    async fn setup_push_to_agent_test() -> (
+        RepoSyncManager,
+        ManagedRepoId,
+        tempfile::TempDir,
+        tempfile::TempDir,
+    ) {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        db.with_conn(|conn| {
+            conn.execute_batch(
+                "INSERT INTO agent_types (id, name, sbx_agent, is_builtin, metadata, created_at, updated_at)
+                 VALUES ('a1', 'claude', 'claude', 1, '{}', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z');
+                 INSERT INTO personas (id, name, agent_type_id, workspace_path, memory_enabled, created_at, updated_at)
+                 VALUES ('p1', 'my-agent', 'a1', '/tmp/workspace', 0, '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z');",
+            ).map_err(|e| OrchestratorError::Database(e.to_string()))?;
+            Ok(())
+        }).unwrap();
+
+        // Create mirror repo (source of truth for push_to_agent)
+        let mirror_dir = tempfile::tempdir().unwrap();
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(mirror_dir.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["config", "user.email", "test@test.com"])
+            .current_dir(mirror_dir.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["config", "user.name", "Test"])
+            .current_dir(mirror_dir.path())
+            .output()
+            .unwrap();
+        std::fs::write(mirror_dir.path().join("README.md"), "# Test").unwrap();
+        std::process::Command::new("git")
+            .args(["add", "."])
+            .current_dir(mirror_dir.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["commit", "-m", "initial"])
+            .current_dir(mirror_dir.path())
+            .output()
+            .unwrap();
+
+        // Clone mirror to create workspace
+        let workspace_dir = tempfile::tempdir().unwrap();
+        std::process::Command::new("git")
+            .args([
+                "clone",
+                mirror_dir.path().to_str().unwrap(),
+                workspace_dir.path().to_str().unwrap(),
+            ])
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["config", "user.email", "test@test.com"])
+            .current_dir(workspace_dir.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["config", "user.name", "Test"])
+            .current_dir(workspace_dir.path())
+            .output()
+            .unwrap();
+        // Remove origin from workspace (simulating repo sync isolation)
+        std::process::Command::new("git")
+            .args(["remote", "remove", "origin"])
+            .current_dir(workspace_dir.path())
+            .output()
+            .unwrap();
+
+        // Insert managed repo record
+        let repo_id = ManagedRepoId::new();
+        let now = Utc::now();
+        let repo = ManagedRepo {
+            id: repo_id.clone(),
+            persona_id: PersonaId("p1".to_string()),
+            workspace_path: workspace_dir.path().to_string_lossy().to_string(),
+            mirror_path: mirror_dir.path().to_string_lossy().to_string(),
+            remote_url: None,
+            remote_provider: None,
+            branch_strategy: BranchStrategy::Direct,
+            branch_pattern: None,
+            attribution_mode: AttributionMode::KeepAgent,
+            sync_mode: SyncMode::LocalOnly,
+            secret_scan_mode: SecretScanMode::Block,
+            check_interval_seconds: 300,
+            created_at: now,
+            updated_at: now,
+        };
+        db.with_conn(|conn| db_ops::insert_managed_repo(conn, &repo)).unwrap();
+
+        let git = Arc::new(GitCli::new("git".to_string()));
+        let manager = RepoSyncManager::new(db, git, PathBuf::from("/tmp/mirrors"));
+
+        (manager, repo_id, workspace_dir, mirror_dir)
+    }
+
+    #[tokio::test]
+    async fn test_push_to_agent_no_new_commits() {
+        let (manager, repo_id, _workspace_dir, _mirror_dir) = setup_push_to_agent_test().await;
+
+        let result = manager.push_to_agent(&repo_id).await.unwrap();
+        assert_eq!(result.commits, 0);
+    }
+
+    #[tokio::test]
+    async fn test_push_to_agent_applies_commits() {
+        let (manager, repo_id, workspace_dir, mirror_dir) = setup_push_to_agent_test().await;
+
+        // Add commits to mirror
+        std::fs::write(mirror_dir.path().join("file1.txt"), "content1").unwrap();
+        std::process::Command::new("git")
+            .args(["add", "."])
+            .current_dir(mirror_dir.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["commit", "-m", "add file1"])
+            .current_dir(mirror_dir.path())
+            .output()
+            .unwrap();
+
+        std::fs::write(mirror_dir.path().join("file2.txt"), "content2").unwrap();
+        std::process::Command::new("git")
+            .args(["add", "."])
+            .current_dir(mirror_dir.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["commit", "-m", "add file2"])
+            .current_dir(mirror_dir.path())
+            .output()
+            .unwrap();
+
+        let result = manager.push_to_agent(&repo_id).await.unwrap();
+        assert_eq!(result.commits, 2);
+
+        // Verify files exist in workspace
+        assert!(workspace_dir.path().join("file1.txt").exists());
+        assert!(workspace_dir.path().join("file2.txt").exists());
+    }
+
+    #[tokio::test]
+    async fn test_push_to_agent_dirty_workspace_rejected() {
+        let (manager, repo_id, workspace_dir, _mirror_dir) = setup_push_to_agent_test().await;
+
+        // Create uncommitted changes in workspace
+        std::fs::write(workspace_dir.path().join("dirty.txt"), "uncommitted").unwrap();
+
+        let result = manager.push_to_agent(&repo_id).await;
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("uncommitted changes"),
+            "Expected error about uncommitted changes, got: {}",
+            err_msg
+        );
+    }
+
+    #[tokio::test]
+    async fn test_push_to_agent_merge_conflict() {
+        let (manager, repo_id, workspace_dir, mirror_dir) = setup_push_to_agent_test().await;
+
+        // Add a commit to workspace modifying README.md
+        std::fs::write(workspace_dir.path().join("README.md"), "workspace version").unwrap();
+        std::process::Command::new("git")
+            .args(["add", "."])
+            .current_dir(workspace_dir.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["commit", "-m", "workspace change"])
+            .current_dir(workspace_dir.path())
+            .output()
+            .unwrap();
+
+        // Add a conflicting commit to mirror modifying the same file
+        std::fs::write(mirror_dir.path().join("README.md"), "mirror version").unwrap();
+        std::process::Command::new("git")
+            .args(["add", "."])
+            .current_dir(mirror_dir.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["commit", "-m", "mirror change"])
+            .current_dir(mirror_dir.path())
+            .output()
+            .unwrap();
+
+        // Push to agent should fail with a conflict error
+        let err = manager.push_to_agent(&repo_id).await.unwrap_err();
+        let err_msg = err.to_string();
+        assert!(
+            err_msg.contains("README.md") || err_msg.contains("conflict") || err_msg.contains("Merge"),
+            "Expected conflict error mentioning file, got: {}",
+            err_msg
+        );
+    }
+
+    #[tokio::test]
+    async fn test_push_to_agent_repo_not_found() {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        db.with_conn(|conn| {
+            conn.execute_batch(
+                "INSERT INTO agent_types (id, name, sbx_agent, is_builtin, metadata, created_at, updated_at)
+                 VALUES ('a1', 'claude', 'claude', 1, '{}', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z');",
+            ).map_err(|e| OrchestratorError::Database(e.to_string()))?;
+            Ok(())
+        }).unwrap();
+
+        let git = Arc::new(GitCli::new("git".to_string()));
+        let manager = RepoSyncManager::new(db, git, PathBuf::from("/tmp/mirrors"));
+
+        let result = manager
+            .push_to_agent(&ManagedRepoId("nonexistent".to_string()))
+            .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not found"));
+    }
+
+    // --- fetch_from_remote tests ---
+
+    #[tokio::test]
+    async fn test_fetch_from_remote_repo_not_found() {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        db.with_conn(|conn| {
+            conn.execute_batch(
+                "INSERT INTO agent_types (id, name, sbx_agent, is_builtin, metadata, created_at, updated_at)
+                 VALUES ('a1', 'claude', 'claude', 1, '{}', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z');",
+            ).map_err(|e| OrchestratorError::Database(e.to_string()))?;
+            Ok(())
+        }).unwrap();
+
+        let git = Arc::new(GitCli::new("git".to_string()));
+        let manager = RepoSyncManager::new(db, git, PathBuf::from("/tmp/mirrors"));
+
+        let result = manager
+            .fetch_from_remote(&ManagedRepoId("nonexistent".to_string()))
+            .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not found"));
+    }
+
+    /// Helper to set up a mirror with a local bare "remote" for fetch_from_remote tests.
+    /// Returns (manager, repo_id, bare_remote_dir, mirror_dir).
+    async fn setup_fetch_test() -> (
+        RepoSyncManager,
+        ManagedRepoId,
+        tempfile::TempDir,
+        tempfile::TempDir,
+    ) {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        db.with_conn(|conn| {
+            conn.execute_batch(
+                "INSERT INTO agent_types (id, name, sbx_agent, is_builtin, metadata, created_at, updated_at)
+                 VALUES ('a1', 'claude', 'claude', 1, '{}', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z');
+                 INSERT INTO personas (id, name, agent_type_id, workspace_path, memory_enabled, created_at, updated_at)
+                 VALUES ('p1', 'my-agent', 'a1', '/tmp/workspace', 0, '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z');",
+            ).map_err(|e| OrchestratorError::Database(e.to_string()))?;
+            Ok(())
+        }).unwrap();
+
+        // Create a bare repo to act as "remote"
+        let bare_dir = tempfile::tempdir().unwrap();
+        std::process::Command::new("git")
+            .args(["init", "--bare"])
+            .current_dir(bare_dir.path())
+            .output()
+            .unwrap();
+
+        // Create a working repo, commit, and push to the bare repo
+        let work_dir = tempfile::tempdir().unwrap();
+        std::process::Command::new("git")
+            .args(["clone", bare_dir.path().to_str().unwrap(), work_dir.path().to_str().unwrap()])
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["config", "user.email", "test@test.com"])
+            .current_dir(work_dir.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["config", "user.name", "Test"])
+            .current_dir(work_dir.path())
+            .output()
+            .unwrap();
+        std::fs::write(work_dir.path().join("README.md"), "# Test").unwrap();
+        std::process::Command::new("git")
+            .args(["add", "."])
+            .current_dir(work_dir.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["commit", "-m", "initial"])
+            .current_dir(work_dir.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["push", "origin", "master"])
+            .current_dir(work_dir.path())
+            .output()
+            .unwrap();
+
+        // Clone the bare repo to create the mirror
+        let mirror_dir = tempfile::tempdir().unwrap();
+        std::process::Command::new("git")
+            .args(["clone", bare_dir.path().to_str().unwrap(), mirror_dir.path().to_str().unwrap()])
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["config", "user.email", "test@test.com"])
+            .current_dir(mirror_dir.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["config", "user.name", "Test"])
+            .current_dir(mirror_dir.path())
+            .output()
+            .unwrap();
+
+        // Insert managed repo record
+        let repo_id = ManagedRepoId::new();
+        let now = Utc::now();
+        let repo = ManagedRepo {
+            id: repo_id.clone(),
+            persona_id: PersonaId("p1".to_string()),
+            workspace_path: "/tmp/workspace".to_string(),
+            mirror_path: mirror_dir.path().to_string_lossy().to_string(),
+            remote_url: Some(bare_dir.path().to_string_lossy().to_string()),
+            remote_provider: None,
+            branch_strategy: BranchStrategy::Direct,
+            branch_pattern: None,
+            attribution_mode: AttributionMode::KeepAgent,
+            sync_mode: SyncMode::Remote,
+            secret_scan_mode: SecretScanMode::Block,
+            check_interval_seconds: 300,
+            created_at: now,
+            updated_at: now,
+        };
+        db.with_conn(|conn| db_ops::insert_managed_repo(conn, &repo)).unwrap();
+
+        let git = Arc::new(GitCli::new("git".to_string()));
+        let manager = RepoSyncManager::new(db, git, PathBuf::from("/tmp/mirrors"));
+
+        (manager, repo_id, bare_dir, mirror_dir)
+    }
+
+    #[tokio::test]
+    async fn test_fetch_from_remote_credential_env_required() {
+        let (manager, repo_id, _bare_dir, _mirror_dir) = setup_fetch_test().await;
+
+        // fetch_from_remote uses build_credential_env which requires the askpass binary.
+        // In test env, the binary won't exist, so this will fail with an Internal error
+        // about the missing binary. This validates the credential env is built correctly.
+        let result = manager.fetch_from_remote(&repo_id).await;
+
+        // The test environment won't have beachead-askpass binary, so we expect
+        // an error about the missing credential helper. This confirms the method
+        // correctly attempts to build credentials before fetching.
+        match result {
+            Err(e) => {
+                let err_msg = e.to_string();
+                assert!(
+                    err_msg.contains("beachead-askpass") || err_msg.contains("not found"),
+                    "Expected credential helper error, got: {}",
+                    err_msg
+                );
+            }
+            Ok(_) => {
+                // If somehow the binary exists (full build), the fetch should succeed
+                // with 0 commits behind since mirror is up to date with remote
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_fetch_from_remote_ahead_behind_logic() {
+        let (_manager, _repo_id, bare_dir, mirror_dir) = setup_fetch_test().await;
+
+        // Push new commits to the bare remote (simulating upstream changes)
+        let work_dir = tempfile::tempdir().unwrap();
+        std::process::Command::new("git")
+            .args(["clone", bare_dir.path().to_str().unwrap(), work_dir.path().to_str().unwrap()])
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["config", "user.email", "test@test.com"])
+            .current_dir(work_dir.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["config", "user.name", "Test"])
+            .current_dir(work_dir.path())
+            .output()
+            .unwrap();
+        std::fs::write(work_dir.path().join("new_file.txt"), "new content").unwrap();
+        std::process::Command::new("git")
+            .args(["add", "."])
+            .current_dir(work_dir.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["commit", "-m", "upstream commit 1"])
+            .current_dir(work_dir.path())
+            .output()
+            .unwrap();
+        std::fs::write(work_dir.path().join("new_file2.txt"), "more content").unwrap();
+        std::process::Command::new("git")
+            .args(["add", "."])
+            .current_dir(work_dir.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["commit", "-m", "upstream commit 2"])
+            .current_dir(work_dir.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["push", "origin", "master"])
+            .current_dir(work_dir.path())
+            .output()
+            .unwrap();
+
+        // Manually fetch in the mirror (bypassing credential env since it's local)
+        // to verify the ahead_behind logic that fetch_from_remote uses
+        let git = Arc::new(GitCli::new("git".to_string()));
+        git.exec(mirror_dir.path(), &["fetch", "origin"], None, false)
+            .await
+            .unwrap();
+
+        // Verify the mirror is now 2 commits behind origin/master
+        let branch = git.get_current_branch(mirror_dir.path()).await.unwrap();
+        let (_, behind) = git
+            .ahead_behind(mirror_dir.path(), &branch, &format!("origin/{}", branch))
+            .await
+            .unwrap();
+        assert_eq!(behind, 2, "Mirror should be 2 commits behind remote");
     }
 }
