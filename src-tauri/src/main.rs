@@ -9,6 +9,7 @@ pub mod export_import_manager;
 pub mod git_cli;
 pub mod policy_manager;
 pub mod repo_credential_manager;
+pub mod repo_sync_manager;
 #[cfg(test)]
 mod db_property_tests;
 mod error;
@@ -34,6 +35,8 @@ mod token_property_tests;
 mod additional_workspace_property_tests;
 #[cfg(test)]
 mod git_cli_property_tests;
+#[cfg(test)]
+mod secret_scanner_property_tests;
 #[cfg(test)]
 #[path = "routes/mcp_containers_test.rs"]
 mod mcp_containers_test;
