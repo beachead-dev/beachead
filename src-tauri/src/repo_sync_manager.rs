@@ -4,11 +4,15 @@
 //! workspace and a host-side mirror holds remotes and credentials. All sync
 //! operations are user-initiated and run on the host via the git CLI.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use chrono::Utc;
+use dashmap::DashMap;
 use tokio::task::JoinHandle;
+use tokio::time::Instant;
 
 use crate::db::Database;
 use crate::db_ops;
@@ -17,8 +21,9 @@ use crate::git_cli::{GitCli, GitError};
 use crate::repo_credential_manager;
 use crate::secret_scanner::SecretScanner;
 use crate::types::{
-    AttributionMode, BranchStrategy, ManagedRepo, ManagedRepoId, PersonaId, PushResult,
-    RemoteProvider, SecretScanMode, SyncMode, SyncResult,
+    AttributionMode, BranchStrategy, CommitInfo, DetectedRepo, ManagedRepo, ManagedRepoId,
+    PersonaId, PushResult, RemoteProvider, SecretScanMode, SyncMode, SyncResult, SyncStatus,
+    UpdateRepoRequest,
 };
 
 /// Manages git remote synchronization using a two-directory architecture.
@@ -33,6 +38,11 @@ pub struct RepoSyncManager {
     pub scanner: SecretScanner,
     /// Background task handle for periodic commit checks.
     pub check_handle: Option<JoinHandle<()>>,
+    /// Cached sync status for all repos, keyed by repo ID.
+    /// Updated by the background checker, polled by the frontend.
+    pub cached_status: Arc<DashMap<String, SyncStatus>>,
+    /// Tracks the last time each repo was checked, keyed by repo ID.
+    last_check_times: Arc<DashMap<String, Instant>>,
 }
 
 impl RepoSyncManager {
@@ -49,6 +59,8 @@ impl RepoSyncManager {
             mirrors_dir,
             scanner: SecretScanner::new(),
             check_handle: None,
+            cached_status: Arc::new(DashMap::new()),
+            last_check_times: Arc::new(DashMap::new()),
         }
     }
 
@@ -1082,6 +1094,645 @@ impl RepoSyncManager {
 
         // 6. Return SyncResult with the behind count
         Ok(SyncResult { commits: behind })
+    }
+
+    /// Scan all persona workspaces for git repositories not yet tracked by Repo Sync.
+    ///
+    /// Iterates all personas from the database, checks if their workspace_path
+    /// contains a `.git` directory, filters out workspaces already tracked via
+    /// `managed_repo_exists`, and for detected repos checks if they have remotes
+    /// configured.
+    ///
+    /// # Returns
+    /// A list of `DetectedRepo` entries representing untracked git repositories.
+    ///
+    /// # Requirements: 4.1, 4.2, 4.3, 4.8, 4.9
+    pub async fn scan_workspaces(&self) -> Result<Vec<DetectedRepo>, OrchestratorError> {
+        // 1. List all personas from DB
+        let personas = self.db.with_conn(|conn| db_ops::list_personas(conn))?;
+
+        let mut detected: Vec<DetectedRepo> = Vec::new();
+
+        for persona in &personas {
+            let workspace_path = &persona.workspace_path;
+
+            // 2. Check if workspace_path contains a .git directory
+            if !workspace_path.join(".git").exists() {
+                continue;
+            }
+
+            // 3. Filter out workspaces already tracked by Repo Sync
+            let workspace_str = workspace_path.to_string_lossy().to_string();
+            let already_tracked = self.db.with_conn(|conn| {
+                db_ops::managed_repo_exists(conn, &persona.id, &workspace_str)
+            })?;
+
+            if already_tracked {
+                continue;
+            }
+
+            // 4. Check if the repo has remotes configured
+            let (has_remotes, remote_url) = match self
+                .git
+                .list_remote_names(workspace_path)
+                .await
+            {
+                Ok(remotes) => {
+                    if remotes.is_empty() {
+                        (false, None)
+                    } else {
+                        // Get the origin URL (or first remote's URL)
+                        let primary_remote = if remotes.contains(&"origin".to_string()) {
+                            "origin"
+                        } else {
+                            &remotes[0]
+                        };
+                        let url = self
+                            .git
+                            .get_remote_url(workspace_path, primary_remote)
+                            .await
+                            .unwrap_or(None);
+                        (true, url)
+                    }
+                }
+                Err(_) => (false, None),
+            };
+
+            // 5. Build DetectedRepo entry
+            detected.push(DetectedRepo {
+                workspace_path: workspace_str,
+                persona_id: persona.id.0.clone(),
+                persona_name: persona.name.clone(),
+                has_remotes,
+                remote_url,
+            });
+        }
+
+        Ok(detected)
+    }
+
+    /// List unpushed commits in the mirror for a managed repo.
+    ///
+    /// Gets commits that exist in the mirror but have not been pushed to the remote
+    /// tracking branch. Uses `git log origin/<branch>..HEAD` if a remote tracking
+    /// branch exists, or `git log` (all commits) if no remote is configured.
+    ///
+    /// Parses each commit's SHA, message, author, timestamp, and diff stats
+    /// (files changed, insertions, deletions) using `--format` and `--numstat`
+    /// in a single pass.
+    ///
+    /// # Arguments
+    /// - `repo_id`: The ID of the managed repo.
+    ///
+    /// # Returns
+    /// A list of `CommitInfo` entries (max 500), ordered newest-first.
+    ///
+    /// # Requirements: 18.3, 18.9
+    pub async fn list_commits(
+        &self,
+        repo_id: &ManagedRepoId,
+    ) -> Result<Vec<CommitInfo>, OrchestratorError> {
+        let repo = self
+            .db
+            .with_conn(|conn| db_ops::get_managed_repo(conn, repo_id))?;
+
+        let mirror = Path::new(&repo.mirror_path);
+
+        // Get current branch
+        let branch = self.git.get_current_branch(mirror).await.map_err(|e| {
+            OrchestratorError::Internal(format!("Failed to get current branch: {}", e))
+        })?;
+
+        if branch.is_empty() {
+            return Err(OrchestratorError::Validation(
+                "Mirror is in detached HEAD state; cannot list commits".to_string(),
+            ));
+        }
+
+        // Determine the commit range:
+        // - If remote tracking branch exists: origin/<branch>..HEAD (unpushed only)
+        // - If no remote tracking: all commits on HEAD
+        let range = {
+            let remote_ref = format!("origin/{}", branch);
+            // Check if the remote tracking branch exists
+            let check = self
+                .git
+                .exec(
+                    mirror,
+                    &["rev-parse", "--verify", &remote_ref],
+                    None,
+                    false,
+                )
+                .await;
+            if check.is_ok() {
+                format!("{}..HEAD", remote_ref)
+            } else {
+                "HEAD".to_string()
+            }
+        };
+
+        // Use a custom format with a unique separator to parse fields reliably.
+        // Format: SHA<SEP>message<SEP>author<SEP>timestamp
+        // Then --numstat gives file stats after each commit entry.
+        let separator = "---COMMIT_SEP---";
+        let format_str = format!(
+            "{}%H{}%s{}%an{}%aI",
+            separator, separator, separator, separator
+        );
+
+        let format_arg = format!("--format={}", format_str);
+        let args: Vec<&str> = vec![
+            "log",
+            &format_arg,
+            "--numstat",
+            "-n",
+            "500",
+            &range,
+        ];
+
+        let output = self
+            .git
+            .exec(mirror, &args, None, false)
+            .await
+            .map_err(|e| {
+                OrchestratorError::Internal(format!("Failed to list commits: {}", e))
+            })?;
+
+        // Parse the output
+        let commits = Self::parse_log_output(&output.stdout, separator);
+
+        Ok(commits)
+    }
+
+    /// Parse the output of `git log --format=<sep>%H<sep>%s<sep>%an<sep>%aI --numstat`.
+    ///
+    /// The output format is:
+    /// ```text
+    /// ---COMMIT_SEP---<sha>---COMMIT_SEP---<message>---COMMIT_SEP---<author>---COMMIT_SEP---<timestamp>
+    /// <added>\t<deleted>\t<filename>
+    /// <added>\t<deleted>\t<filename>
+    /// ...
+    /// ---COMMIT_SEP---<sha>---COMMIT_SEP---...
+    /// ```
+    fn parse_log_output(output: &str, separator: &str) -> Vec<CommitInfo> {
+        let mut commits: Vec<CommitInfo> = Vec::new();
+
+        // Split by the separator that starts each commit entry
+        let parts: Vec<&str> = output.split(separator).collect();
+
+        // The first element is empty (before the first separator), skip it.
+        // Then we process groups of 4 fields: SHA, message, author, timestamp
+        // followed by numstat lines until the next separator.
+        let mut i = 1; // skip the empty first element
+        while i + 3 < parts.len() {
+            let sha = parts[i].trim().to_string();
+            let message = parts[i + 1].trim().to_string();
+            let author = parts[i + 2].trim().to_string();
+
+            // The timestamp part may contain trailing numstat lines
+            let timestamp_and_stats = parts[i + 3];
+
+            // Split timestamp from numstat lines: timestamp is on the first line
+            let mut lines = timestamp_and_stats.lines();
+            let timestamp = lines.next().unwrap_or("").trim().to_string();
+
+            // Remaining lines are numstat entries (added\tdeleted\tfilename)
+            let mut files_changed: u32 = 0;
+            let mut insertions: u32 = 0;
+            let mut deletions: u32 = 0;
+
+            for line in lines {
+                let line = line.trim();
+                if line.is_empty() {
+                    continue;
+                }
+                let stat_parts: Vec<&str> = line.split('\t').collect();
+                if stat_parts.len() >= 3 {
+                    files_changed += 1;
+                    // "-" means binary file (no line count)
+                    if let Ok(added) = stat_parts[0].parse::<u32>() {
+                        insertions += added;
+                    }
+                    if let Ok(deleted) = stat_parts[1].parse::<u32>() {
+                        deletions += deleted;
+                    }
+                }
+            }
+
+            if !sha.is_empty() {
+                commits.push(CommitInfo {
+                    sha,
+                    message,
+                    author,
+                    timestamp,
+                    files_changed,
+                    insertions,
+                    deletions,
+                });
+            }
+
+            i += 4;
+        }
+
+        commits
+    }
+
+    /// Spawn a background task that periodically checks for new commits in both
+    /// directions (workspace→mirror and remote→mirror) for all managed repos.
+    ///
+    /// The checker runs every 60 seconds (base interval). For each repo, it only
+    /// performs a check if enough time has passed since the last check (per-repo
+    /// `check_interval_seconds`). Results are cached in `self.cached_status` for
+    /// lightweight polling by the frontend.
+    ///
+    /// # Requirements: 16.1, 16.2, 16.3, 16.5, 16.6, 16.7
+    pub fn start_background_checker(&self) -> JoinHandle<()> {
+        let db = self.db.clone();
+        let git = self.git.clone();
+        let cached_status = self.cached_status.clone();
+        let last_check_times = self.last_check_times.clone();
+
+        tokio::spawn(async move {
+            loop {
+                let repos = db.with_conn(|conn| {
+                    db_ops::list_managed_repos(conn)
+                }).unwrap_or_default();
+
+                for repo in &repos {
+                    let repo_id = repo.id.0.clone();
+                    let interval = Duration::from_secs(repo.check_interval_seconds as u64);
+
+                    // Skip if not enough time has passed since last check
+                    if let Some(last_check) = last_check_times.get(&repo_id) {
+                        if last_check.elapsed() < interval {
+                            continue;
+                        }
+                    }
+
+                    let mut status = SyncStatus {
+                        workspace_ahead: 0,
+                        mirror_ahead: 0,
+                        remote_ahead: 0,
+                    };
+
+                    // Check workspace → mirror (local, fast)
+                    let mirror_path = Path::new(&repo.mirror_path);
+                    let workspace_path = Path::new(&repo.workspace_path);
+
+                    if mirror_path.join(".git").exists() && workspace_path.join(".git").exists() {
+                        // Fetch from workspace into mirror to get latest refs
+                        let workspace_str = repo.workspace_path.clone();
+                        let fetch_result = git
+                            .exec(mirror_path, &["fetch", &workspace_str], None, false)
+                            .await;
+
+                        if fetch_result.is_ok() {
+                            // Get current branch in mirror
+                            if let Ok(branch) = git.get_current_branch(mirror_path).await {
+                                if !branch.is_empty() {
+                                    // Count workspace commits ahead of mirror
+                                    let ahead = git
+                                        .ahead_behind(mirror_path, "FETCH_HEAD", &branch)
+                                        .await
+                                        .map(|(ahead, _)| ahead)
+                                        .unwrap_or(0);
+                                    status.workspace_ahead = ahead;
+                                }
+                            }
+                        }
+                    }
+
+                    // Check remote → mirror (network, uses credentials)
+                    // Skip for LocalOnly repos (Requirement 16.6)
+                    if repo.sync_mode != SyncMode::LocalOnly {
+                        if mirror_path.join(".git").exists() {
+                            // Only attempt remote check if credentials are configured
+                            if let Ok(cred_env) =
+                                repo_credential_manager::build_credential_env(&repo_id)
+                            {
+                                let fetch_result = git
+                                    .exec(
+                                        mirror_path,
+                                        &["fetch", "origin"],
+                                        Some(&cred_env),
+                                        true,
+                                    )
+                                    .await;
+
+                                if fetch_result.is_ok() {
+                                    if let Ok(branch) =
+                                        git.get_current_branch(mirror_path).await
+                                    {
+                                        if !branch.is_empty() {
+                                            let remote_ref =
+                                                format!("origin/{}", branch);
+                                            let behind = git
+                                                .ahead_behind(
+                                                    mirror_path,
+                                                    &branch,
+                                                    &remote_ref,
+                                                )
+                                                .await
+                                                .map(|(_, behind)| behind)
+                                                .unwrap_or(0);
+                                            status.remote_ahead = behind;
+                                        }
+                                    }
+                                }
+                                // Requirement 16.5: If check fails, log and retry next interval
+                            }
+                        }
+                    }
+
+                    // Update cached sync status
+                    cached_status.insert(repo_id.clone(), status);
+                    last_check_times.insert(repo_id, Instant::now());
+                }
+
+                // Base interval: sleep 60 seconds between sweeps
+                tokio::time::sleep(Duration::from_secs(60)).await;
+            }
+        })
+    }
+
+    /// Returns the cached sync status for all repos.
+    ///
+    /// This is a lightweight read from the in-memory cache populated by the
+    /// background checker. Used by `GET /api/repo-sync/repos` to include status
+    /// without performing git operations on every request.
+    pub fn get_cached_status(&self) -> HashMap<String, SyncStatus> {
+        self.cached_status
+            .iter()
+            .map(|entry| (entry.key().clone(), entry.value().clone()))
+            .collect()
+    }
+
+    /// Returns true if any managed repo has pending commits in either direction.
+    ///
+    /// Used by the `GET /api/repo-sync/status` endpoint to drive the sidebar
+    /// notification badge.
+    ///
+    /// # Requirements: 16.2, 16.3, 16.7
+    pub fn has_pending(&self) -> bool {
+        self.cached_status.iter().any(|entry| {
+            let status = entry.value();
+            status.workspace_ahead > 0 || status.remote_ahead > 0
+        })
+    }
+
+    /// Update a managed repo's configuration.
+    ///
+    /// Validates:
+    /// - Remote URL format (if provided)
+    /// - Branch pattern (max 200 chars, no invalid git branch chars)
+    /// - Sync mode prerequisites: changing to Remote requires remote URL and credentials
+    ///
+    /// Only fields present in the request are updated; `None` fields are left unchanged.
+    ///
+    /// # Requirements: 12.2, 12.4, 12.5, 12.6, 18.4
+    pub async fn update_repo(
+        &self,
+        id: &ManagedRepoId,
+        req: &UpdateRepoRequest,
+    ) -> Result<ManagedRepo, OrchestratorError> {
+        // 1. Get existing repo from DB
+        let mut repo = self.db.with_conn(|conn| db_ops::get_managed_repo(conn, id))?;
+
+        // 2. Validate remote URL format if provided (Requirement 12.2)
+        if let Some(ref url) = req.remote_url {
+            Self::validate_remote_url(url)?;
+        }
+
+        // 3. Validate branch pattern if provided (Requirement 12.4)
+        if let Some(ref pattern) = req.branch_pattern {
+            Self::validate_branch_pattern(pattern)?;
+        }
+
+        // 4. If changing sync_mode to Remote: verify prerequisites (Requirement 12.5)
+        if let Some(SyncMode::Remote) = req.sync_mode {
+            // The effective remote_url after this update
+            let effective_url = req.remote_url.as_ref().or(repo.remote_url.as_ref());
+            if effective_url.is_none() {
+                return Err(OrchestratorError::Validation(
+                    "Cannot change sync mode to Remote: remote URL is not configured".to_string(),
+                ));
+            }
+
+            // Check credentials are configured
+            let cred_configured = repo_credential_manager::credentials_configured(&id.0)?;
+            if !cred_configured {
+                return Err(OrchestratorError::Validation(
+                    "Cannot change sync mode to Remote: credentials are not configured"
+                        .to_string(),
+                ));
+            }
+        }
+
+        // 5. Apply updates to the repo record
+        if let Some(ref url) = req.remote_url {
+            repo.remote_url = Some(url.clone());
+            // Auto-detect provider from URL
+            repo.remote_provider = Self::detect_remote_provider(url);
+        }
+        if let Some(ref provider) = req.remote_provider {
+            repo.remote_provider = Some(provider.clone());
+        }
+        if let Some(ref strategy) = req.branch_strategy {
+            repo.branch_strategy = strategy.clone();
+        }
+        if let Some(ref pattern) = req.branch_pattern {
+            repo.branch_pattern = Some(pattern.clone());
+        }
+        if let Some(ref mode) = req.attribution_mode {
+            repo.attribution_mode = mode.clone();
+        }
+        if let Some(ref mode) = req.sync_mode {
+            repo.sync_mode = mode.clone();
+        }
+        if let Some(ref mode) = req.secret_scan_mode {
+            repo.secret_scan_mode = mode.clone();
+        }
+        if let Some(interval) = req.check_interval_seconds {
+            repo.check_interval_seconds = interval;
+        }
+
+        repo.updated_at = Utc::now();
+
+        // 6. Save to DB
+        self.db
+            .with_conn(|conn| db_ops::update_managed_repo(conn, id, &repo))?;
+
+        Ok(repo)
+    }
+
+    /// Validate a branch pattern string.
+    ///
+    /// Rules:
+    /// - Maximum 200 characters
+    /// - No characters invalid for git branch names: space, ~, ^, :, ?, *, [, \, control chars
+    /// - Cannot start or end with a dot or slash
+    /// - Cannot contain consecutive dots (..) or consecutive slashes (//)
+    fn validate_branch_pattern(pattern: &str) -> Result<(), OrchestratorError> {
+        if pattern.is_empty() {
+            return Err(OrchestratorError::Validation(
+                "Branch pattern cannot be empty".to_string(),
+            ));
+        }
+        if pattern.len() > 200 {
+            return Err(OrchestratorError::Validation(
+                "Branch pattern exceeds maximum length of 200 characters".to_string(),
+            ));
+        }
+
+        // Characters invalid in git branch names
+        let invalid_chars = [' ', '~', '^', ':', '?', '*', '[', '\\'];
+        for ch in pattern.chars() {
+            if invalid_chars.contains(&ch) || ch.is_control() {
+                return Err(OrchestratorError::Validation(format!(
+                    "Branch pattern contains invalid character: {:?}",
+                    ch
+                )));
+            }
+        }
+
+        // Cannot start or end with dot or slash
+        if pattern.starts_with('.') || pattern.starts_with('/') {
+            return Err(OrchestratorError::Validation(
+                "Branch pattern cannot start with '.' or '/'".to_string(),
+            ));
+        }
+        if pattern.ends_with('.') || pattern.ends_with('/') {
+            return Err(OrchestratorError::Validation(
+                "Branch pattern cannot end with '.' or '/'".to_string(),
+            ));
+        }
+
+        // Cannot contain consecutive dots or slashes
+        if pattern.contains("..") {
+            return Err(OrchestratorError::Validation(
+                "Branch pattern cannot contain consecutive dots '..'".to_string(),
+            ));
+        }
+        if pattern.contains("//") {
+            return Err(OrchestratorError::Validation(
+                "Branch pattern cannot contain consecutive slashes '//'".to_string(),
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Delete a managed repo.
+    ///
+    /// 1. Gets the repo from DB
+    /// 2. Deletes keyring credentials (best-effort, don't fail if keyring unavailable)
+    /// 3. Deletes the DB record
+    /// 4. If `delete_mirror` is true: deletes the mirror directory from disk
+    ///
+    /// The workspace remotes are NOT restored on deletion.
+    ///
+    /// # Requirements: 18.10, 14.3
+    pub async fn delete_repo(
+        &self,
+        id: &ManagedRepoId,
+        delete_mirror: bool,
+    ) -> Result<(), OrchestratorError> {
+        // 1. Get repo from DB (validates it exists)
+        let repo = self.db.with_conn(|conn| db_ops::get_managed_repo(conn, id))?;
+
+        // 2. Delete keyring credentials (best-effort)
+        // Per implementation guidance #6: deletion/cleanup failures should be best-effort
+        let _ = repo_credential_manager::delete_credentials(&id.0);
+
+        // 3. Delete DB record
+        self.db
+            .with_conn(|conn| db_ops::delete_managed_repo(conn, id))?;
+
+        // 4. If delete_mirror is true: delete the mirror directory from disk
+        if delete_mirror {
+            let mirror_path = Path::new(&repo.mirror_path);
+            if mirror_path.exists() {
+                std::fs::remove_dir_all(mirror_path).map_err(|e| {
+                    OrchestratorError::Internal(format!(
+                        "Failed to delete mirror directory '{}': {}",
+                        repo.mirror_path, e
+                    ))
+                })?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Update the mirrors directory path.
+    ///
+    /// Validates:
+    /// - Path is not empty
+    /// - Path is absolute
+    /// - Path does not exceed 4096 characters
+    ///
+    /// If the directory does not exist, it is created. Updates the `mirror_path`
+    /// in all affected ManagedRepo records to reflect the new base directory.
+    ///
+    /// # Requirements: 14.3, 14.4, 14.5, 14.6
+    pub fn update_mirrors_dir(&mut self, new_path: &str) -> Result<PathBuf, OrchestratorError> {
+        // 1. Validate path
+        if new_path.is_empty() {
+            return Err(OrchestratorError::Validation(
+                "Mirrors directory path cannot be empty".to_string(),
+            ));
+        }
+        if new_path.len() > 4096 {
+            return Err(OrchestratorError::Validation(
+                "Mirrors directory path exceeds maximum length of 4096 characters".to_string(),
+            ));
+        }
+
+        let new_dir = PathBuf::from(new_path);
+        if !new_dir.is_absolute() {
+            return Err(OrchestratorError::Validation(
+                "Mirrors directory path must be absolute".to_string(),
+            ));
+        }
+
+        // 2. Create directory if it doesn't exist
+        if !new_dir.exists() {
+            std::fs::create_dir_all(&new_dir).map_err(|e| {
+                OrchestratorError::Validation(format!(
+                    "Cannot create mirrors directory '{}': {}",
+                    new_path, e
+                ))
+            })?;
+        }
+
+        // 3. Update mirror_path in all affected ManagedRepo records
+        let old_dir = self.mirrors_dir.clone();
+        let old_dir_str = old_dir.to_string_lossy().to_string();
+
+        self.db.with_conn(|conn| {
+            let repos = db_ops::list_managed_repos(conn)?;
+            for mut repo in repos {
+                // Only update repos whose mirror_path starts with the old mirrors_dir
+                if repo.mirror_path.starts_with(&old_dir_str) {
+                    let relative = &repo.mirror_path[old_dir_str.len()..];
+                    // Strip leading separator if present
+                    let relative = relative
+                        .strip_prefix('/')
+                        .or_else(|| relative.strip_prefix('\\'))
+                        .unwrap_or(relative);
+                    let updated_path = new_dir.join(relative);
+                    repo.mirror_path = updated_path.to_string_lossy().to_string();
+                    repo.updated_at = Utc::now();
+                    db_ops::update_managed_repo(conn, &repo.id, &repo)?;
+                }
+            }
+            Ok(())
+        })?;
+
+        // 4. Update the manager's mirrors_dir
+        self.mirrors_dir = new_dir.clone();
+
+        Ok(new_dir)
     }
 }
 
@@ -2746,5 +3397,363 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(behind, 2, "Mirror should be 2 commits behind remote");
+    }
+
+    // --- Tests for scan_workspaces ---
+
+    #[tokio::test]
+    async fn test_scan_workspaces_detects_git_repos() {
+        // Create a workspace with a git repo
+        let workspace = create_test_workspace();
+        let mirrors_dir = tempfile::tempdir().unwrap();
+
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let workspace_str = workspace.path().to_string_lossy().to_string();
+        db.with_conn(|conn| {
+            conn.execute_batch(&format!(
+                "INSERT INTO agent_types (id, name, sbx_agent, is_builtin, metadata, created_at, updated_at)
+                 VALUES ('a1', 'claude', 'claude', 1, '{{}}', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z');
+                 INSERT INTO personas (id, name, agent_type_id, workspace_path, memory_enabled, created_at, updated_at)
+                 VALUES ('p1', 'my-agent', 'a1', '{}', 0, '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z');",
+                workspace_str
+            )).map_err(|e| OrchestratorError::Database(e.to_string()))?;
+            Ok(())
+        }).unwrap();
+
+        let git = Arc::new(GitCli::new("git".to_string()));
+        let manager = RepoSyncManager::new(db, git, mirrors_dir.path().to_path_buf());
+
+        let detected = manager.scan_workspaces().await.unwrap();
+        assert_eq!(detected.len(), 1);
+        assert_eq!(detected[0].persona_id, "p1");
+        assert_eq!(detected[0].persona_name, "my-agent");
+        assert_eq!(detected[0].workspace_path, workspace_str);
+        assert!(!detected[0].has_remotes);
+        assert!(detected[0].remote_url.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_scan_workspaces_skips_already_tracked() {
+        let workspace = create_test_workspace();
+        let mirrors_dir = tempfile::tempdir().unwrap();
+
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let workspace_str = workspace.path().to_string_lossy().to_string();
+        db.with_conn(|conn| {
+            conn.execute_batch(&format!(
+                "INSERT INTO agent_types (id, name, sbx_agent, is_builtin, metadata, created_at, updated_at)
+                 VALUES ('a1', 'claude', 'claude', 1, '{{}}', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z');
+                 INSERT INTO personas (id, name, agent_type_id, workspace_path, memory_enabled, created_at, updated_at)
+                 VALUES ('p1', 'my-agent', 'a1', '{}', 0, '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z');
+                 INSERT INTO managed_repos (id, persona_id, workspace_path, mirror_path, branch_strategy, attribution_mode, sync_mode, secret_scan_mode, check_interval_seconds, created_at, updated_at)
+                 VALUES ('r1', 'p1', '{}', '/tmp/mirror', 'direct', 'keep_agent', 'local_only', 'block', 300, '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z');",
+                workspace_str, workspace_str
+            )).map_err(|e| OrchestratorError::Database(e.to_string()))?;
+            Ok(())
+        }).unwrap();
+
+        let git = Arc::new(GitCli::new("git".to_string()));
+        let manager = RepoSyncManager::new(db, git, mirrors_dir.path().to_path_buf());
+
+        let detected = manager.scan_workspaces().await.unwrap();
+        assert!(detected.is_empty(), "Already-tracked repos should be filtered out");
+    }
+
+    #[tokio::test]
+    async fn test_scan_workspaces_skips_non_git_dirs() {
+        // Create a workspace that is NOT a git repo
+        let workspace = tempfile::tempdir().unwrap();
+        std::fs::write(workspace.path().join("README.md"), "# Not a git repo").unwrap();
+
+        let mirrors_dir = tempfile::tempdir().unwrap();
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let workspace_str = workspace.path().to_string_lossy().to_string();
+        db.with_conn(|conn| {
+            conn.execute_batch(&format!(
+                "INSERT INTO agent_types (id, name, sbx_agent, is_builtin, metadata, created_at, updated_at)
+                 VALUES ('a1', 'claude', 'claude', 1, '{{}}', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z');
+                 INSERT INTO personas (id, name, agent_type_id, workspace_path, memory_enabled, created_at, updated_at)
+                 VALUES ('p1', 'my-agent', 'a1', '{}', 0, '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z');",
+                workspace_str
+            )).map_err(|e| OrchestratorError::Database(e.to_string()))?;
+            Ok(())
+        }).unwrap();
+
+        let git = Arc::new(GitCli::new("git".to_string()));
+        let manager = RepoSyncManager::new(db, git, mirrors_dir.path().to_path_buf());
+
+        let detected = manager.scan_workspaces().await.unwrap();
+        assert!(detected.is_empty(), "Non-git directories should be skipped");
+    }
+
+    #[tokio::test]
+    async fn test_scan_workspaces_detects_remotes() {
+        let workspace = create_test_workspace();
+        // Add a remote
+        std::process::Command::new("git")
+            .args(["remote", "add", "origin", "https://github.com/user/repo.git"])
+            .current_dir(workspace.path())
+            .output()
+            .unwrap();
+
+        let mirrors_dir = tempfile::tempdir().unwrap();
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let workspace_str = workspace.path().to_string_lossy().to_string();
+        db.with_conn(|conn| {
+            conn.execute_batch(&format!(
+                "INSERT INTO agent_types (id, name, sbx_agent, is_builtin, metadata, created_at, updated_at)
+                 VALUES ('a1', 'claude', 'claude', 1, '{{}}', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z');
+                 INSERT INTO personas (id, name, agent_type_id, workspace_path, memory_enabled, created_at, updated_at)
+                 VALUES ('p1', 'my-agent', 'a1', '{}', 0, '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z');",
+                workspace_str
+            )).map_err(|e| OrchestratorError::Database(e.to_string()))?;
+            Ok(())
+        }).unwrap();
+
+        let git = Arc::new(GitCli::new("git".to_string()));
+        let manager = RepoSyncManager::new(db, git, mirrors_dir.path().to_path_buf());
+
+        let detected = manager.scan_workspaces().await.unwrap();
+        assert_eq!(detected.len(), 1);
+        assert!(detected[0].has_remotes);
+        assert_eq!(detected[0].remote_url.as_deref(), Some("https://github.com/user/repo.git"));
+    }
+
+    // --- Tests for list_commits ---
+
+    #[tokio::test]
+    async fn test_list_commits_returns_unpushed() {
+        // Create a workspace with commits, clone to mirror, add more commits to mirror
+        let workspace = create_test_workspace();
+        let mirror_dir = tempfile::tempdir().unwrap();
+
+        // Clone workspace to mirror
+        std::process::Command::new("git")
+            .args([
+                "clone",
+                workspace.path().to_str().unwrap(),
+                mirror_dir.path().to_str().unwrap(),
+            ])
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["config", "user.email", "test@test.com"])
+            .current_dir(mirror_dir.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["config", "user.name", "TestAuthor"])
+            .current_dir(mirror_dir.path())
+            .output()
+            .unwrap();
+
+        // Add commits to mirror (these are "unpushed" relative to origin)
+        std::fs::write(mirror_dir.path().join("file1.txt"), "content1").unwrap();
+        std::process::Command::new("git")
+            .args(["add", "file1.txt"])
+            .current_dir(mirror_dir.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["commit", "-m", "Add file1"])
+            .current_dir(mirror_dir.path())
+            .output()
+            .unwrap();
+
+        std::fs::write(mirror_dir.path().join("file2.txt"), "content2").unwrap();
+        std::process::Command::new("git")
+            .args(["add", "file2.txt"])
+            .current_dir(mirror_dir.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["commit", "-m", "Add file2"])
+            .current_dir(mirror_dir.path())
+            .output()
+            .unwrap();
+
+        // Set up DB with managed repo
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        db.with_conn(|conn| {
+            conn.execute_batch(
+                "INSERT INTO agent_types (id, name, sbx_agent, is_builtin, metadata, created_at, updated_at)
+                 VALUES ('a1', 'claude', 'claude', 1, '{}', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z');
+                 INSERT INTO personas (id, name, agent_type_id, workspace_path, memory_enabled, created_at, updated_at)
+                 VALUES ('p1', 'my-agent', 'a1', '/tmp/workspace', 0, '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z');",
+            ).map_err(|e| OrchestratorError::Database(e.to_string()))?;
+            Ok(())
+        }).unwrap();
+
+        let repo_id = ManagedRepoId("r1".to_string());
+        let now = Utc::now();
+        let repo = ManagedRepo {
+            id: repo_id.clone(),
+            persona_id: PersonaId("p1".to_string()),
+            workspace_path: workspace.path().to_string_lossy().to_string(),
+            mirror_path: mirror_dir.path().to_string_lossy().to_string(),
+            remote_url: None,
+            remote_provider: None,
+            branch_strategy: BranchStrategy::Direct,
+            branch_pattern: None,
+            attribution_mode: AttributionMode::KeepAgent,
+            sync_mode: SyncMode::LocalOnly,
+            secret_scan_mode: SecretScanMode::Block,
+            check_interval_seconds: 300,
+            created_at: now,
+            updated_at: now,
+        };
+        db.with_conn(|conn| db_ops::insert_managed_repo(conn, &repo)).unwrap();
+
+        let git = Arc::new(GitCli::new("git".to_string()));
+        let manager = RepoSyncManager::new(db, git, PathBuf::from("/tmp/mirrors"));
+
+        let commits = manager.list_commits(&repo_id).await.unwrap();
+
+        // Should have 2 unpushed commits
+        assert_eq!(commits.len(), 2, "Expected 2 unpushed commits, got {}", commits.len());
+
+        // Newest first
+        assert_eq!(commits[0].message, "Add file2");
+        assert_eq!(commits[1].message, "Add file1");
+
+        // Check author
+        assert_eq!(commits[0].author, "TestAuthor");
+
+        // Check stats (each commit adds 1 file with 1 line)
+        assert_eq!(commits[0].files_changed, 1);
+        assert_eq!(commits[0].insertions, 1);
+        assert_eq!(commits[0].deletions, 0);
+    }
+
+    #[tokio::test]
+    async fn test_list_commits_no_remote_tracking() {
+        // Create a standalone mirror with no remote tracking branch
+        let mirror_dir = tempfile::tempdir().unwrap();
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(mirror_dir.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["config", "user.email", "test@test.com"])
+            .current_dir(mirror_dir.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["config", "user.name", "Test"])
+            .current_dir(mirror_dir.path())
+            .output()
+            .unwrap();
+        std::fs::write(mirror_dir.path().join("README.md"), "# Test").unwrap();
+        std::process::Command::new("git")
+            .args(["add", "."])
+            .current_dir(mirror_dir.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["commit", "-m", "initial commit"])
+            .current_dir(mirror_dir.path())
+            .output()
+            .unwrap();
+
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        db.with_conn(|conn| {
+            conn.execute_batch(
+                "INSERT INTO agent_types (id, name, sbx_agent, is_builtin, metadata, created_at, updated_at)
+                 VALUES ('a1', 'claude', 'claude', 1, '{}', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z');
+                 INSERT INTO personas (id, name, agent_type_id, workspace_path, memory_enabled, created_at, updated_at)
+                 VALUES ('p1', 'my-agent', 'a1', '/tmp/workspace', 0, '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z');",
+            ).map_err(|e| OrchestratorError::Database(e.to_string()))?;
+            Ok(())
+        }).unwrap();
+
+        let repo_id = ManagedRepoId("r1".to_string());
+        let now = Utc::now();
+        let repo = ManagedRepo {
+            id: repo_id.clone(),
+            persona_id: PersonaId("p1".to_string()),
+            workspace_path: "/tmp/workspace".to_string(),
+            mirror_path: mirror_dir.path().to_string_lossy().to_string(),
+            remote_url: None,
+            remote_provider: None,
+            branch_strategy: BranchStrategy::Direct,
+            branch_pattern: None,
+            attribution_mode: AttributionMode::KeepAgent,
+            sync_mode: SyncMode::LocalOnly,
+            secret_scan_mode: SecretScanMode::Block,
+            check_interval_seconds: 300,
+            created_at: now,
+            updated_at: now,
+        };
+        db.with_conn(|conn| db_ops::insert_managed_repo(conn, &repo)).unwrap();
+
+        let git = Arc::new(GitCli::new("git".to_string()));
+        let manager = RepoSyncManager::new(db, git, PathBuf::from("/tmp/mirrors"));
+
+        let commits = manager.list_commits(&repo_id).await.unwrap();
+
+        // With no remote tracking, all commits on HEAD are returned
+        assert_eq!(commits.len(), 1);
+        assert_eq!(commits[0].message, "initial commit");
+    }
+
+    // --- Tests for parse_log_output ---
+
+    #[test]
+    fn test_parse_log_output_single_commit() {
+        let sep = "---COMMIT_SEP---";
+        let output = format!(
+            "{}abc123{}Fix bug{}Alice{}2024-01-15T10:30:00+00:00\n3\t1\tsrc/main.rs\n0\t5\tREADME.md\n",
+            sep, sep, sep, sep
+        );
+
+        let commits = RepoSyncManager::parse_log_output(&output, sep);
+        assert_eq!(commits.len(), 1);
+        assert_eq!(commits[0].sha, "abc123");
+        assert_eq!(commits[0].message, "Fix bug");
+        assert_eq!(commits[0].author, "Alice");
+        assert_eq!(commits[0].timestamp, "2024-01-15T10:30:00+00:00");
+        assert_eq!(commits[0].files_changed, 2);
+        assert_eq!(commits[0].insertions, 3);
+        assert_eq!(commits[0].deletions, 6);
+    }
+
+    #[test]
+    fn test_parse_log_output_multiple_commits() {
+        let sep = "---COMMIT_SEP---";
+        let output = format!(
+            "{}sha1{}First commit{}Bob{}2024-01-01T00:00:00Z\n1\t0\tfile.txt\n{}sha2{}Second commit{}Alice{}2024-01-02T00:00:00Z\n2\t1\tother.rs\n",
+            sep, sep, sep, sep, sep, sep, sep, sep
+        );
+
+        let commits = RepoSyncManager::parse_log_output(&output, sep);
+        assert_eq!(commits.len(), 2);
+        assert_eq!(commits[0].sha, "sha1");
+        assert_eq!(commits[0].message, "First commit");
+        assert_eq!(commits[1].sha, "sha2");
+        assert_eq!(commits[1].message, "Second commit");
+    }
+
+    #[test]
+    fn test_parse_log_output_empty() {
+        let sep = "---COMMIT_SEP---";
+        let commits = RepoSyncManager::parse_log_output("", sep);
+        assert!(commits.is_empty());
+    }
+
+    #[test]
+    fn test_parse_log_output_binary_files() {
+        let sep = "---COMMIT_SEP---";
+        // Binary files show "-" for added/deleted lines
+        let output = format!(
+            "{}abc123{}Add image{}Dev{}2024-01-15T10:30:00Z\n-\t-\timage.png\n5\t0\tindex.html\n",
+            sep, sep, sep, sep
+        );
+
+        let commits = RepoSyncManager::parse_log_output(&output, sep);
+        assert_eq!(commits.len(), 1);
+        assert_eq!(commits[0].files_changed, 2); // binary file still counts
+        assert_eq!(commits[0].insertions, 5); // only from index.html
+        assert_eq!(commits[0].deletions, 0);
     }
 }

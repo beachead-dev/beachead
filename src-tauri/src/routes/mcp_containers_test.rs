@@ -55,6 +55,7 @@ mod tests {
             sbx: None,
             pty_bridge,
             kit_generator,
+            repo_sync_manager: None,
         }
     }
 
