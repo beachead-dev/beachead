@@ -52,6 +52,21 @@ pub enum OrchestratorError {
     #[error("Sync operation already in progress: {0}")]
     SyncInProgress(String),
 
+    #[error("Git binary not found: {0}")]
+    GitNotFound(String),
+
+    #[error("Git operation timed out: {0}")]
+    GitTimeout(String),
+
+    #[error("Git authentication failed: {0}")]
+    GitAuthFailure(String),
+
+    #[error("Merge conflict: {0}")]
+    MergeConflict(String),
+
+    #[error("Keyring unavailable: {0}")]
+    KeyringUnavailable(String),
+
     #[error("Internal error: {0}")]
     Internal(String),
 }
@@ -86,6 +101,11 @@ impl OrchestratorError {
             Self::Database(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Self::PtyError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Self::SyncInProgress(_) => StatusCode::CONFLICT,
+            Self::GitNotFound(_) => StatusCode::SERVICE_UNAVAILABLE,
+            Self::GitTimeout(_) => StatusCode::REQUEST_TIMEOUT,
+            Self::GitAuthFailure(_) => StatusCode::UNAUTHORIZED,
+            Self::MergeConflict(_) => StatusCode::CONFLICT,
+            Self::KeyringUnavailable(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -108,6 +128,11 @@ impl OrchestratorError {
             Self::Database(_) => "DATABASE_ERROR",
             Self::PtyError(_) => "PTY_ERROR",
             Self::SyncInProgress(_) => "SYNC_IN_PROGRESS",
+            Self::GitNotFound(_) => "GIT_NOT_FOUND",
+            Self::GitTimeout(_) => "GIT_TIMEOUT",
+            Self::GitAuthFailure(_) => "GIT_AUTH_FAILURE",
+            Self::MergeConflict(_) => "MERGE_CONFLICT",
+            Self::KeyringUnavailable(_) => "KEYRING_UNAVAILABLE",
             Self::Internal(_) => "INTERNAL_ERROR",
         }
     }
