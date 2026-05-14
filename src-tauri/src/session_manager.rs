@@ -18,7 +18,7 @@ use crate::pty_bridge::PtyBridge;
 use crate::repo_sync_manager::RepoSyncManager;
 use crate::sbx::{SbxCli, SbxRunArgs};
 use crate::types::{
-    AdditionalWorkspaceArg, Persona, PersonaId, Session, SessionId, SessionStatus, UploadMethod,
+    AdditionalWorkspaceArg, PersonaId, Session, SessionId, SessionStatus, UploadMethod,
     UploadResult,
 };
 use crate::workspace_manager::WorkspaceManager;

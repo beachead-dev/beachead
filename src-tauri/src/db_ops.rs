@@ -868,6 +868,7 @@ pub fn list_managed_repos(conn: &Connection) -> Result<Vec<ManagedRepo>, Orchest
     Ok(repos)
 }
 
+#[allow(dead_code)]
 pub fn list_managed_repos_by_persona(
     conn: &Connection,
     persona_id: &PersonaId,
@@ -1019,6 +1020,7 @@ pub fn insert_repo_credential(
     Ok(())
 }
 
+#[allow(dead_code)]
 pub fn get_repo_credential_by_repo(
     conn: &Connection,
     repo_id: &ManagedRepoId,
