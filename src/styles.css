@@ -2320,3 +2320,204 @@ body {
 :root[data-theme="dark"] .sync-indicator-pending {
   color: #f39c12;
 }
+
+/* Commit Review Modal */
+.commit-review-modal {
+  max-width: 640px;
+  width: 95%;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.commit-review-summary {
+  margin: 0 0 0.75rem;
+  font-size: 0.875rem;
+  color: #666;
+}
+
+.commit-review-controls {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  margin-bottom: 0.75rem;
+  font-size: 0.8125rem;
+}
+
+.commit-review-controls label {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  cursor: pointer;
+}
+
+.commit-review-controls label.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.commit-review-squash-message {
+  margin-bottom: 0.75rem;
+}
+
+.commit-review-squash-message .input {
+  width: 100%;
+  font-size: 0.8125rem;
+}
+
+.commit-review-list {
+  flex: 1;
+  overflow-y: auto;
+  border: 1px solid #e0e0e0;
+  border-radius: 0.375rem;
+  max-height: 400px;
+}
+
+.commit-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.625rem 0.75rem;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.commit-item:last-child {
+  border-bottom: none;
+}
+
+.commit-item--selected {
+  background: rgba(25, 118, 210, 0.04);
+}
+
+.commit-item-checkbox {
+  padding-top: 0.125rem;
+  flex-shrink: 0;
+}
+
+.commit-item-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.commit-item-header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+
+.commit-item-sha {
+  font-size: 0.75rem;
+  color: #1976d2;
+  flex-shrink: 0;
+}
+
+.commit-item-message {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.commit-item-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  font-size: 0.6875rem;
+  color: #888;
+}
+
+.commit-item-stats {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.commit-item-additions {
+  color: #27ae60;
+}
+
+.commit-item-deletions {
+  color: #e74c3c;
+}
+
+.commit-review-warning {
+  margin: 0.5rem 0 0;
+  font-size: 0.8125rem;
+  color: #e67e22;
+}
+
+/* Dark mode overrides for Commit Review Modal */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .commit-review-summary {
+    color: #aaa;
+  }
+
+  :root:not([data-theme="light"]) .commit-review-list {
+    border-color: #3a4a6a;
+  }
+
+  :root:not([data-theme="light"]) .commit-item {
+    border-bottom-color: #2a3a5a;
+  }
+
+  :root:not([data-theme="light"]) .commit-item--selected {
+    background: rgba(25, 118, 210, 0.1);
+  }
+
+  :root:not([data-theme="light"]) .commit-item-sha {
+    color: #64b5f6;
+  }
+
+  :root:not([data-theme="light"]) .commit-item-meta {
+    color: #999;
+  }
+
+  :root:not([data-theme="light"]) .commit-item-additions {
+    color: #2ecc71;
+  }
+
+  :root:not([data-theme="light"]) .commit-item-deletions {
+    color: #e74c3c;
+  }
+
+  :root:not([data-theme="light"]) .commit-review-warning {
+    color: #f39c12;
+  }
+}
+
+:root[data-theme="dark"] .commit-review-summary {
+  color: #aaa;
+}
+
+:root[data-theme="dark"] .commit-review-list {
+  border-color: #3a4a6a;
+}
+
+:root[data-theme="dark"] .commit-item {
+  border-bottom-color: #2a3a5a;
+}
+
+:root[data-theme="dark"] .commit-item--selected {
+  background: rgba(25, 118, 210, 0.1);
+}
+
+:root[data-theme="dark"] .commit-item-sha {
+  color: #64b5f6;
+}
+
+:root[data-theme="dark"] .commit-item-meta {
+  color: #999;
+}
+
+:root[data-theme="dark"] .commit-item-additions {
+  color: #2ecc71;
+}
+
+:root[data-theme="dark"] .commit-item-deletions {
+  color: #e74c3c;
+}
+
+:root[data-theme="dark"] .commit-review-warning {
+  color: #f39c12;
+}

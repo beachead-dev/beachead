@@ -3,14 +3,16 @@ import {
   getRepos,
   scanWorkspaces,
   enableRepo,
+  getCommits,
   pullFromAgent,
-  pushToRemote,
   fetchFromRemote,
   pushToAgent,
   ManagedRepoResponse,
   DetectedRepo,
+  CommitInfo,
 } from "../lib/api";
 import { usePolling } from "../hooks/usePolling";
+import { CommitReviewModal } from "../components/CommitReviewModal";
 
 /**
  * Groups repos by persona name, with repos sorted alphabetically within each group.
@@ -81,6 +83,9 @@ export function RepoSyncPage() {
   const [linkRemoteUrl, setLinkRemoteUrl] = useState("");
   const [activeOperation, setActiveOperation] = useState<OperationState | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
+  const [commitReviewOpen, setCommitReviewOpen] = useState(false);
+  const [commitReviewRepoId, setCommitReviewRepoId] = useState<string | null>(null);
+  const [commitReviewCommits, setCommitReviewCommits] = useState<CommitInfo[]>([]);
 
   useEffect(() => {
     const handleVisibility = () => {
@@ -208,16 +213,34 @@ export function RepoSyncPage() {
   };
 
   const handleSyncOperation = async (repoId: string, operation: SyncOperation) => {
+    if (operation === "push_to_remote") {
+      // Fetch commits and open review modal instead of pushing directly
+      setActiveOperation({ repoId, operation });
+      setSyncError(null);
+      try {
+        const commits = await getCommits(repoId);
+        if (commits.length === 0) {
+          setSyncError("No commits to push.");
+        } else {
+          setCommitReviewRepoId(repoId);
+          setCommitReviewCommits(commits);
+          setCommitReviewOpen(true);
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to fetch commits";
+        setSyncError(message);
+      } finally {
+        setActiveOperation(null);
+      }
+      return;
+    }
+
     setActiveOperation({ repoId, operation });
     setSyncError(null);
     try {
       switch (operation) {
         case "pull_from_agent":
           await pullFromAgent(repoId);
-          break;
-        case "push_to_remote":
-          // For now, call pushToRemote directly. Commit review modal is task 11.5.
-          await pushToRemote(repoId, { commit_shas: [], squash: false });
           break;
         case "fetch_from_remote":
           await fetchFromRemote(repoId);
@@ -233,6 +256,27 @@ export function RepoSyncPage() {
       refresh();
       setActiveOperation(null);
     }
+  };
+
+  const handleCommitReviewClose = () => {
+    setCommitReviewOpen(false);
+    setCommitReviewRepoId(null);
+    setCommitReviewCommits([]);
+  };
+
+  const handlePushComplete = () => {
+    setCommitReviewOpen(false);
+    setCommitReviewRepoId(null);
+    setCommitReviewCommits([]);
+    refresh();
+  };
+
+  const handlePushError = (message: string) => {
+    setCommitReviewOpen(false);
+    setCommitReviewRepoId(null);
+    setCommitReviewCommits([]);
+    setSyncError(message);
+    refresh();
   };
 
   return (
@@ -395,6 +439,17 @@ export function RepoSyncPage() {
             </div>
           ))}
         </div>
+      )}
+
+      {commitReviewRepoId && (
+        <CommitReviewModal
+          open={commitReviewOpen}
+          repoId={commitReviewRepoId}
+          commits={commitReviewCommits}
+          onClose={handleCommitReviewClose}
+          onPushComplete={handlePushComplete}
+          onPushError={handlePushError}
+        />
       )}
     </div>
   );
