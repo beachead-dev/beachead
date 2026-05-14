@@ -62,19 +62,19 @@ pub struct DeleteRepoQuery {
 /// If a repo ID is present in this map, a sync operation is in progress for it.
 /// Handlers try to acquire before starting an operation and release on completion.
 /// Returns HTTP 409 if the repo already has an operation in progress.
-static OPERATION_LOCKS: std::sync::LazyLock<DashMap<String, ()>> =
+pub static OPERATION_LOCKS: std::sync::LazyLock<DashMap<String, ()>> =
     std::sync::LazyLock::new(DashMap::new);
 
 /// Guard that removes the repo ID from the operation lock map on drop.
 /// Ensures the lock is always released, even on early returns or panics.
-struct OperationGuard {
+pub struct OperationGuard {
     repo_id: String,
 }
 
 impl OperationGuard {
     /// Try to acquire the operation lock for a repo.
     /// Returns `Ok(Self)` if acquired, or `Err(OrchestratorError::SyncInProgress)` if busy.
-    fn try_acquire(repo_id: &str) -> Result<Self, OrchestratorError> {
+    pub fn try_acquire(repo_id: &str) -> Result<Self, OrchestratorError> {
         match OPERATION_LOCKS.entry(repo_id.to_string()) {
             dashmap::mapref::entry::Entry::Occupied(_) => {
                 Err(OrchestratorError::SyncInProgress(format!(
@@ -457,8 +457,8 @@ async fn pull_from_agent(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, OrchestratorError> {
-    let mgr = state.require_repo_sync_manager()?;
     let _guard = OperationGuard::try_acquire(&id)?;
+    let mgr = state.require_repo_sync_manager()?;
     let repo_id = ManagedRepoId(id);
     let result = mgr.pull_from_agent(&repo_id).await?;
     Ok(Json(serde_json::json!({ "commits": result.commits })))
@@ -479,8 +479,8 @@ async fn push_to_remote(
     Path(id): Path<String>,
     Json(req): Json<PushToRemoteRequest>,
 ) -> Result<Json<serde_json::Value>, OrchestratorError> {
-    let mgr = state.require_repo_sync_manager()?;
     let _guard = OperationGuard::try_acquire(&id)?;
+    let mgr = state.require_repo_sync_manager()?;
     let repo_id = ManagedRepoId(id);
     let result = mgr
         .push_to_remote(&repo_id, &req.commit_shas, req.squash, req.squash_message.as_deref())
@@ -504,8 +504,8 @@ async fn fetch_from_remote(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, OrchestratorError> {
-    let mgr = state.require_repo_sync_manager()?;
     let _guard = OperationGuard::try_acquire(&id)?;
+    let mgr = state.require_repo_sync_manager()?;
     let repo_id = ManagedRepoId(id);
     let result = mgr.fetch_from_remote(&repo_id).await?;
     Ok(Json(serde_json::json!({ "commits": result.commits })))
@@ -524,8 +524,8 @@ async fn push_to_agent(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, OrchestratorError> {
-    let mgr = state.require_repo_sync_manager()?;
     let _guard = OperationGuard::try_acquire(&id)?;
+    let mgr = state.require_repo_sync_manager()?;
     let repo_id = ManagedRepoId(id);
     let result = mgr.push_to_agent(&repo_id).await?;
     Ok(Json(serde_json::json!({ "commits": result.commits })))

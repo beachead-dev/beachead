@@ -41,6 +41,9 @@ mod secret_scanner_property_tests;
 #[path = "routes/mcp_containers_test.rs"]
 mod mcp_containers_test;
 #[cfg(test)]
+#[path = "routes/repo_sync_test.rs"]
+mod repo_sync_test;
+#[cfg(test)]
 mod sandboxes_test;
 #[cfg(test)]
 mod db_ops_repo_sync_tests;
