@@ -12,6 +12,8 @@ use axum::{
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use chrono::Utc;
+use uuid::Uuid;
 
 use crate::db_ops;
 use crate::error::OrchestratorError;
@@ -19,7 +21,7 @@ use crate::repo_credential_manager;
 use crate::server::AppState;
 use crate::types::{
     CommitInfo, DetectedRepo, EnableRepoRequest, ManagedRepoId, ManagedRepoResponse,
-    SyncStatus, UpdateRepoRequest,
+    RepoCredential, SetCredentialsRequest, SyncStatus, UpdateRepoRequest,
 };
 
 /// Response for the lightweight status endpoint used by the sidebar badge.
@@ -127,6 +129,10 @@ pub fn router() -> Router<AppState> {
             post(push_to_agent),
         )
         .route("/api/repo-sync/repos/{id}/commits", get(list_commits))
+        .route(
+            "/api/repo-sync/repos/{id}/credentials",
+            put(set_credentials).delete(delete_credentials),
+        )
 }
 
 // --- Status and Settings Endpoints ---
@@ -539,4 +545,93 @@ async fn list_commits(
     let repo_id = ManagedRepoId(id);
     let commits = mgr.list_commits(&repo_id).await?;
     Ok(Json(commits))
+}
+
+
+// --- Credential Endpoints ---
+
+/// PUT /api/repo-sync/repos/{id}/credentials — store credentials in keyring.
+///
+/// Accepts a `SetCredentialsRequest` JSON body with username, secret, and credential_type.
+/// Validates that username and secret are non-empty. Stores credentials in the OS keyring
+/// via `repo_credential_manager::store_credentials()`, then upserts a `RepoCredential`
+/// record in the database (deletes existing record first if present, then inserts new).
+///
+/// Returns 200 OK with `{ "status": "configured" }`.
+///
+/// # Requirements: 18.11, 13.5, 13.6, 13.9
+async fn set_credentials(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<SetCredentialsRequest>,
+) -> Result<Json<serde_json::Value>, OrchestratorError> {
+    // Validate non-empty username and secret
+    if req.username.trim().is_empty() {
+        return Err(OrchestratorError::Validation(
+            "username must not be empty".to_string(),
+        ));
+    }
+    if req.secret.trim().is_empty() {
+        return Err(OrchestratorError::Validation(
+            "secret must not be empty".to_string(),
+        ));
+    }
+
+    // Verify the repo exists
+    let repo_id = ManagedRepoId(id.clone());
+    state
+        .db
+        .with_conn(|conn| {
+            db_ops::get_managed_repo(conn, &repo_id)
+        })?;
+
+    // Store credentials in the OS keyring
+    repo_credential_manager::store_credentials(&id, req.username, req.secret)?;
+
+    // Upsert the RepoCredential record in the DB:
+    // Delete existing record (if any), then insert new one.
+    let keyring_service = format!("beachead-repo-sync-{}", id);
+    let now = Utc::now();
+    let cred = RepoCredential {
+        id: Uuid::new_v4().to_string(),
+        repo_id: ManagedRepoId(id.clone()),
+        keyring_service_name: keyring_service,
+        credential_type: req.credential_type,
+        created_at: now,
+        updated_at: now,
+    };
+
+    state.db.with_conn(|conn| {
+        // Delete old credential record if it exists
+        let _ = db_ops::delete_repo_credential(conn, &ManagedRepoId(id.clone()));
+        // Insert new credential record
+        db_ops::insert_repo_credential(conn, &cred)
+    })?;
+
+    Ok(Json(serde_json::json!({ "status": "configured" })))
+}
+
+/// DELETE /api/repo-sync/repos/{id}/credentials — remove credentials from keyring.
+///
+/// Deletes credentials from the OS keyring via `repo_credential_manager::delete_credentials()`
+/// and removes the `RepoCredential` record from the database.
+///
+/// Returns 204 No Content.
+///
+/// # Requirements: 18.12, 13.5, 13.6, 13.9
+async fn delete_credentials(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, OrchestratorError> {
+    let repo_id = ManagedRepoId(id.clone());
+
+    // Delete from OS keyring (idempotent — ignores "not found")
+    repo_credential_manager::delete_credentials(&id)?;
+
+    // Delete from database
+    state.db.with_conn(|conn| {
+        db_ops::delete_repo_credential(conn, &repo_id)
+    })?;
+
+    Ok(StatusCode::NO_CONTENT)
 }
