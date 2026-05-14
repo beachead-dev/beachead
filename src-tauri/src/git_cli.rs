@@ -7,13 +7,13 @@ use tokio::sync::Mutex;
 use tokio::time::{timeout, Duration};
 
 /// Maximum captured output size (1 MB).
-const MAX_OUTPUT_BYTES: usize = 1_048_576;
+pub const MAX_OUTPUT_BYTES: usize = 1_048_576;
 
 /// Timeout for network git operations (fetch, push, pull from remote, clone from URL).
-const NETWORK_TIMEOUT_SECS: u64 = 120;
+pub const NETWORK_TIMEOUT_SECS: u64 = 120;
 
 /// Timeout for local git operations (log, status, remote, config, branch).
-const LOCAL_TIMEOUT_SECS: u64 = 30;
+pub const LOCAL_TIMEOUT_SECS: u64 = 30;
 
 /// Successful git command output.
 #[derive(Debug, Clone)]
@@ -244,7 +244,7 @@ impl GitCli {
 }
 
 /// Truncate output bytes to MAX_OUTPUT_BYTES, keeping the tail if exceeded.
-fn truncate_output(bytes: &[u8]) -> String {
+pub fn truncate_output(bytes: &[u8]) -> String {
     if bytes.len() <= MAX_OUTPUT_BYTES {
         String::from_utf8_lossy(bytes).to_string()
     } else {

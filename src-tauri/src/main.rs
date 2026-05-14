@@ -19,6 +19,7 @@ pub mod port_allocator;
 pub mod pty_bridge;
 pub mod routes;
 pub mod sbx;
+pub mod secret_scanner;
 #[cfg(test)]
 mod port_allocator_property_tests;
 #[cfg(test)]
@@ -31,6 +32,8 @@ mod export_import_property_tests;
 mod token_property_tests;
 #[cfg(test)]
 mod additional_workspace_property_tests;
+#[cfg(test)]
+mod git_cli_property_tests;
 #[cfg(test)]
 #[path = "routes/mcp_containers_test.rs"]
 mod mcp_containers_test;

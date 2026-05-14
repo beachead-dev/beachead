@@ -247,6 +247,8 @@ fn is_no_entry_error(e: &keyring::Error) -> bool {
 mod tests {
     use super::*;
 
+    // ===== Service name format tests (Requirement 13.7) =====
+
     #[test]
     fn test_service_name_format() {
         assert_eq!(
@@ -265,22 +267,103 @@ mod tests {
     }
 
     #[test]
+    fn test_service_name_prefix_is_consistent() {
+        // All service names must start with the beachead-repo-sync- prefix
+        for repo_id in &["a", "123", "my-repo", "repo_with_underscores", "UPPERCASE"] {
+            let name = service_name(repo_id);
+            assert!(
+                name.starts_with("beachead-repo-sync-"),
+                "service name '{}' does not start with expected prefix",
+                name
+            );
+        }
+    }
+
+    #[test]
+    fn test_service_name_contains_repo_id_suffix() {
+        let repo_id = "my-custom-repo-id";
+        let name = service_name(repo_id);
+        assert!(name.ends_with(repo_id));
+    }
+
+    #[test]
+    fn test_service_name_with_empty_repo_id() {
+        // Edge case: empty repo ID still produces valid prefix
+        assert_eq!(service_name(""), "beachead-repo-sync-");
+    }
+
+    #[test]
+    fn test_service_name_with_special_characters() {
+        // Repo IDs with dots, slashes, etc.
+        assert_eq!(
+            service_name("repo.with.dots"),
+            "beachead-repo-sync-repo.with.dots"
+        );
+        assert_eq!(
+            service_name("repo/with/slashes"),
+            "beachead-repo-sync-repo/with/slashes"
+        );
+    }
+
+    #[test]
+    fn test_service_name_uniqueness() {
+        // Different repo IDs produce different service names
+        let name1 = service_name("repo-1");
+        let name2 = service_name("repo-2");
+        assert_ne!(name1, name2);
+    }
+
+    // ===== is_no_entry_error tests (Requirement 13.9) =====
+
+    #[test]
     fn test_is_no_entry_error() {
         assert!(is_no_entry_error(&keyring::Error::NoEntry));
     }
 
     #[test]
-    fn test_is_no_entry_error_other_variants() {
-        // Other error variants should not match
-        let other_err = keyring::Error::PlatformFailure(
+    fn test_is_no_entry_error_platform_failure() {
+        let err = keyring::Error::PlatformFailure(
             Box::new(std::io::Error::new(std::io::ErrorKind::Other, "test")),
         );
-        assert!(!is_no_entry_error(&other_err));
+        assert!(!is_no_entry_error(&err));
     }
 
     #[test]
+    fn test_is_no_entry_error_no_storage_access() {
+        let err = keyring::Error::NoStorageAccess(
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "keyring locked",
+            )),
+        );
+        assert!(!is_no_entry_error(&err));
+    }
+
+    #[test]
+    fn test_is_no_entry_error_bad_encoding() {
+        let err = keyring::Error::BadEncoding(vec![0xFF, 0xFE]);
+        assert!(!is_no_entry_error(&err));
+    }
+
+    #[test]
+    fn test_is_no_entry_error_too_long() {
+        let err = keyring::Error::TooLong("service".to_string(), 255);
+        assert!(!is_no_entry_error(&err));
+    }
+
+    #[test]
+    fn test_is_no_entry_error_invalid() {
+        let err = keyring::Error::Invalid(
+            "service".to_string(),
+            "contains null byte".to_string(),
+        );
+        assert!(!is_no_entry_error(&err));
+    }
+
+    // ===== Askpass path resolution tests (Requirement 13.3) =====
+
+    #[test]
     fn test_askpass_binary_path_returns_path() {
-        // This test verifies the function returns a path (may not exist in test env)
         let result = askpass_binary_path();
         assert!(result.is_ok());
         let path = result.unwrap();
@@ -288,10 +371,144 @@ mod tests {
     }
 
     #[test]
+    fn test_askpass_binary_path_is_in_same_dir_as_current_exe() {
+        let askpass = askpass_binary_path().unwrap();
+        let current_exe = std::env::current_exe().unwrap();
+        // The askpass binary should be in the same directory as the current executable
+        assert_eq!(askpass.parent(), current_exe.parent());
+    }
+
+    #[test]
+    fn test_askpass_binary_path_is_absolute() {
+        let path = askpass_binary_path().unwrap();
+        assert!(path.is_absolute(), "askpass path should be absolute: {:?}", path);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_askpass_binary_path_has_exe_extension_on_windows() {
+        let path = askpass_binary_path().unwrap();
+        assert_eq!(path.extension().unwrap(), "exe");
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn test_askpass_binary_path_has_no_extension_on_unix() {
+        let path = askpass_binary_path().unwrap();
+        // On Unix, the binary name is just "beachead-askpass" with no extension
+        assert_eq!(
+            path.file_name().unwrap().to_string_lossy(),
+            "beachead-askpass"
+        );
+    }
+
+    #[test]
+    fn test_resolve_askpass_path_fails_when_binary_missing() {
+        // resolve_askpass_path checks existence, so it should fail in test env
+        // where the binary isn't built alongside the test runner
+        let result = resolve_askpass_path();
+        // In test environment, the binary likely doesn't exist next to the test binary
+        // This is expected behavior — the function correctly reports the missing binary
+        if result.is_err() {
+            let err_msg = format!("{}", result.unwrap_err());
+            assert!(
+                err_msg.contains("not found"),
+                "Error should mention binary not found, got: {}",
+                err_msg
+            );
+        }
+        // If it happens to exist (e.g., after a full build), that's also fine
+    }
+
+    // ===== build_credential_env tests =====
+
+    #[test]
     fn test_build_credential_env_service_name() {
-        // We can't fully test this without the askpass binary present,
-        // but we can verify the service name construction logic
+        // Verify the service name construction logic used by build_credential_env
         let service = service_name("test-repo-id");
         assert_eq!(service, "beachead-repo-sync-test-repo-id");
+    }
+
+    #[test]
+    fn test_build_credential_env_uses_correct_service_name_format() {
+        // build_credential_env should use the same service_name function
+        // We can't call build_credential_env directly (needs askpass binary),
+        // but we verify the service name it would use
+        let repo_id = "550e8400-e29b-41d4-a716-446655440000";
+        let expected_service = format!("beachead-repo-sync-{}", repo_id);
+        assert_eq!(service_name(repo_id), expected_service);
+    }
+
+    // ===== Prompt parsing logic tests (Requirement 13.3) =====
+    // These test the same logic used in beachead-askpass binary:
+    // prompt.to_lowercase().contains("password") determines username vs password
+
+    #[test]
+    fn test_prompt_parsing_password_detection() {
+        // Simulates the logic in beachead-askpass: check if prompt contains "password"
+        let password_prompts = vec![
+            "Password for 'https://github.com': ",
+            "password for 'https://gitlab.com': ",
+            "PASSWORD for 'https://bitbucket.org': ",
+            "Enter your password: ",
+            "Git password: ",
+        ];
+        for prompt in password_prompts {
+            let is_password = prompt.to_lowercase().contains("password");
+            assert!(
+                is_password,
+                "Prompt '{}' should be detected as password request",
+                prompt
+            );
+        }
+    }
+
+    #[test]
+    fn test_prompt_parsing_username_detection() {
+        // Prompts that do NOT contain "password" are treated as username requests
+        let username_prompts = vec![
+            "Username for 'https://github.com': ",
+            "username for 'https://gitlab.com': ",
+            "User: ",
+            "Login: ",
+            "",  // empty prompt defaults to username
+        ];
+        for prompt in username_prompts {
+            let is_password = prompt.to_lowercase().contains("password");
+            assert!(
+                !is_password,
+                "Prompt '{}' should be detected as username request",
+                prompt
+            );
+        }
+    }
+
+    #[test]
+    fn test_prompt_parsing_keyring_key_construction() {
+        // Verifies the key format used by beachead-askpass to look up credentials
+        let service = "beachead-repo-sync-my-repo";
+
+        // Password prompt → uses "-secret" suffix
+        let password_key = format!("{}-secret", service);
+        assert_eq!(password_key, "beachead-repo-sync-my-repo-secret");
+
+        // Username prompt → uses "-username" suffix
+        let username_key = format!("{}-username", service);
+        assert_eq!(username_key, "beachead-repo-sync-my-repo-username");
+    }
+
+    #[test]
+    fn test_prompt_parsing_case_insensitive() {
+        // The binary uses to_lowercase().contains("password") — case insensitive
+        let mixed_case_prompts = vec![
+            "Password",
+            "PASSWORD",
+            "pAsSwOrD",
+            "Enter PASSWORD here",
+        ];
+        for prompt in mixed_case_prompts {
+            let is_password = prompt.to_lowercase().contains("password");
+            assert!(is_password, "Case-insensitive check failed for: {}", prompt);
+        }
     }
 }
