@@ -244,6 +244,8 @@ pub struct DependencyStatus {
     pub sbx_version: Option<String>,
     pub docker_available: bool,
     pub docker_version: Option<String>,
+    pub git_available: bool,
+    pub git_version: Option<String>,
 }
 
 // --- API Request/Response Types ---

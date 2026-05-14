@@ -76,9 +76,9 @@ impl SystemManager {
         self.sbx.diagnose().await
     }
 
-    /// Check availability of required dependencies (sbx CLI and Docker).
+    /// Check availability of required dependencies (sbx CLI, Docker, and git).
     ///
-    /// Runs `sbx version` and `docker --version`, returning a summary
+    /// Runs `sbx version`, `docker --version`, and `git --version`, returning a summary
     /// of what is available and their version strings.
     pub async fn dependency_check(&self) -> Result<DependencyStatus, OrchestratorError> {
         // Check sbx availability
@@ -93,11 +93,19 @@ impl SystemManager {
             Err(_) => (false, None),
         };
 
+        // Check git availability via `git --version`
+        let (git_available, git_version) = match Self::check_git_version().await {
+            Ok(version) => (true, Some(version)),
+            Err(_) => (false, None),
+        };
+
         Ok(DependencyStatus {
             sbx_available,
             sbx_version,
             docker_available,
             docker_version,
+            git_available,
+            git_version,
         })
     }
 
@@ -133,6 +141,39 @@ impl SystemManager {
         let version_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
         Ok(version_str)
     }
+
+    /// Run `git --version` and extract the version string.
+    async fn check_git_version() -> Result<String, OrchestratorError> {
+        use tokio::process::Command;
+
+        let binary = if cfg!(target_os = "windows") {
+            "git.exe"
+        } else {
+            "git"
+        };
+
+        let output = Command::new(binary)
+            .arg("--version")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .output()
+            .await
+            .map_err(|e| {
+                OrchestratorError::Internal(format!(
+                    "Failed to execute git --version: {}",
+                    e
+                ))
+            })?;
+
+        if !output.status.success() {
+            return Err(OrchestratorError::Internal(
+                "git --version returned non-zero exit code".to_string(),
+            ));
+        }
+
+        let version_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        Ok(version_str)
+    }
 }
 
 
@@ -157,8 +198,8 @@ mod tests {
     /// Strategy for generating a valid DependencyStatus where available
     /// dependencies have non-empty version strings and unavailable ones have None.
     fn dependency_state_arbitrary() -> impl Strategy<Value = DependencyStatus> {
-        (any::<bool>(), any::<bool>())
-            .prop_flat_map(|(sbx_avail, docker_avail)| {
+        (any::<bool>(), any::<bool>(), any::<bool>())
+            .prop_flat_map(|(sbx_avail, docker_avail, git_avail)| {
                 let sbx_version_strat = if sbx_avail {
                     version_string_strategy().prop_map(Some).boxed()
                 } else {
@@ -169,14 +210,21 @@ mod tests {
                 } else {
                     Just(None).boxed()
                 };
-                (Just(sbx_avail), sbx_version_strat, Just(docker_avail), docker_version_strat)
+                let git_version_strat = if git_avail {
+                    version_string_strategy().prop_map(Some).boxed()
+                } else {
+                    Just(None).boxed()
+                };
+                (Just(sbx_avail), sbx_version_strat, Just(docker_avail), docker_version_strat, Just(git_avail), git_version_strat)
             })
-            .prop_map(|(sbx_available, sbx_version, docker_available, docker_version)| {
+            .prop_map(|(sbx_available, sbx_version, docker_available, docker_version, git_available, git_version)| {
                 DependencyStatus {
                     sbx_available,
                     sbx_version,
                     docker_available,
                     docker_version,
+                    git_available,
+                    git_version,
                 }
             })
     }
@@ -216,6 +264,19 @@ mod tests {
                 prop_assert!(status.docker_version.is_none(),
                     "docker_available is false but docker_version is Some({})",
                     status.docker_version.unwrap_or_default());
+            }
+
+            // Invariant: available implies non-empty version string
+            if status.git_available {
+                prop_assert!(status.git_version.is_some(),
+                    "git_available is true but git_version is None");
+                let version = status.git_version.as_ref().unwrap();
+                prop_assert!(!version.is_empty(),
+                    "git_available is true but git_version is empty string");
+            } else {
+                prop_assert!(status.git_version.is_none(),
+                    "git_available is false but git_version is Some({})",
+                    status.git_version.unwrap_or_default());
             }
         }
 
@@ -273,6 +334,14 @@ mod tests {
                     assert!(!status.docker_version.as_ref().unwrap().is_empty());
                 } else {
                     assert!(status.docker_version.is_none());
+                }
+
+                // Verify git invariants (git availability depends on host)
+                if status.git_available {
+                    assert!(status.git_version.is_some());
+                    assert!(!status.git_version.as_ref().unwrap().is_empty());
+                } else {
+                    assert!(status.git_version.is_none());
                 }
             });
         }

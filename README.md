@@ -10,8 +10,34 @@ Before using Beachead, install the following:
 |-----------|---------|---------------|
 | **Docker Engine** | Container runtime for sandboxes and memory MCP containers | [docs.docker.com/engine/install](https://docs.docker.com/engine/install/) |
 | **Docker Sandboxes (sbx)** | CLI for managing sandbox microVMs | [github.com/docker/sbx-releases](https://github.com/docker/sbx-releases/releases) |
+| **Git** | Required for Repo Sync features (remote synchronization) | [git-scm.com/downloads](https://git-scm.com/downloads) |
 
 > **Note:** Docker Engine must be running for both sandbox sessions and per-persona memory features. Memory MCP containers are managed automatically via the Docker API (bollard crate).
+
+> **Note:** Git is optional but required for Repo Sync functionality. If git is not found on your PATH, Repo Sync features will be disabled (graceful degradation).
+
+### Platform-Specific Notes
+
+#### Linux — Keyring Support
+
+Repo Sync stores git credentials in the OS keyring. On Linux, this requires `libsecret` (used by GNOME Keyring / KDE Wallet):
+
+**Ubuntu/Debian:**
+```bash
+sudo apt install libsecret-1-dev gnome-keyring
+```
+
+**Fedora/RHEL:**
+```bash
+sudo dnf install libsecret-devel gnome-keyring
+```
+
+**Arch Linux:**
+```bash
+sudo pacman -S libsecret gnome-keyring
+```
+
+If the keyring service is not available, credential storage for Repo Sync will fail. The rest of Beachead will continue to work normally.
 
 ### Installing sbx
 
