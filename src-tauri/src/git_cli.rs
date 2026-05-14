@@ -81,6 +81,82 @@ impl GitCli {
         &self.git_path
     }
 
+    /// Count commits ahead/behind between two refs.
+    /// Returns (ahead, behind) where ahead = local commits not in remote.
+    pub async fn ahead_behind(
+        &self,
+        cwd: &Path,
+        local_ref: &str,
+        remote_ref: &str,
+    ) -> Result<(u32, u32), GitError> {
+        let range = format!("{}...{}", local_ref, remote_ref);
+        let output = self
+            .exec(
+                cwd,
+                &["rev-list", "--left-right", "--count", &range],
+                None,
+                false,
+            )
+            .await?;
+        let parts: Vec<&str> = output.stdout.trim().split('\t').collect();
+        let ahead = parts.get(0).and_then(|s| s.parse().ok()).unwrap_or(0);
+        let behind = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+        Ok((ahead, behind))
+    }
+
+    /// Get the current branch name via `git branch --show-current`.
+    /// Returns an empty string if in detached HEAD state.
+    pub async fn get_current_branch(&self, cwd: &Path) -> Result<String, GitError> {
+        let output = self
+            .exec(cwd, &["branch", "--show-current"], None, false)
+            .await?;
+        Ok(output.stdout.trim().to_string())
+    }
+
+    /// List all remote names via `git remote`.
+    pub async fn list_remote_names(&self, cwd: &Path) -> Result<Vec<String>, GitError> {
+        let output = self.exec(cwd, &["remote"], None, false).await?;
+        let names = output
+            .stdout
+            .lines()
+            .map(|line| line.trim().to_string())
+            .filter(|line| !line.is_empty())
+            .collect();
+        Ok(names)
+    }
+
+    /// Get the URL for a specific remote via `git remote get-url`.
+    /// Returns None if the remote does not exist.
+    pub async fn get_remote_url(
+        &self,
+        cwd: &Path,
+        remote_name: &str,
+    ) -> Result<Option<String>, GitError> {
+        let result = self
+            .exec(cwd, &["remote", "get-url", remote_name], None, false)
+            .await;
+        match result {
+            Ok(output) => {
+                let url = output.stdout.trim().to_string();
+                if url.is_empty() {
+                    Ok(None)
+                } else {
+                    Ok(Some(url))
+                }
+            }
+            Err(GitError::NonZeroExit { .. }) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Get the working tree status in porcelain format via `git status --porcelain`.
+    pub async fn status_porcelain(&self, cwd: &Path) -> Result<String, GitError> {
+        let output = self
+            .exec(cwd, &["status", "--porcelain"], None, false)
+            .await?;
+        Ok(output.stdout.clone())
+    }
+
     /// Execute a git command with credential injection and timeout.
     ///
     /// - `cwd`: Working directory (must contain `.git`).
@@ -352,5 +428,179 @@ mod tests {
         // Should not be truncated
         assert!(!result.starts_with("[truncated"));
         assert_eq!(result.len(), MAX_OUTPUT_BYTES);
+    }
+
+    /// Helper to create a temporary git repo for integration tests.
+    fn create_temp_git_repo() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["config", "user.email", "test@test.com"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["config", "user.name", "Test"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        // Create an initial commit so HEAD exists
+        std::fs::write(dir.path().join("README.md"), "# Test").unwrap();
+        std::process::Command::new("git")
+            .args(["add", "."])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["commit", "-m", "initial commit"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        dir
+    }
+
+    #[tokio::test]
+    async fn test_get_current_branch() {
+        let dir = create_temp_git_repo();
+        let git = GitCli::new("git".to_string());
+        let branch = git.get_current_branch(dir.path()).await.unwrap();
+        // Default branch is typically "main" or "master"
+        assert!(!branch.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_list_remote_names_empty() {
+        let dir = create_temp_git_repo();
+        let git = GitCli::new("git".to_string());
+        let remotes = git.list_remote_names(dir.path()).await.unwrap();
+        assert!(remotes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_list_remote_names_with_remote() {
+        let dir = create_temp_git_repo();
+        // Add a remote
+        std::process::Command::new("git")
+            .args(["remote", "add", "origin", "https://example.com/repo.git"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["remote", "add", "upstream", "https://example.com/upstream.git"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+
+        let git = GitCli::new("git".to_string());
+        let remotes = git.list_remote_names(dir.path()).await.unwrap();
+        assert_eq!(remotes.len(), 2);
+        assert!(remotes.contains(&"origin".to_string()));
+        assert!(remotes.contains(&"upstream".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_get_remote_url_exists() {
+        let dir = create_temp_git_repo();
+        std::process::Command::new("git")
+            .args(["remote", "add", "origin", "https://example.com/repo.git"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+
+        let git = GitCli::new("git".to_string());
+        let url = git.get_remote_url(dir.path(), "origin").await.unwrap();
+        assert_eq!(url, Some("https://example.com/repo.git".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_get_remote_url_not_exists() {
+        let dir = create_temp_git_repo();
+        let git = GitCli::new("git".to_string());
+        let url = git.get_remote_url(dir.path(), "nonexistent").await.unwrap();
+        assert_eq!(url, None);
+    }
+
+    #[tokio::test]
+    async fn test_status_porcelain_clean() {
+        let dir = create_temp_git_repo();
+        let git = GitCli::new("git".to_string());
+        let status = git.status_porcelain(dir.path()).await.unwrap();
+        assert!(status.trim().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_status_porcelain_dirty() {
+        let dir = create_temp_git_repo();
+        // Create an untracked file
+        std::fs::write(dir.path().join("new_file.txt"), "content").unwrap();
+
+        let git = GitCli::new("git".to_string());
+        let status = git.status_porcelain(dir.path()).await.unwrap();
+        assert!(!status.trim().is_empty());
+        assert!(status.contains("new_file.txt"));
+    }
+
+    #[tokio::test]
+    async fn test_ahead_behind_same_ref() {
+        let dir = create_temp_git_repo();
+        let git = GitCli::new("git".to_string());
+        let branch = git.get_current_branch(dir.path()).await.unwrap();
+        // Comparing a branch to itself should yield (0, 0)
+        let (ahead, behind) = git.ahead_behind(dir.path(), &branch, &branch).await.unwrap();
+        assert_eq!(ahead, 0);
+        assert_eq!(behind, 0);
+    }
+
+    #[tokio::test]
+    async fn test_ahead_behind_with_commits() {
+        let dir = create_temp_git_repo();
+        let git = GitCli::new("git".to_string());
+        let branch = git.get_current_branch(dir.path()).await.unwrap();
+
+        // Create a branch at current HEAD, then add commits to main
+        std::process::Command::new("git")
+            .args(["branch", "base"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+
+        // Add two more commits on the current branch
+        std::fs::write(dir.path().join("file1.txt"), "a").unwrap();
+        std::process::Command::new("git")
+            .args(["add", "."])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["commit", "-m", "second"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+
+        std::fs::write(dir.path().join("file2.txt"), "b").unwrap();
+        std::process::Command::new("git")
+            .args(["add", "."])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["commit", "-m", "third"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+
+        // Current branch is 2 ahead of "base", base is 0 behind
+        let (ahead, behind) = git.ahead_behind(dir.path(), &branch, "base").await.unwrap();
+        assert_eq!(ahead, 2);
+        assert_eq!(behind, 0);
+
+        // Reverse: base is 0 ahead, 2 behind current branch
+        let (ahead, behind) = git.ahead_behind(dir.path(), "base", &branch).await.unwrap();
+        assert_eq!(ahead, 0);
+        assert_eq!(behind, 2);
     }
 }
