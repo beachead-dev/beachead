@@ -178,7 +178,24 @@ pub async fn start_server(
         }
     };
 
-    // Session manager depends on sbx and optionally on mcp_container_manager
+    // Initialize Repo Sync Manager — graceful degradation if git not found (Req 19.7, 22.3)
+    let repo_sync_manager = match discover_git_binary().await {
+        Some(git_path) => {
+            println!("Git binary found at: {}", git_path);
+            let git = Arc::new(crate::git_cli::GitCli::new(git_path));
+            let mirrors_dir = RepoSyncManager::default_mirrors_dir();
+            std::fs::create_dir_all(&mirrors_dir).ok();
+            let manager = RepoSyncManager::new(db.clone(), git.clone(), mirrors_dir);
+            let _handle = manager.start_background_checker();
+            Some(Arc::new(manager))
+        }
+        None => {
+            eprintln!("Warning: git not found in PATH. Repo Sync features disabled.");
+            None
+        }
+    };
+
+    // Session manager depends on sbx and optionally on mcp_container_manager and repo_sync_manager
     let session_manager = sbx.as_ref().map(|s| {
         Arc::new(SessionManager::new(
             db.clone(),
@@ -186,6 +203,7 @@ pub async fn start_server(
             kit_generator.clone(),
             pty_bridge.clone(),
             mcp_container_manager.clone(),
+            repo_sync_manager.clone(),
         ))
     });
 
@@ -212,23 +230,6 @@ pub async fn start_server(
             }
         });
     }
-
-    // Initialize Repo Sync Manager — graceful degradation if git not found (Req 19.7, 22.3)
-    let repo_sync_manager = match discover_git_binary().await {
-        Some(git_path) => {
-            println!("Git binary found at: {}", git_path);
-            let git = Arc::new(crate::git_cli::GitCli::new(git_path));
-            let mirrors_dir = RepoSyncManager::default_mirrors_dir();
-            std::fs::create_dir_all(&mirrors_dir).ok();
-            let manager = RepoSyncManager::new(db.clone(), git.clone(), mirrors_dir);
-            let _handle = manager.start_background_checker();
-            Some(Arc::new(manager))
-        }
-        None => {
-            eprintln!("Warning: git not found in PATH. Repo Sync features disabled.");
-            None
-        }
-    };
 
     let state = AppState {
         persona_manager,

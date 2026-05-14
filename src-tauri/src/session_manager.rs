@@ -15,6 +15,7 @@ use crate::error::OrchestratorError;
 use crate::kit_generator::{KitGenerator, McpConfig};
 use crate::mcp_container_manager::McpContainerManager;
 use crate::pty_bridge::PtyBridge;
+use crate::repo_sync_manager::RepoSyncManager;
 use crate::sbx::{SbxCli, SbxRunArgs};
 use crate::types::{
     AdditionalWorkspaceArg, Persona, PersonaId, Session, SessionId, SessionStatus, UploadMethod,
@@ -54,6 +55,7 @@ pub struct SessionManager {
     kit_generator: Arc<KitGenerator>,
     pty_bridge: Arc<PtyBridge>,
     mcp_container_manager: Option<Arc<McpContainerManager>>,
+    repo_sync_manager: Option<Arc<RepoSyncManager>>,
 }
 
 impl SessionManager {
@@ -64,6 +66,7 @@ impl SessionManager {
         kit_generator: Arc<KitGenerator>,
         pty_bridge: Arc<PtyBridge>,
         mcp_container_manager: Option<Arc<McpContainerManager>>,
+        repo_sync_manager: Option<Arc<RepoSyncManager>>,
     ) -> Self {
         Self {
             db,
@@ -71,6 +74,7 @@ impl SessionManager {
             kit_generator,
             pty_bridge,
             mcp_container_manager,
+            repo_sync_manager,
         }
     }
 
@@ -250,8 +254,9 @@ impl SessionManager {
     /// Stop a running session.
     ///
     /// Invokes `sbx stop` and updates session status to "stopped" in SQLite.
+    /// After teardown, spawns a non-blocking workspace scan for repo sync detection.
     ///
-    /// Requirements: 3.5
+    /// Requirements: 3.5, 4.1
     pub async fn stop(&self, session_id: &SessionId) -> Result<(), OrchestratorError> {
         let session = self.db.with_conn(|conn| db_ops::get_session(conn, session_id))?;
 
@@ -274,6 +279,14 @@ impl SessionManager {
         self.db.with_conn(|conn| {
             db_ops::update_session_status(conn, session_id, &SessionStatus::Stopped, None)
         })?;
+
+        // Fire-and-forget: scan workspaces for repo sync detection after session stops
+        if let Some(ref repo_sync) = self.repo_sync_manager {
+            let rsm = repo_sync.clone();
+            tokio::spawn(async move {
+                let _ = rsm.scan_workspaces().await;
+            });
+        }
 
         Ok(())
     }
@@ -934,6 +947,7 @@ esac
             kit_generator,
             pty_bridge.clone(),
             None,
+            None,
         );
 
         let session = manager.start(&persona_id, None).await.unwrap();
@@ -964,7 +978,7 @@ esac
 
         let persona_id = insert_test_persona(&db, workspace_dir.path());
 
-        let manager = SessionManager::new(db.clone(), sbx, kit_generator, pty_bridge, None);
+        let manager = SessionManager::new(db.clone(), sbx, kit_generator, pty_bridge, None, None);
 
         let result = manager.start(&persona_id, None).await;
         assert!(result.is_err());
@@ -992,7 +1006,7 @@ esac
 
         let persona_id = insert_test_persona(&db, workspace_dir.path());
 
-        let manager = SessionManager::new(db.clone(), sbx, kit_generator, pty_bridge, None);
+        let manager = SessionManager::new(db.clone(), sbx, kit_generator, pty_bridge, None, None);
 
         let result = manager.start(&persona_id, None).await;
         assert!(result.is_err());
@@ -1022,6 +1036,7 @@ esac
             sbx,
             kit_generator,
             pty_bridge.clone(),
+            None,
             None,
         );
 
@@ -1053,6 +1068,7 @@ esac
             sbx,
             kit_generator,
             pty_bridge.clone(),
+            None,
             None,
         );
 
@@ -1089,6 +1105,7 @@ esac
             kit_generator,
             pty_bridge.clone(),
             None,
+            None,
         );
 
         // Initially empty
@@ -1124,6 +1141,7 @@ esac
             sbx,
             kit_generator,
             pty_bridge.clone(),
+            None,
             None,
         );
 
@@ -1162,6 +1180,7 @@ esac
             sbx,
             kit_generator,
             pty_bridge.clone(),
+            None,
             None,
         );
 
@@ -1202,6 +1221,7 @@ esac
             kit_generator,
             pty_bridge.clone(),
             None,
+            None,
         );
 
         // Start and stop a session
@@ -1231,7 +1251,7 @@ esac
         let kit_generator = Arc::new(KitGenerator::new(kit_dir.path().to_path_buf()));
         let pty_bridge = Arc::new(PtyBridge::new());
 
-        let manager = SessionManager::new(db, sbx, kit_generator, pty_bridge, None);
+        let manager = SessionManager::new(db, sbx, kit_generator, pty_bridge, None, None);
 
         // Should detect credential errors
         assert!(manager.is_credential_error("Error: unauthorized access"));
@@ -1371,6 +1391,7 @@ esac
             kit_generator,
             pty_bridge.clone(),
             None,
+            None,
         );
 
         let results = manager.recover_sessions().await;
@@ -1413,6 +1434,7 @@ esac
             kit_generator,
             pty_bridge.clone(),
             None,
+            None,
         );
 
         let results = manager.recover_sessions().await;
@@ -1450,6 +1472,7 @@ esac
             kit_generator,
             pty_bridge.clone(),
             None,
+            None,
         );
 
         let results = manager.recover_sessions().await;
@@ -1470,7 +1493,7 @@ esac
         let (db, sbx, kit_generator, pty_bridge, _kit_dir, _workspace_dir) =
             setup_test_env(sbx_path);
 
-        let manager = SessionManager::new(db.clone(), sbx, kit_generator, pty_bridge, None);
+        let manager = SessionManager::new(db.clone(), sbx, kit_generator, pty_bridge, None, None);
 
         // No active sessions — should return empty
         let results = manager.recover_sessions().await;
