@@ -8,6 +8,7 @@ mod db_ops;
 pub mod export_import_manager;
 pub mod git_cli;
 pub mod policy_manager;
+pub mod repo_credential_manager;
 #[cfg(test)]
 mod db_property_tests;
 mod error;

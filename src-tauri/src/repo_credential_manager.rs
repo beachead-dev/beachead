@@ -272,7 +272,9 @@ mod tests {
     #[test]
     fn test_is_no_entry_error_other_variants() {
         // Other error variants should not match
-        let other_err = keyring::Error::NoStorageAccess(Box::new(keyring::error::Error::NoEntry));
+        let other_err = keyring::Error::PlatformFailure(
+            Box::new(std::io::Error::new(std::io::ErrorKind::Other, "test")),
+        );
         assert!(!is_no_entry_error(&other_err));
     }
 
