@@ -2521,3 +2521,114 @@ body {
 :root[data-theme="dark"] .commit-review-warning {
   color: #f39c12;
 }
+
+/* Repo Settings Panel */
+.repo-settings-toggle {
+  margin-left: auto;
+}
+
+.repo-settings-panel {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid #e0e0e0;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.repo-settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.repo-settings-section-title {
+  margin: 0 0 0.25rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #555;
+}
+
+.repo-settings-credential-status {
+  font-size: 0.8125rem;
+  margin: 0 0 0.5rem;
+}
+
+.credential-configured {
+  color: #27ae60;
+  font-weight: 500;
+}
+
+.credential-not-configured {
+  color: #e67e22;
+  font-weight: 500;
+}
+
+.repo-settings-cred-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.field-error {
+  display: block;
+  font-size: 0.75rem;
+  color: #e74c3c;
+  margin-top: 0.25rem;
+}
+
+.btn-danger {
+  background: #e74c3c;
+  color: #fff;
+  border-color: #e74c3c;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: #c0392b;
+  border-color: #c0392b;
+}
+
+/* Dark mode overrides for Repo Settings Panel */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .repo-settings-panel {
+    border-top-color: #3a4a6a;
+  }
+
+  :root:not([data-theme="light"]) .repo-settings-section-title {
+    color: #aaa;
+  }
+
+  :root:not([data-theme="light"]) .credential-configured {
+    color: #2ecc71;
+  }
+
+  :root:not([data-theme="light"]) .credential-not-configured {
+    color: #f39c12;
+  }
+
+  :root:not([data-theme="light"]) .field-error {
+    color: #e74c3c;
+  }
+}
+
+:root[data-theme="dark"] .repo-settings-panel {
+  border-top-color: #3a4a6a;
+}
+
+:root[data-theme="dark"] .repo-settings-section-title {
+  color: #aaa;
+}
+
+:root[data-theme="dark"] .credential-configured {
+  color: #2ecc71;
+}
+
+:root[data-theme="dark"] .credential-not-configured {
+  color: #f39c12;
+}
+
+:root[data-theme="dark"] .field-error {
+  color: #e74c3c;
+}

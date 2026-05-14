@@ -13,6 +13,7 @@ import {
 } from "../lib/api";
 import { usePolling } from "../hooks/usePolling";
 import { CommitReviewModal } from "../components/CommitReviewModal";
+import { RepoSettingsPanel } from "../components/RepoSettingsPanel";
 
 /**
  * Groups repos by persona name, with repos sorted alphabetically within each group.
@@ -433,6 +434,7 @@ export function RepoSyncPage() {
                     repo={repo}
                     activeOperation={activeOperation}
                     onSyncOperation={handleSyncOperation}
+                    onSettingsSaved={refresh}
                   />
                 ))}
               </div>
@@ -521,11 +523,14 @@ function RepoCard({
   repo,
   activeOperation,
   onSyncOperation,
+  onSettingsSaved,
 }: {
   repo: ManagedRepoResponse;
   activeOperation: OperationState | null;
   onSyncOperation: (repoId: string, operation: SyncOperation) => void;
+  onSettingsSaved: () => void;
 }) {
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const projectName = folderName(repo.workspace_path);
   const isLocalOnly = repo.sync_mode === "local_only";
   const isOperationInProgress = activeOperation?.repoId === repo.id;
@@ -538,6 +543,15 @@ function RepoCard({
         <span className="badge badge-sync-mode">
           {formatSyncMode(repo.sync_mode)}
         </span>
+        <button
+          className="btn btn-sm repo-settings-toggle"
+          onClick={() => setSettingsOpen((prev) => !prev)}
+          aria-expanded={settingsOpen}
+          aria-label={`${settingsOpen ? "Hide" : "Show"} settings for ${projectName}`}
+          type="button"
+        >
+          {settingsOpen ? "Hide Settings" : "Settings"}
+        </button>
       </div>
       <div className="card-body">
         {repo.remote_url && (
@@ -580,6 +594,9 @@ function RepoCard({
             {currentOp === "push_to_agent" ? "Pushing…" : "Push to agent"}
           </button>
         </div>
+        {settingsOpen && (
+          <RepoSettingsPanel repo={repo} onSaved={onSettingsSaved} />
+        )}
       </div>
     </div>
   );
