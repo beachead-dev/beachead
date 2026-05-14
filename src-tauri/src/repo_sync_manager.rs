@@ -1199,4 +1199,240 @@ mod tests {
         assert_eq!(stored.secret_scan_mode, SecretScanMode::Block);
         assert_eq!(stored.check_interval_seconds, 300);
     }
+
+    // --- pull_from_agent tests ---
+
+    /// Helper to set up a workspace + mirror pair for pull_from_agent tests.
+    /// Returns (manager, repo_id, workspace_dir, mirror_dir).
+    async fn setup_pull_test() -> (
+        RepoSyncManager,
+        ManagedRepoId,
+        tempfile::TempDir,
+        tempfile::TempDir,
+    ) {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        db.with_conn(|conn| {
+            conn.execute_batch(
+                "INSERT INTO agent_types (id, name, sbx_agent, is_builtin, metadata, created_at, updated_at)
+                 VALUES ('a1', 'claude', 'claude', 1, '{}', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z');
+                 INSERT INTO personas (id, name, agent_type_id, workspace_path, memory_enabled, created_at, updated_at)
+                 VALUES ('p1', 'my-agent', 'a1', '/tmp/workspace', 0, '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z');",
+            ).map_err(|e| OrchestratorError::Database(e.to_string()))?;
+            Ok(())
+        }).unwrap();
+
+        // Create workspace repo
+        let workspace_dir = tempfile::tempdir().unwrap();
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(workspace_dir.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["config", "user.email", "test@test.com"])
+            .current_dir(workspace_dir.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["config", "user.name", "Test"])
+            .current_dir(workspace_dir.path())
+            .output()
+            .unwrap();
+        std::fs::write(workspace_dir.path().join("README.md"), "# Test").unwrap();
+        std::process::Command::new("git")
+            .args(["add", "."])
+            .current_dir(workspace_dir.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["commit", "-m", "initial"])
+            .current_dir(workspace_dir.path())
+            .output()
+            .unwrap();
+
+        // Clone workspace to create mirror
+        let mirror_dir = tempfile::tempdir().unwrap();
+        std::process::Command::new("git")
+            .args([
+                "clone",
+                workspace_dir.path().to_str().unwrap(),
+                mirror_dir.path().to_str().unwrap(),
+            ])
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["config", "user.email", "test@test.com"])
+            .current_dir(mirror_dir.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["config", "user.name", "Test"])
+            .current_dir(mirror_dir.path())
+            .output()
+            .unwrap();
+
+        // Insert managed repo record
+        let repo_id = ManagedRepoId::new();
+        let now = Utc::now();
+        let repo = ManagedRepo {
+            id: repo_id.clone(),
+            persona_id: PersonaId("p1".to_string()),
+            workspace_path: workspace_dir.path().to_string_lossy().to_string(),
+            mirror_path: mirror_dir.path().to_string_lossy().to_string(),
+            remote_url: None,
+            remote_provider: None,
+            branch_strategy: BranchStrategy::Direct,
+            branch_pattern: None,
+            attribution_mode: AttributionMode::KeepAgent,
+            sync_mode: SyncMode::LocalOnly,
+            secret_scan_mode: SecretScanMode::Block,
+            check_interval_seconds: 300,
+            created_at: now,
+            updated_at: now,
+        };
+        db.with_conn(|conn| db_ops::insert_managed_repo(conn, &repo)).unwrap();
+
+        let git = Arc::new(GitCli::new("git".to_string()));
+        let manager = RepoSyncManager::new(db, git, PathBuf::from("/tmp/mirrors"));
+
+        (manager, repo_id, workspace_dir, mirror_dir)
+    }
+
+    #[tokio::test]
+    async fn test_pull_from_agent_no_new_commits() {
+        let (manager, repo_id, _workspace_dir, _mirror_dir) = setup_pull_test().await;
+
+        let result = manager.pull_from_agent(&repo_id).await.unwrap();
+        assert_eq!(result.commits, 0);
+    }
+
+    #[tokio::test]
+    async fn test_pull_from_agent_fast_forward() {
+        let (manager, repo_id, workspace_dir, _mirror_dir) = setup_pull_test().await;
+
+        // Add commits to workspace
+        std::fs::write(workspace_dir.path().join("file1.txt"), "content1").unwrap();
+        std::process::Command::new("git")
+            .args(["add", "."])
+            .current_dir(workspace_dir.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["commit", "-m", "add file1"])
+            .current_dir(workspace_dir.path())
+            .output()
+            .unwrap();
+
+        std::fs::write(workspace_dir.path().join("file2.txt"), "content2").unwrap();
+        std::process::Command::new("git")
+            .args(["add", "."])
+            .current_dir(workspace_dir.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["commit", "-m", "add file2"])
+            .current_dir(workspace_dir.path())
+            .output()
+            .unwrap();
+
+        let result = manager.pull_from_agent(&repo_id).await.unwrap();
+        assert_eq!(result.commits, 2);
+    }
+
+    #[tokio::test]
+    async fn test_pull_from_agent_merge_commit() {
+        let (manager, repo_id, workspace_dir, mirror_dir) = setup_pull_test().await;
+
+        // Add a commit to workspace on a different file
+        std::fs::write(workspace_dir.path().join("workspace_file.txt"), "from workspace").unwrap();
+        std::process::Command::new("git")
+            .args(["add", "."])
+            .current_dir(workspace_dir.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["commit", "-m", "workspace commit"])
+            .current_dir(workspace_dir.path())
+            .output()
+            .unwrap();
+
+        // Add a diverging commit to mirror on a different file (non-conflicting)
+        std::fs::write(mirror_dir.path().join("mirror_file.txt"), "from mirror").unwrap();
+        std::process::Command::new("git")
+            .args(["add", "."])
+            .current_dir(mirror_dir.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["commit", "-m", "mirror commit"])
+            .current_dir(mirror_dir.path())
+            .output()
+            .unwrap();
+
+        // Pull should succeed with a merge commit (ff not possible)
+        let result = manager.pull_from_agent(&repo_id).await.unwrap();
+        // Should have at least 1 commit (the workspace commit + merge commit = 2)
+        assert!(result.commits >= 1);
+    }
+
+    #[tokio::test]
+    async fn test_pull_from_agent_merge_conflict() {
+        let (manager, repo_id, workspace_dir, mirror_dir) = setup_pull_test().await;
+
+        // Add a commit to workspace modifying README.md
+        std::fs::write(workspace_dir.path().join("README.md"), "workspace version").unwrap();
+        std::process::Command::new("git")
+            .args(["add", "."])
+            .current_dir(workspace_dir.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["commit", "-m", "workspace change"])
+            .current_dir(workspace_dir.path())
+            .output()
+            .unwrap();
+
+        // Add a conflicting commit to mirror modifying the same file
+        std::fs::write(mirror_dir.path().join("README.md"), "mirror version").unwrap();
+        std::process::Command::new("git")
+            .args(["add", "."])
+            .current_dir(mirror_dir.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["commit", "-m", "mirror change"])
+            .current_dir(mirror_dir.path())
+            .output()
+            .unwrap();
+
+        // Pull should fail with a conflict error mentioning the file
+        let err = manager.pull_from_agent(&repo_id).await.unwrap_err();
+        let err_msg = err.to_string();
+        assert!(
+            err_msg.contains("README.md") || err_msg.contains("conflict") || err_msg.contains("Merge"),
+            "Expected conflict error mentioning file, got: {}",
+            err_msg
+        );
+    }
+
+    #[tokio::test]
+    async fn test_pull_from_agent_repo_not_found() {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        db.with_conn(|conn| {
+            conn.execute_batch(
+                "INSERT INTO agent_types (id, name, sbx_agent, is_builtin, metadata, created_at, updated_at)
+                 VALUES ('a1', 'claude', 'claude', 1, '{}', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z');",
+            ).map_err(|e| OrchestratorError::Database(e.to_string()))?;
+            Ok(())
+        }).unwrap();
+
+        let git = Arc::new(GitCli::new("git".to_string()));
+        let manager = RepoSyncManager::new(db, git, PathBuf::from("/tmp/mirrors"));
+
+        let result = manager
+            .pull_from_agent(&ManagedRepoId("nonexistent".to_string()))
+            .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not found"));
+    }
 }
