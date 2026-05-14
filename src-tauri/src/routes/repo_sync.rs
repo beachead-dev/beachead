@@ -4,14 +4,22 @@
 //! repository CRUD, sync operations, credential management, and status polling.
 
 use axum::{
-    extract::State,
-    routing::get,
+    extract::{Path, Query, State},
+    http::StatusCode,
+    routing::{get, put},
     Json, Router,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::Path as StdPath;
 
+use crate::db_ops;
 use crate::error::OrchestratorError;
 use crate::server::AppState;
+use crate::types::{
+    DetectedRepo, EnableRepoRequest, ManagedRepoId, ManagedRepoResponse, SyncStatus,
+    UpdateRepoRequest,
+};
 
 /// Response for the lightweight status endpoint used by the sidebar badge.
 #[derive(Debug, Serialize)]
@@ -19,23 +27,23 @@ pub struct RepoSyncStatusResponse {
     pub has_pending: bool,
 }
 
-/// Build the repo-sync routes sub-router.
-pub fn router() -> Router<AppState> {
-    Router::new()
-        .route("/api/repo-sync/status", get(get_status))
+/// Response for the mirrors directory endpoint.
+#[derive(Debug, Serialize)]
+pub struct MirrorsDirResponse {
+    pub path: String,
 }
 
-/// GET /api/repo-sync/status — lightweight endpoint for sidebar badge.
-///
-/// Returns whether any managed repo has pending commits in either direction
-/// (workspace→mirror or remote→mirror). The sidebar polls this every 60 seconds
-/// to show/hide the notification dot.
-///
-/// # Requirements: 16.2, 16.3, 16.7
-async fn get_status(
-    State(state): State<AppState>,
-) -> Result<Json<RepoSyncStatusResponse>, OrchestratorError> {
-    let mgr = state.require_repo_sync_manager()?;
-    let has_pending = mgr.has_pending();
-    Ok(Json(RepoSyncStatusResponse { has_pending }))
+/// Request body for updating the mirrors directory.
+#[derive(Debug, Deserialize)]
+pub struct UpdateMirrorsDirRequest {
+    pub path: String,
+}
+
+/// Query parameters for `DELETE /api/repo-sync/repos/{id}`.
+#[derive(Debug, Deserialize)]
+struct DeleteRepoQuery {
+    /// When true, also delete the mirror directory on disk.
+    /// Defaults to false.
+    #[serde(default)]
+    delete_mirror: bool,
 }

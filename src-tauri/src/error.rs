@@ -49,6 +49,9 @@ pub enum OrchestratorError {
     #[error("PTY error: {0}")]
     PtyError(String),
 
+    #[error("Sync operation already in progress: {0}")]
+    SyncInProgress(String),
+
     #[error("Internal error: {0}")]
     Internal(String),
 }
@@ -82,6 +85,7 @@ impl OrchestratorError {
             Self::DecryptionFailed(_) => StatusCode::BAD_REQUEST,
             Self::Database(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Self::PtyError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::SyncInProgress(_) => StatusCode::CONFLICT,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -103,6 +107,7 @@ impl OrchestratorError {
             Self::DecryptionFailed(_) => "DECRYPTION_FAILED",
             Self::Database(_) => "DATABASE_ERROR",
             Self::PtyError(_) => "PTY_ERROR",
+            Self::SyncInProgress(_) => "SYNC_IN_PROGRESS",
             Self::Internal(_) => "INTERNAL_ERROR",
         }
     }
