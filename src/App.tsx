@@ -3,6 +3,7 @@ import { Layout } from "./components/Layout";
 import { PersonasPage } from "./pages/PersonasPage";
 import { AgentsPage } from "./pages/AgentsPage";
 import { PoliciesPage } from "./pages/PoliciesPage";
+import { RepoSyncPage } from "./pages/RepoSyncPage";
 import { DockerPage } from "./pages/DockerPage";
 import { HelpPage } from "./pages/HelpPage";
 import { SystemSettingsPage } from "./pages/SystemSettingsPage";
@@ -14,6 +15,7 @@ function App() {
         <Route element={<Layout />}>
           <Route path="/" element={<Navigate to="/sessions" replace />} />
           <Route path="/sessions" element={null} />
+          <Route path="/repo-sync" element={<RepoSyncPage />} />
           <Route path="/personas" element={<PersonasPage />} />
           <Route path="/agents" element={<AgentsPage />} />
           <Route path="/policies" element={<PoliciesPage />} />
