@@ -1952,6 +1952,130 @@ mod tests {
         assert_eq!(branch, "feature/custom-branch");
     }
 
+    #[tokio::test]
+    async fn test_resolve_branch_name_dedup_suffix() {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        db.with_conn(|conn| {
+            conn.execute_batch(
+                "INSERT INTO agent_types (id, name, sbx_agent, is_builtin, metadata, created_at, updated_at)
+                 VALUES ('a1', 'claude', 'claude', 1, '{}', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z');
+                 INSERT INTO personas (id, name, agent_type_id, workspace_path, memory_enabled, created_at, updated_at)
+                 VALUES ('p1', 'my-agent', 'a1', '/tmp/workspace', 0, '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z');",
+            ).map_err(|e| OrchestratorError::Database(e.to_string()))?;
+            Ok(())
+        }).unwrap();
+
+        // Create a mirror repo with a remote that has existing branches
+        let bare_dir = tempfile::tempdir().unwrap();
+        std::process::Command::new("git")
+            .args(["init", "--bare"])
+            .current_dir(bare_dir.path())
+            .output()
+            .unwrap();
+
+        // Create a working clone, push branches that will conflict
+        let work_dir = tempfile::tempdir().unwrap();
+        std::process::Command::new("git")
+            .args(["clone", bare_dir.path().to_str().unwrap(), work_dir.path().to_str().unwrap()])
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["config", "user.email", "test@test.com"])
+            .current_dir(work_dir.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["config", "user.name", "Test"])
+            .current_dir(work_dir.path())
+            .output()
+            .unwrap();
+        std::fs::write(work_dir.path().join("README.md"), "# Test").unwrap();
+        std::process::Command::new("git")
+            .args(["add", "."])
+            .current_dir(work_dir.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["commit", "-m", "initial"])
+            .current_dir(work_dir.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["push", "origin", "master"])
+            .current_dir(work_dir.path())
+            .output()
+            .unwrap();
+
+        // Create the branch that will conflict with the resolved name
+        let today = Utc::now().format("%Y-%m-%d").to_string();
+        let conflicting_branch = format!("ai/my-agent/{}", today);
+        std::process::Command::new("git")
+            .args(["checkout", "-b", &conflicting_branch])
+            .current_dir(work_dir.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["push", "origin", &conflicting_branch])
+            .current_dir(work_dir.path())
+            .output()
+            .unwrap();
+
+        // Also create the -2 variant to test it increments to -3
+        let conflicting_branch_2 = format!("{}-2", conflicting_branch);
+        std::process::Command::new("git")
+            .args(["checkout", "-b", &conflicting_branch_2])
+            .current_dir(work_dir.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["push", "origin", &conflicting_branch_2])
+            .current_dir(work_dir.path())
+            .output()
+            .unwrap();
+
+        // Clone the bare repo to create the mirror (so it has origin tracking)
+        let mirror_dir = tempfile::tempdir().unwrap();
+        std::process::Command::new("git")
+            .args(["clone", bare_dir.path().to_str().unwrap(), mirror_dir.path().to_str().unwrap()])
+            .output()
+            .unwrap();
+        // Fetch all remote branches
+        std::process::Command::new("git")
+            .args(["fetch", "--all"])
+            .current_dir(mirror_dir.path())
+            .output()
+            .unwrap();
+
+        let git = Arc::new(GitCli::new("git".to_string()));
+        let manager = RepoSyncManager::new(db, git, PathBuf::from("/tmp/mirrors"));
+
+        let repo = ManagedRepo {
+            id: crate::types::ManagedRepoId("r1".to_string()),
+            persona_id: crate::types::PersonaId("p1".to_string()),
+            workspace_path: "/tmp/workspace".to_string(),
+            mirror_path: mirror_dir.path().to_string_lossy().to_string(),
+            remote_url: Some(bare_dir.path().to_string_lossy().to_string()),
+            remote_provider: None,
+            branch_strategy: crate::types::BranchStrategy::FeatureBranch,
+            branch_pattern: Some("ai/<persona-name>/<date>".to_string()),
+            attribution_mode: crate::types::AttributionMode::KeepAgent,
+            sync_mode: crate::types::SyncMode::Remote,
+            secret_scan_mode: crate::types::SecretScanMode::Block,
+            check_interval_seconds: 300,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+
+        let branch = manager
+            .resolve_branch_name(&repo, "ai/<persona-name>/<date>")
+            .await
+            .unwrap();
+
+        // Both ai/my-agent/<date> and ai/my-agent/<date>-2 exist, so it should resolve to -3
+        let expected = format!("ai/my-agent/{}-3", today);
+        assert_eq!(branch, expected);
+    }
+
     // --- Tests for validate_remote_url ---
 
     #[test]
