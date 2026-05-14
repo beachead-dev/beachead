@@ -14,6 +14,7 @@ use crate::persona_manager::PersonaManager;
 use crate::policy_manager::PolicyManager;
 use crate::port_allocator::PortAllocator;
 use crate::pty_bridge::PtyBridge;
+use crate::repo_sync_manager::RepoSyncManager;
 use crate::sbx::SbxCli;
 use crate::session_manager::SessionManager;
 use crate::system_manager::SystemManager;
@@ -35,6 +36,7 @@ pub struct AppState {
     pub system_manager: Option<Arc<SystemManager>>,
     pub export_import_manager: Arc<ExportImportManager>,
     pub mcp_container_manager: Option<Arc<McpContainerManager>>,
+    pub repo_sync_manager: Option<Arc<RepoSyncManager>>,
     pub db: Arc<Database>,
     pub sbx: Option<Arc<SbxCli>>,
     pub pty_bridge: Arc<PtyBridge>,
@@ -74,6 +76,13 @@ impl AppState {
     pub fn require_system_manager(&self) -> Result<&Arc<SystemManager>, OrchestratorError> {
         self.system_manager.as_ref().ok_or_else(|| {
             OrchestratorError::SbxError("sbx CLI is not available. Install Docker Sandboxes to use this feature.".to_string())
+        })
+    }
+
+    /// Helper to get repo_sync_manager or return an error.
+    pub fn require_repo_sync_manager(&self) -> Result<&Arc<RepoSyncManager>, OrchestratorError> {
+        self.repo_sync_manager.as_ref().ok_or_else(|| {
+            OrchestratorError::Internal("git CLI is not available. Install git to use Repo Sync.".to_string())
         })
     }
 }
@@ -214,6 +223,7 @@ pub async fn start_server(
         system_manager,
         export_import_manager,
         mcp_container_manager,
+        repo_sync_manager: None,
         db,
         sbx,
         pty_bridge,

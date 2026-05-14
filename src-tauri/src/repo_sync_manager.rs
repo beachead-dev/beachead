@@ -3756,4 +3756,538 @@ mod tests {
         assert_eq!(commits[0].insertions, 5); // only from index.html
         assert_eq!(commits[0].deletions, 0);
     }
+
+    // --- Tests for background checker helper methods ---
+
+    #[test]
+    fn test_has_pending_empty_cache() {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let git = Arc::new(GitCli::new("git".to_string()));
+        let manager = RepoSyncManager::new(db, git, PathBuf::from("/tmp/mirrors"));
+
+        assert!(!manager.has_pending(), "Empty cache should have no pending");
+    }
+
+    #[test]
+    fn test_has_pending_with_workspace_ahead() {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let git = Arc::new(GitCli::new("git".to_string()));
+        let manager = RepoSyncManager::new(db, git, PathBuf::from("/tmp/mirrors"));
+
+        manager.cached_status.insert(
+            "repo-1".to_string(),
+            SyncStatus {
+                workspace_ahead: 3,
+                mirror_ahead: 0,
+                remote_ahead: 0,
+            },
+        );
+
+        assert!(manager.has_pending(), "Should be pending when workspace_ahead > 0");
+    }
+
+    #[test]
+    fn test_has_pending_with_remote_ahead() {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let git = Arc::new(GitCli::new("git".to_string()));
+        let manager = RepoSyncManager::new(db, git, PathBuf::from("/tmp/mirrors"));
+
+        manager.cached_status.insert(
+            "repo-1".to_string(),
+            SyncStatus {
+                workspace_ahead: 0,
+                mirror_ahead: 0,
+                remote_ahead: 2,
+            },
+        );
+
+        assert!(manager.has_pending(), "Should be pending when remote_ahead > 0");
+    }
+
+    #[test]
+    fn test_has_pending_all_synced() {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let git = Arc::new(GitCli::new("git".to_string()));
+        let manager = RepoSyncManager::new(db, git, PathBuf::from("/tmp/mirrors"));
+
+        manager.cached_status.insert(
+            "repo-1".to_string(),
+            SyncStatus {
+                workspace_ahead: 0,
+                mirror_ahead: 0,
+                remote_ahead: 0,
+            },
+        );
+        manager.cached_status.insert(
+            "repo-2".to_string(),
+            SyncStatus {
+                workspace_ahead: 0,
+                mirror_ahead: 0,
+                remote_ahead: 0,
+            },
+        );
+
+        assert!(!manager.has_pending(), "Should not be pending when all zeros");
+    }
+
+    #[test]
+    fn test_get_cached_status_returns_all_entries() {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let git = Arc::new(GitCli::new("git".to_string()));
+        let manager = RepoSyncManager::new(db, git, PathBuf::from("/tmp/mirrors"));
+
+        manager.cached_status.insert(
+            "repo-1".to_string(),
+            SyncStatus {
+                workspace_ahead: 1,
+                mirror_ahead: 2,
+                remote_ahead: 3,
+            },
+        );
+        manager.cached_status.insert(
+            "repo-2".to_string(),
+            SyncStatus {
+                workspace_ahead: 0,
+                mirror_ahead: 0,
+                remote_ahead: 5,
+            },
+        );
+
+        let status_map = manager.get_cached_status();
+        assert_eq!(status_map.len(), 2);
+        assert_eq!(status_map["repo-1"].workspace_ahead, 1);
+        assert_eq!(status_map["repo-1"].mirror_ahead, 2);
+        assert_eq!(status_map["repo-1"].remote_ahead, 3);
+        assert_eq!(status_map["repo-2"].remote_ahead, 5);
+    }
+
+    #[test]
+    fn test_get_cached_status_empty() {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let git = Arc::new(GitCli::new("git".to_string()));
+        let manager = RepoSyncManager::new(db, git, PathBuf::from("/tmp/mirrors"));
+
+        let status_map = manager.get_cached_status();
+        assert!(status_map.is_empty());
+    }
+
+    // --- Tests for validate_branch_pattern ---
+
+    #[test]
+    fn test_validate_branch_pattern_valid() {
+        assert!(RepoSyncManager::validate_branch_pattern("ai/<persona-name>/<date>").is_ok());
+        assert!(RepoSyncManager::validate_branch_pattern("feature/my-branch").is_ok());
+        assert!(RepoSyncManager::validate_branch_pattern("release-v1.0").is_ok());
+        assert!(RepoSyncManager::validate_branch_pattern("a").is_ok());
+    }
+
+    #[test]
+    fn test_validate_branch_pattern_empty() {
+        assert!(RepoSyncManager::validate_branch_pattern("").is_err());
+    }
+
+    #[test]
+    fn test_validate_branch_pattern_too_long() {
+        let long_pattern = "a".repeat(201);
+        assert!(RepoSyncManager::validate_branch_pattern(&long_pattern).is_err());
+    }
+
+    #[test]
+    fn test_validate_branch_pattern_max_length_ok() {
+        let pattern = "a".repeat(200);
+        assert!(RepoSyncManager::validate_branch_pattern(&pattern).is_ok());
+    }
+
+    #[test]
+    fn test_validate_branch_pattern_invalid_chars() {
+        assert!(RepoSyncManager::validate_branch_pattern("branch name").is_err());
+        assert!(RepoSyncManager::validate_branch_pattern("branch~name").is_err());
+        assert!(RepoSyncManager::validate_branch_pattern("branch^name").is_err());
+        assert!(RepoSyncManager::validate_branch_pattern("branch:name").is_err());
+        assert!(RepoSyncManager::validate_branch_pattern("branch?name").is_err());
+        assert!(RepoSyncManager::validate_branch_pattern("branch*name").is_err());
+        assert!(RepoSyncManager::validate_branch_pattern("branch[name").is_err());
+        assert!(RepoSyncManager::validate_branch_pattern("branch\\name").is_err());
+    }
+
+    #[test]
+    fn test_validate_branch_pattern_control_chars() {
+        assert!(RepoSyncManager::validate_branch_pattern("branch\x00name").is_err());
+        assert!(RepoSyncManager::validate_branch_pattern("branch\tname").is_err());
+        assert!(RepoSyncManager::validate_branch_pattern("branch\nname").is_err());
+    }
+
+    #[test]
+    fn test_validate_branch_pattern_starts_with_dot_or_slash() {
+        assert!(RepoSyncManager::validate_branch_pattern(".hidden").is_err());
+        assert!(RepoSyncManager::validate_branch_pattern("/leading-slash").is_err());
+    }
+
+    #[test]
+    fn test_validate_branch_pattern_ends_with_dot_or_slash() {
+        assert!(RepoSyncManager::validate_branch_pattern("trailing.").is_err());
+        assert!(RepoSyncManager::validate_branch_pattern("trailing/").is_err());
+    }
+
+    #[test]
+    fn test_validate_branch_pattern_consecutive_dots() {
+        assert!(RepoSyncManager::validate_branch_pattern("branch..name").is_err());
+    }
+
+    #[test]
+    fn test_validate_branch_pattern_consecutive_slashes() {
+        assert!(RepoSyncManager::validate_branch_pattern("branch//name").is_err());
+    }
+
+    // --- Tests for update_repo ---
+
+    #[tokio::test]
+    async fn test_update_repo_basic_fields() {
+        let workspace = create_test_workspace();
+        let mirrors_dir = tempfile::tempdir().unwrap();
+        let db = setup_db_with_persona("p1", "my-agent");
+        let git = Arc::new(GitCli::new("git".to_string()));
+        let manager = RepoSyncManager::new(db.clone(), git.clone(), mirrors_dir.path().to_path_buf());
+
+        let repo = manager
+            .enable_agent_created(&PersonaId("p1".to_string()), workspace.path(), None)
+            .await
+            .unwrap();
+
+        let req = UpdateRepoRequest {
+            remote_url: None,
+            remote_provider: None,
+            branch_strategy: Some(BranchStrategy::FeatureBranch),
+            branch_pattern: Some("feature/<persona-name>/<date>".to_string()),
+            attribution_mode: Some(AttributionMode::CoAuthoredBy),
+            sync_mode: None,
+            secret_scan_mode: Some(SecretScanMode::WarnOnly),
+            check_interval_seconds: Some(600),
+        };
+
+        let updated = manager.update_repo(&repo.id, &req).await.unwrap();
+
+        assert_eq!(updated.branch_strategy, BranchStrategy::FeatureBranch);
+        assert_eq!(
+            updated.branch_pattern.as_deref(),
+            Some("feature/<persona-name>/<date>")
+        );
+        assert_eq!(updated.attribution_mode, AttributionMode::CoAuthoredBy);
+        assert_eq!(updated.secret_scan_mode, SecretScanMode::WarnOnly);
+        assert_eq!(updated.check_interval_seconds, 600);
+        assert_eq!(updated.sync_mode, SyncMode::LocalOnly);
+    }
+
+    #[tokio::test]
+    async fn test_update_repo_invalid_url_rejected() {
+        let workspace = create_test_workspace();
+        let mirrors_dir = tempfile::tempdir().unwrap();
+        let db = setup_db_with_persona("p1", "my-agent");
+        let git = Arc::new(GitCli::new("git".to_string()));
+        let manager = RepoSyncManager::new(db.clone(), git.clone(), mirrors_dir.path().to_path_buf());
+
+        let repo = manager
+            .enable_agent_created(&PersonaId("p1".to_string()), workspace.path(), None)
+            .await
+            .unwrap();
+
+        let req = UpdateRepoRequest {
+            remote_url: Some("not-a-valid-url".to_string()),
+            remote_provider: None,
+            branch_strategy: None,
+            branch_pattern: None,
+            attribution_mode: None,
+            sync_mode: None,
+            secret_scan_mode: None,
+            check_interval_seconds: None,
+        };
+
+        let result = manager.update_repo(&repo.id, &req).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_update_repo_invalid_branch_pattern_rejected() {
+        let workspace = create_test_workspace();
+        let mirrors_dir = tempfile::tempdir().unwrap();
+        let db = setup_db_with_persona("p1", "my-agent");
+        let git = Arc::new(GitCli::new("git".to_string()));
+        let manager = RepoSyncManager::new(db.clone(), git.clone(), mirrors_dir.path().to_path_buf());
+
+        let repo = manager
+            .enable_agent_created(&PersonaId("p1".to_string()), workspace.path(), None)
+            .await
+            .unwrap();
+
+        let req = UpdateRepoRequest {
+            remote_url: None,
+            remote_provider: None,
+            branch_strategy: None,
+            branch_pattern: Some("branch with spaces".to_string()),
+            attribution_mode: None,
+            sync_mode: None,
+            secret_scan_mode: None,
+            check_interval_seconds: None,
+        };
+
+        let result = manager.update_repo(&repo.id, &req).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_update_repo_sync_mode_to_remote_without_url_rejected() {
+        let workspace = create_test_workspace();
+        let mirrors_dir = tempfile::tempdir().unwrap();
+        let db = setup_db_with_persona("p1", "my-agent");
+        let git = Arc::new(GitCli::new("git".to_string()));
+        let manager = RepoSyncManager::new(db.clone(), git.clone(), mirrors_dir.path().to_path_buf());
+
+        let repo = manager
+            .enable_agent_created(&PersonaId("p1".to_string()), workspace.path(), None)
+            .await
+            .unwrap();
+
+        let req = UpdateRepoRequest {
+            remote_url: None,
+            remote_provider: None,
+            branch_strategy: None,
+            branch_pattern: None,
+            attribution_mode: None,
+            sync_mode: Some(SyncMode::Remote),
+            secret_scan_mode: None,
+            check_interval_seconds: None,
+        };
+
+        let result = manager.update_repo(&repo.id, &req).await;
+        assert!(result.is_err());
+        let err_msg = format!("{:?}", result.err().unwrap());
+        assert!(
+            err_msg.contains("remote URL"),
+            "Error should mention remote URL: {}",
+            err_msg
+        );
+    }
+
+    #[tokio::test]
+    async fn test_update_repo_valid_url_updates_provider() {
+        let workspace = create_test_workspace();
+        let mirrors_dir = tempfile::tempdir().unwrap();
+        let db = setup_db_with_persona("p1", "my-agent");
+        let git = Arc::new(GitCli::new("git".to_string()));
+        let manager = RepoSyncManager::new(db.clone(), git.clone(), mirrors_dir.path().to_path_buf());
+
+        let repo = manager
+            .enable_agent_created(&PersonaId("p1".to_string()), workspace.path(), None)
+            .await
+            .unwrap();
+
+        let req = UpdateRepoRequest {
+            remote_url: Some("https://github.com/user/repo.git".to_string()),
+            remote_provider: None,
+            branch_strategy: None,
+            branch_pattern: None,
+            attribution_mode: None,
+            sync_mode: None,
+            secret_scan_mode: None,
+            check_interval_seconds: None,
+        };
+
+        let updated = manager.update_repo(&repo.id, &req).await.unwrap();
+        assert_eq!(
+            updated.remote_url.as_deref(),
+            Some("https://github.com/user/repo.git")
+        );
+        assert_eq!(updated.remote_provider, Some(RemoteProvider::Github));
+    }
+
+    #[tokio::test]
+    async fn test_update_repo_not_found() {
+        let mirrors_dir = tempfile::tempdir().unwrap();
+        let db = setup_db_with_persona("p1", "my-agent");
+        let git = Arc::new(GitCli::new("git".to_string()));
+        let manager = RepoSyncManager::new(db.clone(), git.clone(), mirrors_dir.path().to_path_buf());
+
+        let req = UpdateRepoRequest {
+            remote_url: None,
+            remote_provider: None,
+            branch_strategy: None,
+            branch_pattern: None,
+            attribution_mode: None,
+            sync_mode: None,
+            secret_scan_mode: None,
+            check_interval_seconds: None,
+        };
+
+        let result = manager
+            .update_repo(&ManagedRepoId("nonexistent".to_string()), &req)
+            .await;
+        assert!(result.is_err());
+    }
+
+    // --- Tests for delete_repo ---
+
+    #[tokio::test]
+    async fn test_delete_repo_removes_db_record() {
+        let workspace = create_test_workspace();
+        let mirrors_dir = tempfile::tempdir().unwrap();
+        let db = setup_db_with_persona("p1", "my-agent");
+        let git = Arc::new(GitCli::new("git".to_string()));
+        let manager = RepoSyncManager::new(db.clone(), git.clone(), mirrors_dir.path().to_path_buf());
+
+        let repo = manager
+            .enable_agent_created(&PersonaId("p1".to_string()), workspace.path(), None)
+            .await
+            .unwrap();
+
+        manager.delete_repo(&repo.id, false).await.unwrap();
+
+        let result = db.with_conn(|conn| db_ops::get_managed_repo(conn, &repo.id));
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_delete_repo_preserves_mirror_when_false() {
+        let workspace = create_test_workspace();
+        let mirrors_dir = tempfile::tempdir().unwrap();
+        let db = setup_db_with_persona("p1", "my-agent");
+        let git = Arc::new(GitCli::new("git".to_string()));
+        let manager = RepoSyncManager::new(db.clone(), git.clone(), mirrors_dir.path().to_path_buf());
+
+        let repo = manager
+            .enable_agent_created(&PersonaId("p1".to_string()), workspace.path(), None)
+            .await
+            .unwrap();
+
+        let mirror_path = PathBuf::from(&repo.mirror_path);
+        assert!(mirror_path.exists());
+
+        manager.delete_repo(&repo.id, false).await.unwrap();
+
+        assert!(mirror_path.exists());
+    }
+
+    #[tokio::test]
+    async fn test_delete_repo_removes_mirror_when_true() {
+        let workspace = create_test_workspace();
+        let mirrors_dir = tempfile::tempdir().unwrap();
+        let db = setup_db_with_persona("p1", "my-agent");
+        let git = Arc::new(GitCli::new("git".to_string()));
+        let manager = RepoSyncManager::new(db.clone(), git.clone(), mirrors_dir.path().to_path_buf());
+
+        let repo = manager
+            .enable_agent_created(&PersonaId("p1".to_string()), workspace.path(), None)
+            .await
+            .unwrap();
+
+        let mirror_path = PathBuf::from(&repo.mirror_path);
+        assert!(mirror_path.exists());
+
+        manager.delete_repo(&repo.id, true).await.unwrap();
+
+        assert!(!mirror_path.exists());
+    }
+
+    #[tokio::test]
+    async fn test_delete_repo_not_found() {
+        let mirrors_dir = tempfile::tempdir().unwrap();
+        let db = setup_db_with_persona("p1", "my-agent");
+        let git = Arc::new(GitCli::new("git".to_string()));
+        let manager = RepoSyncManager::new(db.clone(), git.clone(), mirrors_dir.path().to_path_buf());
+
+        let result = manager
+            .delete_repo(&ManagedRepoId("nonexistent".to_string()), false)
+            .await;
+        assert!(result.is_err());
+    }
+
+    // --- Tests for update_mirrors_dir ---
+
+    #[tokio::test]
+    async fn test_update_mirrors_dir_creates_directory() {
+        let mirrors_dir = tempfile::tempdir().unwrap();
+        let db = setup_db_with_persona("p1", "my-agent");
+        let git = Arc::new(GitCli::new("git".to_string()));
+        let mut manager =
+            RepoSyncManager::new(db.clone(), git.clone(), mirrors_dir.path().to_path_buf());
+
+        let new_dir = mirrors_dir.path().join("new-mirrors-location");
+        assert!(!new_dir.exists());
+
+        let result = manager.update_mirrors_dir(new_dir.to_str().unwrap());
+        assert!(result.is_ok());
+        assert!(new_dir.exists());
+        assert_eq!(manager.mirrors_dir, new_dir);
+    }
+
+    #[tokio::test]
+    async fn test_update_mirrors_dir_empty_path_rejected() {
+        let mirrors_dir = tempfile::tempdir().unwrap();
+        let db = setup_db_with_persona("p1", "my-agent");
+        let git = Arc::new(GitCli::new("git".to_string()));
+        let mut manager =
+            RepoSyncManager::new(db.clone(), git.clone(), mirrors_dir.path().to_path_buf());
+
+        let result = manager.update_mirrors_dir("");
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_update_mirrors_dir_relative_path_rejected() {
+        let mirrors_dir = tempfile::tempdir().unwrap();
+        let db = setup_db_with_persona("p1", "my-agent");
+        let git = Arc::new(GitCli::new("git".to_string()));
+        let mut manager =
+            RepoSyncManager::new(db.clone(), git.clone(), mirrors_dir.path().to_path_buf());
+
+        let result = manager.update_mirrors_dir("relative/path");
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_update_mirrors_dir_too_long_rejected() {
+        let mirrors_dir = tempfile::tempdir().unwrap();
+        let db = setup_db_with_persona("p1", "my-agent");
+        let git = Arc::new(GitCli::new("git".to_string()));
+        let mut manager =
+            RepoSyncManager::new(db.clone(), git.clone(), mirrors_dir.path().to_path_buf());
+
+        let long_path = format!("/{}", "a".repeat(4096));
+        let result = manager.update_mirrors_dir(&long_path);
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_update_mirrors_dir_updates_repo_records() {
+        let workspace = create_test_workspace();
+        let mirrors_dir = tempfile::tempdir().unwrap();
+        let db = setup_db_with_persona("p1", "my-agent");
+        let git = Arc::new(GitCli::new("git".to_string()));
+        let mut manager =
+            RepoSyncManager::new(db.clone(), git.clone(), mirrors_dir.path().to_path_buf());
+
+        let repo = manager
+            .enable_agent_created(&PersonaId("p1".to_string()), workspace.path(), None)
+            .await
+            .unwrap();
+
+        assert!(repo.mirror_path.starts_with(mirrors_dir.path().to_str().unwrap()));
+
+        let new_dir = tempfile::tempdir().unwrap();
+        let new_path = new_dir.path().join("new-mirrors");
+        manager
+            .update_mirrors_dir(new_path.to_str().unwrap())
+            .unwrap();
+
+        let updated_repo = db
+            .with_conn(|conn| db_ops::get_managed_repo(conn, &repo.id))
+            .unwrap();
+        assert!(
+            updated_repo
+                .mirror_path
+                .starts_with(new_path.to_str().unwrap()),
+            "Updated mirror_path '{}' should start with new dir '{}'",
+            updated_repo.mirror_path,
+            new_path.display()
+        );
+    }
 }

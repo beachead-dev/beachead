@@ -3,6 +3,7 @@ pub mod export_import;
 pub mod mcp_containers;
 pub mod personas;
 pub mod policies;
+pub mod repo_sync;
 pub mod sandboxes;
 pub mod secrets;
 pub mod sessions;
@@ -26,4 +27,5 @@ pub fn build_router() -> Router<AppState> {
         .merge(system::router())
         .merge(export_import::router())
         .merge(mcp_containers::router())
+        .merge(repo_sync::router())
 }
