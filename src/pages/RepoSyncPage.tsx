@@ -1,5 +1,11 @@
 import { useState, useEffect, useCallback } from "react";
-import { getRepos, ManagedRepoResponse } from "../lib/api";
+import {
+  getRepos,
+  scanWorkspaces,
+  enableRepo,
+  ManagedRepoResponse,
+  DetectedRepo,
+} from "../lib/api";
 import { usePolling } from "../hooks/usePolling";
 
 /**
@@ -54,6 +60,13 @@ function formatSyncMode(mode: string): string {
 
 export function RepoSyncPage() {
   const [pageVisible, setPageVisible] = useState(!document.hidden);
+  const [scanning, setScanning] = useState(false);
+  const [scanResults, setScanResults] = useState<DetectedRepo[] | null>(null);
+  const [scanError, setScanError] = useState<string | null>(null);
+  const [enablingRepos, setEnablingRepos] = useState<Set<string>>(new Set());
+  const [enableError, setEnableError] = useState<string | null>(null);
+  const [linkRemoteTarget, setLinkRemoteTarget] = useState<DetectedRepo | null>(null);
+  const [linkRemoteUrl, setLinkRemoteUrl] = useState("");
 
   useEffect(() => {
     const handleVisibility = () => {
@@ -67,7 +80,7 @@ export function RepoSyncPage() {
 
   const fetchFn = useCallback(() => getRepos(), []);
 
-  const { data, error, loading } = usePolling<ManagedRepoResponse[]>(
+  const { data, error, loading, refresh } = usePolling<ManagedRepoResponse[]>(
     fetchFn,
     10000,
     pageVisible,
@@ -76,11 +89,218 @@ export function RepoSyncPage() {
   const repos = data ?? [];
   const groups = groupReposByPersona(repos);
 
+  const handleScan = async () => {
+    setScanning(true);
+    setScanError(null);
+    setScanResults(null);
+    try {
+      const results = await scanWorkspaces();
+      setScanResults(results);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Scan failed";
+      setScanError(message);
+    } finally {
+      setScanning(false);
+    }
+  };
+
+  const handleEnableRepo = async (repo: DetectedRepo) => {
+    const key = `${repo.persona_id}:${repo.workspace_path}`;
+    setEnablingRepos((prev) => new Set(prev).add(key));
+    setEnableError(null);
+    try {
+      await enableRepo({
+        persona_id: repo.persona_id,
+        workspace_path: repo.workspace_path,
+      });
+      // Remove from scan results after successful enable
+      setScanResults((prev) =>
+        prev ? prev.filter((r) => r.workspace_path !== repo.workspace_path || r.persona_id !== repo.persona_id) : null,
+      );
+      refresh();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to enable repo";
+      setEnableError(message);
+    } finally {
+      setEnablingRepos((prev) => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
+    }
+  };
+
+  const handleKeepLocal = async (repo: DetectedRepo) => {
+    const key = `${repo.persona_id}:${repo.workspace_path}`;
+    setEnablingRepos((prev) => new Set(prev).add(key));
+    setEnableError(null);
+    try {
+      await enableRepo({
+        persona_id: repo.persona_id,
+        workspace_path: repo.workspace_path,
+      });
+      setScanResults((prev) =>
+        prev ? prev.filter((r) => r.workspace_path !== repo.workspace_path || r.persona_id !== repo.persona_id) : null,
+      );
+      refresh();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to enable repo";
+      setEnableError(message);
+    } finally {
+      setEnablingRepos((prev) => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
+    }
+  };
+
+  const handleLinkToRemote = (repo: DetectedRepo) => {
+    setLinkRemoteTarget(repo);
+    setLinkRemoteUrl("");
+  };
+
+  const handleLinkRemoteConfirm = async () => {
+    if (!linkRemoteTarget || !linkRemoteUrl.trim()) return;
+    const key = `${linkRemoteTarget.persona_id}:${linkRemoteTarget.workspace_path}`;
+    setEnablingRepos((prev) => new Set(prev).add(key));
+    setEnableError(null);
+    setLinkRemoteTarget(null);
+    try {
+      await enableRepo({
+        persona_id: linkRemoteTarget.persona_id,
+        workspace_path: linkRemoteTarget.workspace_path,
+        remote_url: linkRemoteUrl.trim(),
+      });
+      setScanResults((prev) =>
+        prev ? prev.filter((r) => r.workspace_path !== linkRemoteTarget.workspace_path || r.persona_id !== linkRemoteTarget.persona_id) : null,
+      );
+      refresh();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to link repo";
+      setEnableError(message);
+    } finally {
+      setEnablingRepos((prev) => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
+    }
+  };
+
+  const handleLinkRemoteCancel = () => {
+    setLinkRemoteTarget(null);
+    setLinkRemoteUrl("");
+  };
+
   return (
     <div className="repo-sync-page">
       <div className="page-header">
         <h2>Repo Sync</h2>
+        <button
+          className="btn btn-primary"
+          onClick={handleScan}
+          disabled={scanning}
+          aria-label="Scan Workspace"
+        >
+          {scanning ? "Scanning…" : "Scan Workspace"}
+        </button>
       </div>
+
+      {scanError && (
+        <div className="alert alert-error" role="alert">
+          {scanError}
+          <button
+            className="btn btn-sm"
+            onClick={() => setScanError(null)}
+            aria-label="Dismiss scan error"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {enableError && (
+        <div className="alert alert-error" role="alert">
+          {enableError}
+          <button
+            className="btn btn-sm"
+            onClick={() => setEnableError(null)}
+            aria-label="Dismiss enable error"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {scanResults !== null && (
+        <div className="scan-results">
+          {scanResults.length === 0 ? (
+            <p className="scan-results-empty">No new repositories found.</p>
+          ) : (
+            <>
+              <h3 className="scan-results-title">Detected Repositories</h3>
+              <div className="scan-results-list">
+                {scanResults.map((repo) => {
+                  const key = `${repo.persona_id}:${repo.workspace_path}`;
+                  const isEnabling = enablingRepos.has(key);
+                  return (
+                    <DetectedRepoCard
+                      key={key}
+                      repo={repo}
+                      isEnabling={isEnabling}
+                      onEnable={handleEnableRepo}
+                      onLinkToRemote={handleLinkToRemote}
+                      onKeepLocal={handleKeepLocal}
+                    />
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {linkRemoteTarget && (
+        <div className="modal-backdrop" onClick={handleLinkRemoteCancel}>
+          <div
+            className="modal"
+            role="dialog"
+            aria-label="Link to remote"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3>Link to Remote</h3>
+            <p>
+              Provide a remote URL for{" "}
+              <strong>{folderName(linkRemoteTarget.workspace_path)}</strong>
+            </p>
+            <input
+              type="text"
+              className="input"
+              placeholder="https://github.com/user/repo.git"
+              value={linkRemoteUrl}
+              onChange={(e) => setLinkRemoteUrl(e.target.value)}
+              aria-label="Remote URL"
+              autoFocus
+            />
+            <div className="modal-actions">
+              <button
+                className="btn"
+                onClick={handleLinkRemoteCancel}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn btn-primary"
+                onClick={handleLinkRemoteConfirm}
+                disabled={!linkRemoteUrl.trim()}
+              >
+                Link
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {loading && (
         <p className="loading-indicator">Loading repositories…</p>
@@ -116,6 +336,68 @@ export function RepoSyncPage() {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function DetectedRepoCard({
+  repo,
+  isEnabling,
+  onEnable,
+  onLinkToRemote,
+  onKeepLocal,
+}: {
+  repo: DetectedRepo;
+  isEnabling: boolean;
+  onEnable: (repo: DetectedRepo) => void;
+  onLinkToRemote: (repo: DetectedRepo) => void;
+  onKeepLocal: (repo: DetectedRepo) => void;
+}) {
+  const projectName = folderName(repo.workspace_path);
+
+  return (
+    <div className="card repo-sync-card detected-repo-card">
+      <div className="card-header">
+        <h4 className="card-title">{projectName}</h4>
+        <span className="badge badge-persona">{repo.persona_name}</span>
+      </div>
+      <div className="card-body">
+        <p className="card-description">{repo.workspace_path}</p>
+        {repo.remote_url && (
+          <p className="card-description">Remote: {repo.remote_url}</p>
+        )}
+        <div className="detected-repo-actions">
+          {repo.has_remotes ? (
+            <button
+              className="btn btn-primary btn-sm"
+              disabled={isEnabling}
+              onClick={() => onEnable(repo)}
+              aria-label={`Enable Repo Sync for ${projectName}`}
+            >
+              {isEnabling ? "Enabling…" : "Enable Repo Sync"}
+            </button>
+          ) : (
+            <>
+              <button
+                className="btn btn-primary btn-sm"
+                disabled={isEnabling}
+                onClick={() => onLinkToRemote(repo)}
+                aria-label={`Link ${projectName} to remote`}
+              >
+                Link to remote
+              </button>
+              <button
+                className="btn btn-sm"
+                disabled={isEnabling}
+                onClick={() => onKeepLocal(repo)}
+                aria-label={`Keep ${projectName} local only`}
+              >
+                {isEnabling ? "Enabling…" : "Keep local only"}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
