@@ -23,7 +23,7 @@ use crate::db::Database;
 use crate::db_ops;
 use crate::error::OrchestratorError;
 use crate::sbx::PolicyRule;
-use crate::types::{AdditionalWorkspace, AgentType, Persona, PersonaId};
+use crate::types::{AdditionalWorkspace, AgentType, ManagedRepo, ManagedRepoId, Persona, PersonaId};
 
 // --- Constants ---
 
@@ -115,6 +115,9 @@ struct ExportPayload {
     pub shared_memory_assignments: Vec<SharedMemoryAssignmentExport>,
     #[serde(default)]
     pub additional_workspaces: Vec<AdditionalWorkspace>,
+    /// Managed repos for repo sync. Credentials are excluded (non-portable, tied to OS keyring).
+    #[serde(default)]
+    pub managed_repos: Vec<ManagedRepo>,
 }
 
 /// MCP container config for export (excludes bearer_token).
@@ -232,6 +235,8 @@ impl ExportImportManager {
         let mut personas_imported = 0;
         let mut agents_imported = 0;
         let mut personas_skipped = 0;
+        // Track persona ID mapping: original_id → new_id (for managed_repos FK)
+        let mut persona_id_map: HashMap<String, String> = HashMap::new();
 
         // Import agents (skip built-ins that already exist)
         self.db.with_conn(|conn| {
@@ -279,6 +284,7 @@ impl ExportImportManager {
                                 &persona.id,
                                 &renamed.id,
                             )?;
+                            persona_id_map.insert(persona.id.0.clone(), renamed.id.0.clone());
                             personas_imported += 1;
                         }
                         Some(ConflictAction::Overwrite) => {
@@ -312,6 +318,7 @@ impl ExportImportManager {
                                 &persona.id,
                                 &imported.id,
                             )?;
+                            persona_id_map.insert(persona.id.0.clone(), imported.id.0.clone());
                             personas_imported += 1;
                         }
                         None => {
@@ -332,7 +339,23 @@ impl ExportImportManager {
                         &persona.id,
                         &persona.id,
                     )?;
+                    persona_id_map.insert(persona.id.0.clone(), persona.id.0.clone());
                     personas_imported += 1;
+                }
+            }
+            Ok(())
+        })?;
+
+        // Import managed repos (credentials are NOT imported — they are non-portable,
+        // tied to the OS keyring, and must be re-configured by the user after import)
+        self.db.with_conn(|conn| {
+            for repo in &payload.managed_repos {
+                // Only import if the owning persona was imported (has an ID mapping)
+                if let Some(new_persona_id) = persona_id_map.get(&repo.persona_id.0) {
+                    let mut imported_repo = repo.clone();
+                    imported_repo.id = ManagedRepoId::new();
+                    imported_repo.persona_id = PersonaId(new_persona_id.clone());
+                    db_ops::insert_managed_repo(conn, &imported_repo)?;
                 }
             }
             Ok(())
@@ -375,6 +398,10 @@ impl ExportImportManager {
                 all_additional_workspaces.extend(persona.additional_workspaces.clone());
             }
 
+            // Include managed repos (credentials are explicitly excluded — they are
+            // non-portable and tied to the OS keyring)
+            let managed_repos = db_ops::list_managed_repos(conn)?;
+
             Ok(ExportPayload {
                 version: 1,
                 personas,
@@ -384,6 +411,7 @@ impl ExportImportManager {
                 mcp_container_configs,
                 shared_memory_assignments,
                 additional_workspaces: all_additional_workspaces,
+                managed_repos,
             })
         })
     }
