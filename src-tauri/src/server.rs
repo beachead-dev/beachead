@@ -213,6 +213,23 @@ pub async fn start_server(
         });
     }
 
+    // Initialize Repo Sync Manager — graceful degradation if git not found (Req 19.7, 22.3)
+    let repo_sync_manager = match discover_git_binary().await {
+        Some(git_path) => {
+            println!("Git binary found at: {}", git_path);
+            let git = Arc::new(crate::git_cli::GitCli::new(git_path));
+            let mirrors_dir = RepoSyncManager::default_mirrors_dir();
+            std::fs::create_dir_all(&mirrors_dir).ok();
+            let manager = RepoSyncManager::new(db.clone(), git.clone(), mirrors_dir);
+            let _handle = manager.start_background_checker();
+            Some(Arc::new(manager))
+        }
+        None => {
+            eprintln!("Warning: git not found in PATH. Repo Sync features disabled.");
+            None
+        }
+    };
+
     let state = AppState {
         persona_manager,
         agent_manager,
@@ -223,7 +240,7 @@ pub async fn start_server(
         system_manager,
         export_import_manager,
         mcp_container_manager,
-        repo_sync_manager: None,
+        repo_sync_manager,
         db,
         sbx,
         pty_bridge,
@@ -258,4 +275,55 @@ pub async fn start_server(
         .map_err(|e| OrchestratorError::Internal(format!("Server error: {}", e)))?;
 
     Ok(())
+}
+
+/// Discover the git binary path at startup.
+///
+/// On Linux/macOS: runs `which git` to find it in PATH.
+/// On Windows: checks `ProgramFiles\Git\cmd\git.exe` first, then falls back to PATH.
+/// Returns `None` if git is not found (graceful degradation).
+async fn discover_git_binary() -> Option<String> {
+    #[cfg(target_os = "windows")]
+    {
+        // Check common Windows install location first
+        if let Ok(program_files) = std::env::var("ProgramFiles") {
+            let git_path = PathBuf::from(&program_files)
+                .join("Git")
+                .join("cmd")
+                .join("git.exe");
+            if git_path.exists() {
+                return Some(git_path.to_string_lossy().to_string());
+            }
+        }
+        // Fall back to PATH via `where git`
+        let output = tokio::process::Command::new("where")
+            .arg("git")
+            .output()
+            .await
+            .ok()?;
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let first_line = stdout.lines().next()?.trim().to_string();
+            if !first_line.is_empty() {
+                return Some(first_line);
+            }
+        }
+        None
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let output = tokio::process::Command::new("which")
+            .arg("git")
+            .output()
+            .await
+            .ok()?;
+        if output.status.success() {
+            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !path.is_empty() {
+                return Some(path);
+            }
+        }
+        None
+    }
 }
