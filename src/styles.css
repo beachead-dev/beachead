@@ -2217,3 +2217,106 @@ body {
   line-height: 1.5;
   margin: 0.5rem 0 0;
 }
+
+/* Repo Sync Page */
+.repo-sync-page {
+  max-width: 900px;
+}
+
+.repo-sync-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.repo-sync-group-title {
+  margin: 0 0 0.75rem;
+  font-size: 1.125rem;
+  font-weight: 600;
+}
+
+.repo-sync-repo-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.repo-sync-card .card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.repo-sync-card .card-title {
+  font-size: 0.9375rem;
+}
+
+.badge-sync-mode {
+  background: #e3f2fd;
+  color: #1565c0;
+  font-size: 0.6875rem;
+}
+
+.sync-indicators {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-top: 0.5rem;
+}
+
+.sync-indicator {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 0.8125rem;
+}
+
+.sync-indicator-label {
+  color: #666;
+}
+
+.sync-indicator-value {
+  font-weight: 500;
+  color: #27ae60;
+}
+
+.sync-indicator-pending {
+  color: #e67e22;
+}
+
+/* Dark mode overrides for Repo Sync */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .badge-sync-mode {
+    background: rgba(21, 101, 192, 0.2);
+    color: #64b5f6;
+  }
+
+  :root:not([data-theme="light"]) .sync-indicator-label {
+    color: #aaa;
+  }
+
+  :root:not([data-theme="light"]) .sync-indicator-value {
+    color: #2ecc71;
+  }
+
+  :root:not([data-theme="light"]) .sync-indicator-pending {
+    color: #f39c12;
+  }
+}
+
+:root[data-theme="dark"] .badge-sync-mode {
+  background: rgba(21, 101, 192, 0.2);
+  color: #64b5f6;
+}
+
+:root[data-theme="dark"] .sync-indicator-label {
+  color: #aaa;
+}
+
+:root[data-theme="dark"] .sync-indicator-value {
+  color: #2ecc71;
+}
+
+:root[data-theme="dark"] .sync-indicator-pending {
+  color: #f39c12;
+}
