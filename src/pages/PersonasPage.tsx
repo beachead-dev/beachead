@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { api } from "../lib/api";
+import { api, ManagedRepoResponse, getRepos, deleteRepo } from "../lib/api";
 
 interface McpServer {
   id: string;
@@ -81,6 +81,8 @@ export function PersonasPage() {
   const [showForm, setShowForm] = useState(false);
   const [editingPersona, setEditingPersona] = useState<Persona | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [deletePersonaManagedRepos, setDeletePersonaManagedRepos] = useState<ManagedRepoResponse[]>([]);
+  const [deleteInProgress, setDeleteInProgress] = useState(false);
 
   // Form state
   const [formName, setFormName] = useState("");
@@ -298,14 +300,42 @@ export function PersonasPage() {
     }
   };
 
-  const handleDelete = async (id: string) => {
+  const initiateDelete = async (personaId: string) => {
     try {
+      const repos = await getRepos();
+      const personaRepos = repos.filter((r) => r.persona_id === personaId);
+      setDeletePersonaManagedRepos(personaRepos);
+      setDeleteConfirm(personaId);
+    } catch {
+      // If we can't fetch repos (e.g., git not available), proceed with simple delete
+      setDeletePersonaManagedRepos([]);
+      setDeleteConfirm(personaId);
+    }
+  };
+
+  const handleDelete = async (id: string, deleteMirrors?: boolean) => {
+    setDeleteInProgress(true);
+    try {
+      // If persona has managed repos, clean them up first
+      if (deletePersonaManagedRepos.length > 0) {
+        for (const repo of deletePersonaManagedRepos) {
+          try {
+            await deleteRepo(repo.id, deleteMirrors);
+          } catch {
+            // Best-effort cleanup — continue even if individual repo deletion fails
+          }
+        }
+      }
       await api.del(`/api/personas/${id}`);
       setDeleteConfirm(null);
+      setDeletePersonaManagedRepos([]);
       await fetchData();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to delete persona");
       setDeleteConfirm(null);
+      setDeletePersonaManagedRepos([]);
+    } finally {
+      setDeleteInProgress(false);
     }
   };
 
@@ -409,7 +439,7 @@ export function PersonasPage() {
                   </button>
                   <button
                     className="btn btn-sm btn-danger"
-                    onClick={() => setDeleteConfirm(persona.id)}
+                    onClick={() => initiateDelete(persona.id)}
                     aria-label={`Delete ${persona.name}`}
                   >
                     Delete
@@ -461,14 +491,46 @@ export function PersonasPage() {
       )}
 
       {deleteConfirm && (
-        <div className="modal-overlay" role="dialog" aria-label="Confirm deletion">
+        <div className="modal-overlay" role="dialog" aria-label="Confirm deletion" onClick={(e) => { if (e.target === e.currentTarget && !deleteInProgress) { setDeleteConfirm(null); setDeletePersonaManagedRepos([]); } }}>
           <div className="modal">
             <h3>Confirm Delete</h3>
-            <p>Are you sure you want to delete this persona? This cannot be undone.</p>
-            <div className="modal-actions">
-              <button className="btn" onClick={() => setDeleteConfirm(null)}>Cancel</button>
-              <button className="btn btn-danger" onClick={() => handleDelete(deleteConfirm)}>Delete</button>
-            </div>
+            {deletePersonaManagedRepos.length > 0 ? (
+              <>
+                <p>
+                  This persona has {deletePersonaManagedRepos.length} managed{" "}
+                  {deletePersonaManagedRepos.length === 1 ? "repository" : "repositories"} with mirror directories.
+                  Would you like to delete the mirror directories from disk?
+                </p>
+                <ul style={{ textAlign: "left", margin: "0.5rem 0", paddingLeft: "1.5rem", fontSize: "0.85rem" }}>
+                  {deletePersonaManagedRepos.map((repo) => (
+                    <li key={repo.id}><code>{repo.mirror_path}</code></li>
+                  ))}
+                </ul>
+                <div className="modal-actions">
+                  <button className="btn" onClick={() => { setDeleteConfirm(null); setDeletePersonaManagedRepos([]); }} disabled={deleteInProgress}>
+                    Cancel
+                  </button>
+                  <button className="btn btn-danger" onClick={() => handleDelete(deleteConfirm, false)} disabled={deleteInProgress}>
+                    {deleteInProgress ? "Deleting..." : "Keep mirrors"}
+                  </button>
+                  <button className="btn btn-danger" onClick={() => handleDelete(deleteConfirm, true)} disabled={deleteInProgress}>
+                    {deleteInProgress ? "Deleting..." : "Delete mirrors"}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p>Are you sure you want to delete this persona? This cannot be undone.</p>
+                <div className="modal-actions">
+                  <button className="btn" onClick={() => { setDeleteConfirm(null); setDeletePersonaManagedRepos([]); }} disabled={deleteInProgress}>
+                    Cancel
+                  </button>
+                  <button className="btn btn-danger" onClick={() => handleDelete(deleteConfirm)} disabled={deleteInProgress}>
+                    {deleteInProgress ? "Deleting..." : "Delete"}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
