@@ -6,6 +6,7 @@ pub mod credential_manager;
 mod db;
 mod db_ops;
 pub mod export_import_manager;
+pub mod git_cli;
 pub mod policy_manager;
 #[cfg(test)]
 mod db_property_tests;
