@@ -1711,7 +1711,7 @@ impl RepoSyncManager {
 
         self.db.with_conn(|conn| {
             let repos = db_ops::list_managed_repos(conn)?;
-            for mut repo in repos {
+            for repo in &repos {
                 // Only update repos whose mirror_path starts with the old mirrors_dir
                 if repo.mirror_path.starts_with(&old_dir_str) {
                     let relative = &repo.mirror_path[old_dir_str.len()..];
@@ -1721,9 +1721,14 @@ impl RepoSyncManager {
                         .or_else(|| relative.strip_prefix('\\'))
                         .unwrap_or(relative);
                     let updated_path = new_dir.join(relative);
-                    repo.mirror_path = updated_path.to_string_lossy().to_string();
-                    repo.updated_at = Utc::now();
-                    db_ops::update_managed_repo(conn, &repo.id, &repo)?;
+                    let updated_path_str = updated_path.to_string_lossy().to_string();
+                    let now = Utc::now().to_rfc3339();
+                    db_ops::update_managed_repo_mirror_path(
+                        conn,
+                        &repo.id,
+                        &updated_path_str,
+                        &now,
+                    )?;
                 }
             }
             Ok(())

@@ -944,6 +944,30 @@ pub fn update_managed_repo(
     Ok(())
 }
 
+/// Update only the mirror_path for a managed repo.
+///
+/// Used when the mirrors directory is changed and all affected repo records
+/// need their mirror_path updated to reflect the new base directory.
+pub fn update_managed_repo_mirror_path(
+    conn: &Connection,
+    id: &ManagedRepoId,
+    new_mirror_path: &str,
+    updated_at: &str,
+) -> Result<(), OrchestratorError> {
+    let rows = conn.execute(
+        "UPDATE managed_repos SET mirror_path = ?1, updated_at = ?2 WHERE id = ?3",
+        params![new_mirror_path, updated_at, id.0],
+    )?;
+
+    if rows == 0 {
+        return Err(OrchestratorError::NotFound(format!(
+            "Managed repo not found: {}",
+            id.0
+        )));
+    }
+    Ok(())
+}
+
 pub fn delete_managed_repo(
     conn: &Connection,
     id: &ManagedRepoId,
