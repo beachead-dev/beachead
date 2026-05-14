@@ -14,6 +14,11 @@ import {
 import { usePolling } from "../hooks/usePolling";
 import { CommitReviewModal } from "../components/CommitReviewModal";
 import { RepoSettingsPanel } from "../components/RepoSettingsPanel";
+import {
+  SecretScanWarningModal,
+  SecretScanFinding,
+  parseSecretScanError,
+} from "../components/SecretScanWarningModal";
 
 /**
  * Groups repos by persona name, with repos sorted alphabetically within each group.
@@ -87,6 +92,8 @@ export function RepoSyncPage() {
   const [commitReviewOpen, setCommitReviewOpen] = useState(false);
   const [commitReviewRepoId, setCommitReviewRepoId] = useState<string | null>(null);
   const [commitReviewCommits, setCommitReviewCommits] = useState<CommitInfo[]>([]);
+  const [secretScanFindings, setSecretScanFindings] = useState<SecretScanFinding[]>([]);
+  const [secretScanWarningOpen, setSecretScanWarningOpen] = useState(false);
 
   useEffect(() => {
     const handleVisibility = () => {
@@ -276,7 +283,15 @@ export function RepoSyncPage() {
     setCommitReviewOpen(false);
     setCommitReviewRepoId(null);
     setCommitReviewCommits([]);
-    setSyncError(message);
+
+    // Check if this is a secret scan rejection
+    const findings = parseSecretScanError(message);
+    if (findings) {
+      setSecretScanFindings(findings);
+      setSecretScanWarningOpen(true);
+    } else {
+      setSyncError(message);
+    }
     refresh();
   };
 
@@ -453,6 +468,12 @@ export function RepoSyncPage() {
           onPushError={handlePushError}
         />
       )}
+
+      <SecretScanWarningModal
+        open={secretScanWarningOpen}
+        findings={secretScanFindings}
+        onDismiss={() => setSecretScanWarningOpen(false)}
+      />
     </div>
   );
 }
