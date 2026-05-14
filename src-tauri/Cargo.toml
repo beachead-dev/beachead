@@ -5,6 +5,10 @@ edition = "2021"
 description = "Secure AI Orchestrator - manages AI agents in Docker Sandbox microVMs"
 license = "MIT"
 
+[[bin]]
+name = "beachead-askpass"
+path = "src/bin/beachead-askpass.rs"
+
 [dependencies]
 # Tauri
 tauri = { version = "2", features = [] }
@@ -41,6 +45,10 @@ rand = "0.9"
 base64 = "0.22"
 aes-gcm = "0.10"
 argon2 = "0.5"
+
+# Credential helper / Repo Sync
+keyring = "3.6"
+dirs = "6"
 
 # PTY
 portable-pty = "0.8"
