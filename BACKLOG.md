@@ -288,6 +288,49 @@ Deferred improvements, bug fixes, and future features for implementation.
 
 ---
 
+### Docker Sandboxes Daemon Restart Detection and Handling
+
+**Priority:** Medium  
+**Affected area:** `src-tauri/src/sbx.rs`, `src-tauri/src/server.rs`, frontend (global banner component)
+
+**Problem:** When Docker Sandboxes receives an update, all `sbx` commands fail with: `ERROR: ensure daemon: cannot prompt for restart: stdin is not a terminal; run the command in an interactive terminal to confirm the restart`. The app surfaces this as a generic sbx CLI error with no actionable guidance. The user has to know to open a terminal and run an sbx command interactively to trigger the restart prompt.
+
+**Solution:** Detect the restart-needed state, show a persistent global warning banner, and provide a restart button that handles the full lifecycle.
+
+**Implementation:**
+
+1. **Detection (backend):**
+   - In `sbx.rs`, pattern-match stderr for `cannot prompt for restart` (or `needs to restart`)
+   - Add a new error variant `OrchestratorError::SbxRestartRequired` (or a flag on `SbxError`)
+   - When any sbx command hits this error, set an `AtomicBool` or shared state flag (`sbx_restart_required`) in `AppState`
+   - Add `GET /api/system/sbx-status` endpoint that returns the restart-required flag (polled by frontend or checked on any sbx error response)
+
+2. **Restart endpoint (backend):**
+   - Add `POST /api/system/sbx-restart` endpoint
+   - Spawns an sbx command (e.g., `sbx version`) with `y\n` piped to stdin to confirm the restart
+   - Waits for the command to complete (the daemon restarts, stopping all sandboxes)
+   - After success: clears the `sbx_restart_required` flag, triggers session status reconciliation (mark all "running" sessions as "stopped" in DB)
+   - Returns success/failure to frontend
+
+3. **Warning banner (frontend):**
+   - Global banner component rendered at the top of the layout (above all page content)
+   - Shows when `sbx_restart_required` is true
+   - Message: "Docker Sandboxes has been updated and needs to restart. All running sandboxes will be stopped."
+   - "Restart Now" button triggers the restart endpoint
+   - Loading state while restart is in progress
+   - On success: dismiss banner, refresh session list
+   - On failure: show error, keep banner visible
+
+4. **Edge cases:**
+   - Restart while sessions are running: warn user that active sessions will be terminated
+   - Restart failure: surface the error, don't clear the flag
+   - Multiple concurrent restart attempts: debounce/disable button during operation
+   - Recovery after restart: session reconciliation marks sessions as stopped, UI refreshes via existing polling
+
+**Scope:** ~150-200 lines backend (error detection, shared state, endpoint, stdin piping), ~80-100 lines frontend (banner component, API call, layout integration).
+
+---
+
 ## New Features
 
 ### Delete Memory Data Option When Disabling Memory
