@@ -1450,14 +1450,12 @@ body {
 
 .help-sidebar-title {
   margin: 0 0 0.75rem;
-  padding: 0 1rem;
-  font-size: 0.875rem;
+  padding: 0 0.75rem;
+  font-size: 0.75rem;
   font-weight: 600;
   color: #666;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  position: relative;
-  z-index: 1;
+  letter-spacing: 0.03em;
 }
 
 .help-topic-list {
