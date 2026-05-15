@@ -15,6 +15,24 @@ This ensures credentials and remote access are never visible inside the sandbox.
 
 ## Enabling Repo Sync
 
+### Create Mirror (from remote URL or local directory)
+
+Click **Create Mirror** on the Repo Sync page to set up a new managed repository from an external source. This opens a dialog where you:
+
+1. Select a **persona** from the dropdown
+2. Enter a **source** — either a remote URL (`https://github.com/user/repo.git` or `git@host:path`) or an absolute local path to a git repository
+3. For private remote repos: check "Private repository" and enter your username and token/password
+
+When you confirm, the system:
+
+- Clones the source into the mirror directory
+- Creates a stripped workspace clone (no remotes) in the persona's workspace directory
+- Detects the remote URL from the source's git config
+- Stores credentials permanently if provided (for future push/fetch operations)
+- Registers the managed repo with appropriate sync mode (Remote if a remote URL was detected, Local only otherwise)
+
+This is the recommended way to set up a new project for an agent to work on.
+
 ### Existing repositories (with remotes)
 
 Click **Scan Workspace** on the Repo Sync page. Repositories with configured remotes appear with an **Enable Repo Sync** button. Clicking it:
