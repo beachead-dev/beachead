@@ -711,7 +711,7 @@ function MirrorsDirectorySettings() {
       >
         {expanded ? "▾" : "▸"} Mirrors Directory
         {currentPath && !expanded && (
-          <span className="mirrors-dir-current">{currentPath}</span>
+          <span className="mirrors-dir-current">: {currentPath}</span>
         )}
       </button>
       {expanded && (
