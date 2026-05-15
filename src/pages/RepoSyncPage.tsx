@@ -311,7 +311,7 @@ export function RepoSyncPage() {
         </button>
       </div>
 
-      <MirrorsDirectorySettings />
+      <MirrorsDirectorySettings repos={repos} />
 
       {scanError && (
         <div className="alert alert-error" role="alert">
@@ -663,7 +663,7 @@ function SyncStatusIndicators({
   );
 }
 
-function MirrorsDirectorySettings() {
+function MirrorsDirectorySettings({ repos }: { repos: ManagedRepoResponse[] }) {
   const [expanded, setExpanded] = useState(false);
   const [currentPath, setCurrentPath] = useState<string | null>(null);
   const [editPath, setEditPath] = useState("");
@@ -681,6 +681,11 @@ function MirrorsDirectorySettings() {
         // Non-critical — mirrors dir just won't display
       });
   }, []);
+
+  const pathChanged = editPath.trim() !== "" && editPath.trim() !== currentPath;
+  const affectedRepos = pathChanged
+    ? repos.filter((r) => currentPath && r.mirror_path.startsWith(currentPath))
+    : [];
 
   const handleSave = async () => {
     if (!editPath.trim()) return;
@@ -736,6 +741,14 @@ function MirrorsDirectorySettings() {
               aria-invalid={!!error}
             />
           </div>
+          {affectedRepos.length > 0 && (
+            <div className="alert alert-warning mirrors-dir-warning" role="alert">
+              <strong>Warning:</strong> Changing the mirrors directory will update paths for{" "}
+              {affectedRepos.length} existing repo{affectedRepos.length !== 1 ? "s" : ""}.
+              Existing mirror directories will not be moved automatically — you must relocate
+              them manually.
+            </div>
+          )}
           {error && (
             <span className="field-error" role="alert">{error}</span>
           )}
