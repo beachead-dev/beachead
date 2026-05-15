@@ -7,6 +7,8 @@ import {
   pullFromAgent,
   fetchFromRemote,
   pushToAgent,
+  getMirrorsDir,
+  setMirrorsDir,
   ManagedRepoResponse,
   DetectedRepo,
   CommitInfo,
@@ -308,6 +310,8 @@ export function RepoSyncPage() {
           {scanning ? "Scanning…" : "Scan Workspace"}
         </button>
       </div>
+
+      <MirrorsDirectorySettings />
 
       {scanError && (
         <div className="alert alert-error" role="alert">
@@ -654,6 +658,99 @@ function SyncStatusIndicators({
             {status.mirror_ahead === 0 && status.remote_ahead === 0 && "in sync"}
           </span>
         </span>
+      )}
+    </div>
+  );
+}
+
+function MirrorsDirectorySettings() {
+  const [expanded, setExpanded] = useState(false);
+  const [currentPath, setCurrentPath] = useState<string | null>(null);
+  const [editPath, setEditPath] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
+
+  useEffect(() => {
+    getMirrorsDir()
+      .then((res) => {
+        setCurrentPath(res.path);
+        setEditPath(res.path);
+      })
+      .catch(() => {
+        // Non-critical — mirrors dir just won't display
+      });
+  }, []);
+
+  const handleSave = async () => {
+    if (!editPath.trim()) return;
+    setSaving(true);
+    setError(null);
+    setSuccess(false);
+    try {
+      const res = await setMirrorsDir(editPath.trim());
+      setCurrentPath(res.path);
+      setEditPath(res.path);
+      setSuccess(true);
+      setTimeout(() => setSuccess(false), 3000);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to update mirrors directory";
+      setError(message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="mirrors-dir-settings">
+      <button
+        className="btn btn-sm mirrors-dir-toggle"
+        onClick={() => setExpanded((prev) => !prev)}
+        aria-expanded={expanded}
+        type="button"
+      >
+        {expanded ? "▾" : "▸"} Mirrors Directory
+        {currentPath && !expanded && (
+          <span className="mirrors-dir-current">{currentPath}</span>
+        )}
+      </button>
+      {expanded && (
+        <div className="mirrors-dir-form">
+          <p className="mirrors-dir-description">
+            Mirror repositories are stored in this directory. Each mirror is at{" "}
+            <code>&lt;mirrors-dir&gt;/&lt;persona&gt;/&lt;project&gt;/</code>.
+          </p>
+          <div className="form-group">
+            <label htmlFor="mirrors-dir-input">Path</label>
+            <input
+              id="mirrors-dir-input"
+              type="text"
+              className="input"
+              value={editPath}
+              onChange={(e) => {
+                setEditPath(e.target.value);
+                setError(null);
+                setSuccess(false);
+              }}
+              placeholder="/home/user/.local/share/beachead/mirrors"
+              aria-invalid={!!error}
+            />
+          </div>
+          {error && (
+            <span className="field-error" role="alert">{error}</span>
+          )}
+          {success && (
+            <span className="field-success">Saved.</span>
+          )}
+          <button
+            className="btn btn-primary btn-sm"
+            onClick={handleSave}
+            disabled={saving || !editPath.trim() || editPath === currentPath}
+            type="button"
+          >
+            {saving ? "Saving…" : "Update"}
+          </button>
+        </div>
       )}
     </div>
   );
