@@ -153,7 +153,11 @@ impl PtyBridge {
     }
 
     /// Resize the PTY for the given session.
+    /// Clamps rows to 1–500 and cols to 1–1000 to prevent extreme values.
     pub fn resize(&self, session_id: &SessionId, rows: u16, cols: u16) -> Result<(), OrchestratorError> {
+        let rows = rows.clamp(1, 500);
+        let cols = cols.clamp(1, 1000);
+
         let session = self
             .sessions
             .get(session_id)
@@ -241,12 +245,14 @@ impl PtyBridge {
                         if text.starts_with('\x01') {
                             let json_str = &text[1..];
                             if let Ok(resize) = serde_json::from_str::<ResizeMessage>(json_str) {
+                                let rows = resize.rows.clamp(1, 500);
+                                let cols = resize.cols.clamp(1, 1000);
                                 let rs = resize_session.clone();
                                 let _ = tokio::task::spawn_blocking(move || {
                                     let master = rs.master.blocking_lock();
                                     let _ = master.resize(PtySize {
-                                        rows: resize.rows,
-                                        cols: resize.cols,
+                                        rows,
+                                        cols,
                                         pixel_width: 0,
                                         pixel_height: 0,
                                     });

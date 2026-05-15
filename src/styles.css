@@ -1434,7 +1434,9 @@ body {
   display: flex;
   gap: 0;
   margin: -1.5rem -2rem;
-  min-height: calc(100vh - 0px);
+  height: calc(100vh);
+  min-height: 0;
+  overflow: hidden;
 }
 
 .help-sidebar {
@@ -1443,6 +1445,7 @@ body {
   border-right: 1px solid #e0e0e0;
   padding: 1rem 0;
   background: #fafafa;
+  overflow-y: auto;
 }
 
 .help-sidebar-title {
@@ -1453,6 +1456,8 @@ body {
   color: #666;
   text-transform: uppercase;
   letter-spacing: 0.05em;
+  position: relative;
+  z-index: 1;
 }
 
 .help-topic-list {
@@ -1490,7 +1495,7 @@ body {
   flex: 1;
   padding: 1.5rem 2rem;
   overflow-y: auto;
-  max-height: calc(100vh - 0px);
+  min-height: 0;
 }
 
 .help-loading {

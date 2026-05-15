@@ -15,14 +15,12 @@ Deferred improvements, bug fixes, and future features for implementation.
 
 ---
 
-### "Documentation" Menu Text Overlaps Content in Help
+### ~~"Documentation" Menu Text Overlaps Content in Help~~ ✅ FIXED
 
-**Priority:** Low  
-**Affected area:** `src/pages/HelpPage.tsx` or equivalent help/documentation view
+**Fixed:** 2026-05-15  
+**Affected area:** `src/styles.css` (help page layout)
 
-**Problem:** The "Documentation" heading or menu label overlaps the actual documentation content below it, making it hard to read.
-
-**Solution:** Fix the CSS layout — likely a missing margin/padding, a z-index issue, or a position:sticky/fixed element that doesn't account for content flow.
+**What was done:** Fixed the help page CSS layout. Changed `min-height: calc(100vh - 0px)` to `height: calc(100vh)` with `min-height: 0` and `overflow: hidden` on the container. Added `overflow-y: auto` to the sidebar to prevent content overflow. Added `min-height: 0` to `.help-content` (required for flex children with overflow). Added `position: relative; z-index: 1` to the sidebar title to ensure it stays above scrolling content.
 
 ---
 
@@ -281,14 +279,12 @@ Deferred improvements, bug fixes, and future features for implementation.
 
 ---
 
-### Resize Message Validation
+### ~~Resize Message Validation~~ ✅ FIXED
 
-**Priority:** Low  
+**Fixed:** 2026-05-15  
 **Affected area:** `src-tauri/src/pty_bridge.rs`
 
-**Problem:** The resize control message (`\x01` + JSON) has no validation on rows/cols values. Malicious input could set extreme values.
-
-**Solution:** Clamp rows to 1–500, cols to 1–1000 before calling `master.resize()`.
+**What was done:** Added `clamp(1, 500)` for rows and `clamp(1, 1000)` for cols in both the `resize()` public method and the WebSocket resize message handler in `attach_ws()`. Extreme or zero values from malicious input are now safely bounded before reaching the PTY.
 
 ---
 
