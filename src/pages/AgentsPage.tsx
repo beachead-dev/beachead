@@ -282,11 +282,6 @@ export function AgentsPage() {
                             Remove
                           </button>
                         )}
-                        {agents.some((a) => a.metadata.required_secrets.includes(service) && a.metadata.auth_methods.includes("oauth")) && (
-                          <button className="btn btn-sm" onClick={() => handleOAuth(service)} aria-label={`OAuth for ${service}`}>
-                            OAuth
-                          </button>
-                        )}
                       </>
                     )}
                   </div>

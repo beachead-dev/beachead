@@ -33,6 +33,39 @@ Deferred improvements, bug fixes, and future features for implementation.
 
 ---
 
+### OAuth Flow Non-Functional (Interactive Command in Non-Interactive Context)
+
+**Priority:** Medium  
+**Affected area:** `src-tauri/src/sbx.rs`, `src-tauri/src/credential_manager.rs`, `src-tauri/src/agent_manager.rs` (seed logic), `src/pages/AgentsPage.tsx`
+
+**Problem:** The `sbx secret set -g openai --oauth` command is interactive — it opens a browser and waits for user completion. The backend runs it via `exec_multi_command` with piped stdio (non-interactive), so it always fails. Additionally, the agent seed logic uses insert-or-skip, so corrected `auth_methods` values never propagate to existing installs (violates steering rule #7 on upsert semantics).
+
+**Two sub-problems:**
+1. **OAuth button doesn't work:** The command needs a TTY or at minimum needs to capture the browser URL and present it to the user.
+2. **Seed data doesn't update:** `seed_builtin_agents()` skips existing records. Auth method corrections (removing OAuth from Claude/Cursor/Droid/Gemini, keeping it only on Codex) never reach existing databases.
+
+**Solution:**
+
+1. **Fix seed logic (upsert):** Change `seed_builtin_agents()` to use upsert semantics — update `metadata` JSON for existing built-in agents on every startup. This ensures auth_methods, descriptions, mcp_config_path, and other metadata fields stay current across app updates.
+
+2. **Make OAuth flow interactive via PTY:** 
+   - When the user clicks "OAuth" for the `openai` service, spawn `sbx secret set -g openai --oauth` in a PTY (reuse `PtyBridge` infrastructure)
+   - Open a small terminal modal/panel in the UI showing the command output (browser URL, status messages)
+   - The command will print a URL and wait — user clicks the URL, completes auth in browser, command exits successfully
+   - On exit (success or failure), close the modal and refresh the secrets list
+   - This is the same pattern needed for any interactive sbx command (device flow for Kiro, OAuth for Codex)
+
+3. **Frontend gating:** Only show the OAuth button for services where the agent's `auth_methods` includes `"oauth"` (already implemented). Remove the button entirely until the PTY-based flow is built, or show it disabled with a tooltip explaining it's not yet supported.
+
+**Implementation order:**
+1. Seed upsert (~30 lines in `agent_manager.rs` + migration or ALTER approach)
+2. Interactive command modal (new component, ~100-150 lines frontend + backend endpoint that spawns PTY and returns WebSocket URL)
+3. Wire OAuth button to the interactive modal instead of the current fire-and-forget POST
+
+**Scope:** Medium feature. Seed upsert is quick. The interactive terminal modal is reusable for device flow (Kiro) and any future interactive sbx commands.
+
+---
+
 ### Kit allowedDomains Persists in Global Policy
 
 **Priority:** Medium  
