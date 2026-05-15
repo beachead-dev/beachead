@@ -21,6 +21,7 @@ import {
   SecretScanFinding,
   parseSecretScanError,
 } from "../components/SecretScanWarningModal";
+import { CreateMirrorModal } from "../components/CreateMirrorModal";
 
 /**
  * Groups repos by persona name, with repos sorted alphabetically within each group.
@@ -96,6 +97,7 @@ export function RepoSyncPage() {
   const [commitReviewCommits, setCommitReviewCommits] = useState<CommitInfo[]>([]);
   const [secretScanFindings, setSecretScanFindings] = useState<SecretScanFinding[]>([]);
   const [secretScanWarningOpen, setSecretScanWarningOpen] = useState(false);
+  const [createMirrorOpen, setCreateMirrorOpen] = useState(false);
 
   useEffect(() => {
     const handleVisibility = () => {
@@ -301,14 +303,23 @@ export function RepoSyncPage() {
     <div className="repo-sync-page">
       <div className="page-header">
         <h2>Repo Sync</h2>
-        <button
-          className="btn btn-primary"
-          onClick={handleScan}
-          disabled={scanning}
-          aria-label="Scan Workspace"
-        >
-          {scanning ? "Scanning…" : "Scan Workspace"}
-        </button>
+        <div className="page-header-actions">
+          <button
+            className="btn"
+            onClick={() => setCreateMirrorOpen(true)}
+            aria-label="Create Mirror"
+          >
+            Create Mirror
+          </button>
+          <button
+            className="btn btn-primary"
+            onClick={handleScan}
+            disabled={scanning}
+            aria-label="Scan Workspace"
+          >
+            {scanning ? "Scanning…" : "Scan Workspace"}
+          </button>
+        </div>
       </div>
 
       <MirrorsDirectorySettings repos={repos} />
@@ -477,6 +488,18 @@ export function RepoSyncPage() {
         open={secretScanWarningOpen}
         findings={secretScanFindings}
         onDismiss={() => setSecretScanWarningOpen(false)}
+      />
+
+      <CreateMirrorModal
+        open={createMirrorOpen}
+        onClose={() => setCreateMirrorOpen(false)}
+        onCreated={() => {
+          setCreateMirrorOpen(false);
+          refresh();
+        }}
+        onError={() => {
+          // Error is shown inside the modal
+        }}
       />
     </div>
   );

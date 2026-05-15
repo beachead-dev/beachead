@@ -359,3 +359,16 @@ export async function getMirrorsDir(): Promise<MirrorsDirResponse> {
 export async function setMirrorsDir(path: string): Promise<MirrorsDirResponse> {
   return put<MirrorsDirResponse>("/api/repo-sync/settings/mirrors-dir", { path });
 }
+
+export interface CreateFromSourceRequest {
+  persona_id: string;
+  source: string;
+  username?: string;
+  secret?: string;
+}
+
+export async function createFromSource(
+  req: CreateFromSourceRequest,
+): Promise<ManagedRepoResponse> {
+  return post<ManagedRepoResponse>("/api/repo-sync/create-from-source", req);
+}

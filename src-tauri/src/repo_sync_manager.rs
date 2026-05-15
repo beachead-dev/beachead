@@ -545,6 +545,284 @@ impl RepoSyncManager {
         Ok(repo)
     }
 
+    /// Create a managed repo from an external source (remote URL or local directory).
+    ///
+    /// This is the "Create Mirror" flow — the inverse of `enable()`. Instead of starting
+    /// with an existing workspace, it starts with a source (URL or path), clones it into
+    /// the mirror directory, then creates a stripped workspace clone for the persona.
+    ///
+    /// # Arguments
+    /// - `persona_id`: The persona to associate this repo with.
+    /// - `source`: A remote URL (HTTPS/SSH) or an absolute local path to a git repo.
+    /// - `credentials`: Optional credentials for cloning private repos (username + secret).
+    ///
+    /// # Flow
+    /// 1. Validate source (URL format or local path with .git)
+    /// 2. Clone source → mirror (with credentials if provided)
+    /// 3. Detect remote URL from mirror's git config
+    /// 4. Clone mirror → persona workspace (stripped of remotes)
+    /// 5. Store managed repo record
+    pub async fn create_from_source(
+        &self,
+        persona_id: &PersonaId,
+        source: &str,
+        credentials: Option<(&str, &str)>,
+    ) -> Result<ManagedRepo, OrchestratorError> {
+        // 1. Look up persona
+        let persona = self.db.with_conn(|conn| {
+            db_ops::get_persona(conn, persona_id)
+        })?;
+
+        // 2. Determine if source is a URL or local path
+        let is_url = source.starts_with("https://") || source.starts_with("git@");
+        let source_path = Path::new(source);
+
+        if is_url {
+            Self::validate_remote_url(source)?;
+        } else {
+            // Local path: must exist and contain .git
+            if !source_path.is_absolute() {
+                return Err(OrchestratorError::Validation(
+                    "Local source path must be absolute".to_string(),
+                ));
+            }
+            if !source_path.join(".git").exists() {
+                return Err(OrchestratorError::Validation(
+                    "Local source path does not contain a .git directory".to_string(),
+                ));
+            }
+        }
+
+        // 3. Compute project name from source
+        let project_name = if is_url {
+            // Extract repo name from URL: https://github.com/user/repo.git → repo
+            let url_path = source.rsplit('/').next().unwrap_or("repo");
+            url_path.strip_suffix(".git").unwrap_or(url_path).to_string()
+        } else {
+            source_path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "repo".to_string())
+        };
+
+        // 4. Compute mirror path
+        let mirror_path = self.mirrors_dir.read().unwrap().join(&persona.name).join(&project_name);
+        if mirror_path.exists() {
+            return Err(OrchestratorError::Validation(
+                "Mirror directory already exists for this project name".to_string(),
+            ));
+        }
+
+        // Ensure parent directory exists
+        if let Some(parent) = mirror_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                OrchestratorError::Internal(format!(
+                    "Failed to create mirror parent directory: {}",
+                    e
+                ))
+            })?;
+        }
+
+        let mirror_str = mirror_path.to_string_lossy().to_string();
+
+        // 5. Clone source → mirror
+        if is_url && credentials.is_some() {
+            // Store credentials temporarily for the clone operation
+            let (username, secret) = credentials.unwrap();
+            let temp_repo_id = format!("temp-clone-{}", uuid::Uuid::new_v4());
+            repo_credential_manager::store_credentials(
+                &temp_repo_id,
+                username.to_string(),
+                secret.to_string(),
+            )?;
+
+            let cred_env = repo_credential_manager::build_credential_env(&temp_repo_id)?;
+            let clone_result = self
+                .git
+                .exec_in_dir(
+                    mirror_path.parent().unwrap(),
+                    &["clone", source, &mirror_str],
+                    true, // network op
+                )
+                .await;
+
+            // If clone failed without credentials (exec_in_dir doesn't take cred_env),
+            // we need to use a different approach: set GIT_ASKPASS for the clone
+            // Actually exec_in_dir doesn't support credential_env. Let's use Command directly.
+            // For now, try the clone with credential env by using a workaround:
+            // Clone with the credential env by temporarily setting it.
+            if clone_result.is_err() {
+                // Try again with credentials via a manual command
+                let _ = std::fs::remove_dir_all(&mirror_path);
+                let mut cmd = tokio::process::Command::new(self.git.git_path());
+                cmd.args(["clone", source, &mirror_str])
+                    .current_dir(mirror_path.parent().unwrap())
+                    .env("GIT_TERMINAL_PROMPT", "0")
+                    .env("GIT_ASKPASS", &cred_env.askpass_path)
+                    .env("BEACHEAD_KEYRING_SERVICE", &cred_env.service_name);
+
+                let output = tokio::time::timeout(
+                    std::time::Duration::from_secs(120),
+                    cmd.output(),
+                )
+                .await
+                .map_err(|_| OrchestratorError::Internal("Clone timed out".to_string()))?
+                .map_err(|e| OrchestratorError::Internal(format!("Clone failed: {}", e)))?;
+
+                if !output.status.success() {
+                    let _ = std::fs::remove_dir_all(&mirror_path);
+                    let _ = repo_credential_manager::delete_credentials(&temp_repo_id);
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    return Err(OrchestratorError::Internal(format!(
+                        "Failed to clone from source: {}",
+                        crate::git_cli::sanitize_stderr(&stderr)
+                    )));
+                }
+            }
+
+            // Clean up temp credentials
+            let _ = repo_credential_manager::delete_credentials(&temp_repo_id);
+        } else {
+            // Clone without credentials (public repo or local path)
+            let clone_result = self
+                .git
+                .exec_in_dir(
+                    mirror_path.parent().unwrap(),
+                    &["clone", source, &mirror_str],
+                    is_url, // network_op = true for URLs
+                )
+                .await;
+
+            if let Err(e) = clone_result {
+                if mirror_path.exists() {
+                    let _ = std::fs::remove_dir_all(&mirror_path);
+                }
+                return Err(OrchestratorError::Internal(format!(
+                    "Failed to clone from source: {}",
+                    e
+                )));
+            }
+        }
+
+        // 6. Detect remote URL from the mirror's git config
+        let remote_url = self
+            .git
+            .get_remote_url(&mirror_path, "origin")
+            .await
+            .unwrap_or(None);
+
+        let remote_provider = remote_url
+            .as_deref()
+            .and_then(Self::detect_remote_provider);
+
+        // 7. Create workspace clone from mirror (stripped of remotes)
+        let workspace_path = persona.workspace_path.join(&project_name);
+        if workspace_path.exists() {
+            // Workspace already exists — don't overwrite
+            let _ = std::fs::remove_dir_all(&mirror_path);
+            return Err(OrchestratorError::Validation(format!(
+                "Workspace directory already exists: {}",
+                workspace_path.display()
+            )));
+        }
+
+        let workspace_str = workspace_path.to_string_lossy().to_string();
+        let clone_ws_result = self
+            .git
+            .exec_in_dir(
+                persona.workspace_path.as_path(),
+                &["clone", &mirror_str, &workspace_str],
+                false,
+            )
+            .await;
+
+        if let Err(e) = clone_ws_result {
+            let _ = std::fs::remove_dir_all(&mirror_path);
+            return Err(OrchestratorError::Internal(format!(
+                "Failed to create workspace from mirror: {}",
+                e
+            )));
+        }
+
+        // 8. Strip all remotes from workspace
+        let ws_remotes = self.git.list_remote_names(&workspace_path).await.unwrap_or_default();
+        for name in &ws_remotes {
+            let _ = self
+                .git
+                .exec(&workspace_path, &["remote", "remove", name], None, false)
+                .await;
+        }
+
+        // 9. Set mirror's origin to the actual source (not the workspace)
+        // The clone from source should already have origin pointing to source,
+        // but if it was a local path clone, origin points to the local path.
+        // For local sources, read the original remote from the source and use that.
+        if !is_url {
+            if let Ok(Some(source_remote)) = self.git.get_remote_url(source_path, "origin").await {
+                let _ = self
+                    .git
+                    .exec(&mirror_path, &["remote", "set-url", "origin", &source_remote], None, false)
+                    .await;
+            }
+        }
+
+        // Re-read remote URL after potential update
+        let final_remote_url = self
+            .git
+            .get_remote_url(&mirror_path, "origin")
+            .await
+            .unwrap_or(None);
+
+        let final_provider = final_remote_url
+            .as_deref()
+            .and_then(Self::detect_remote_provider);
+
+        // 10. Determine sync mode
+        let sync_mode = if final_remote_url.is_some() {
+            SyncMode::Remote
+        } else {
+            SyncMode::LocalOnly
+        };
+
+        let has_remote = final_remote_url.is_some();
+
+        // 11. Store managed repo record
+        let now = Utc::now();
+        let repo = ManagedRepo {
+            id: ManagedRepoId::new(),
+            persona_id: persona_id.clone(),
+            workspace_path: workspace_str,
+            mirror_path: mirror_str,
+            remote_url: final_remote_url,
+            remote_provider: final_provider,
+            branch_strategy: BranchStrategy::Direct,
+            branch_pattern: Some("ai/<persona-name>/<date>".to_string()),
+            attribution_mode: AttributionMode::KeepAgent,
+            sync_mode,
+            secret_scan_mode: SecretScanMode::Block,
+            check_interval_seconds: 300,
+            created_at: now,
+            updated_at: now,
+        };
+
+        self.db.with_conn(|conn| {
+            db_ops::insert_managed_repo(conn, &repo)
+        })?;
+
+        // 12. If credentials were provided and we have a remote, store them permanently
+        if let Some((username, secret)) = credentials {
+            if has_remote {
+                let _ = repo_credential_manager::store_credentials(
+                    &repo.id.0,
+                    username.to_string(),
+                    secret.to_string(),
+                );
+            }
+        }
+
+        Ok(repo)
+    }
+
     /// List remote branch names (without the `origin/` prefix) from the mirror.
     ///
     /// Uses `git branch -r` to list remote-tracking branches, then strips the

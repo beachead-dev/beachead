@@ -57,6 +57,15 @@ pub struct DeleteRepoQuery {
     pub delete_mirror: bool,
 }
 
+/// Request body for the create-from-source endpoint.
+#[derive(Debug, Deserialize)]
+pub struct CreateFromSourceRequest {
+    pub persona_id: String,
+    pub source: String,
+    pub username: Option<String>,
+    pub secret: Option<String>,
+}
+
 /// Per-repo operation lock to prevent concurrent sync operations.
 ///
 /// If a repo ID is present in this map, a sync operation is in progress for it.
@@ -133,6 +142,7 @@ pub fn router() -> Router<AppState> {
             "/api/repo-sync/repos/{id}/credentials",
             put(set_credentials).delete(delete_credentials),
         )
+        .route("/api/repo-sync/create-from-source", post(create_from_source))
 }
 
 // --- Status and Settings Endpoints ---
@@ -634,4 +644,78 @@ async fn delete_credentials(
     })?;
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// POST /api/repo-sync/create-from-source — create a managed repo from an external source.
+///
+/// Clones from a remote URL or local directory into the mirror, then creates a
+/// stripped workspace clone for the selected persona. Supports credentials for
+/// private repositories.
+async fn create_from_source(
+    State(state): State<AppState>,
+    Json(req): Json<CreateFromSourceRequest>,
+) -> Result<(StatusCode, Json<ManagedRepoResponse>), OrchestratorError> {
+    let mgr = state.require_repo_sync_manager()?;
+
+    if req.source.trim().is_empty() {
+        return Err(OrchestratorError::Validation(
+            "source must not be empty".to_string(),
+        ));
+    }
+
+    let persona_id = crate::types::PersonaId(req.persona_id);
+    let credentials = match (&req.username, &req.secret) {
+        (Some(u), Some(s)) if !u.trim().is_empty() && !s.trim().is_empty() => {
+            Some((u.as_str(), s.as_str()))
+        }
+        _ => None,
+    };
+
+    let repo = mgr
+        .create_from_source(&persona_id, req.source.trim(), credentials)
+        .await?;
+
+    // Build the response
+    let persona_name = state
+        .db
+        .with_conn(|conn| {
+            db_ops::get_persona(conn, &repo.persona_id)
+                .map(|p| p.name)
+        })
+        .unwrap_or_else(|_| "Unknown".to_string());
+
+    let credential_status =
+        match repo_credential_manager::credentials_configured(&repo.id.0) {
+            Ok(true) => "configured".to_string(),
+            _ => "not_configured".to_string(),
+        };
+
+    let mirror_exists = PathBuf::from(&repo.mirror_path).exists();
+
+    let response = ManagedRepoResponse {
+        id: repo.id.0,
+        persona_id: repo.persona_id.0,
+        persona_name,
+        workspace_path: repo.workspace_path,
+        mirror_path: repo.mirror_path,
+        remote_url: repo.remote_url,
+        remote_provider: repo.remote_provider.map(|p| p.to_string()),
+        branch_strategy: repo.branch_strategy.to_string(),
+        branch_pattern: repo.branch_pattern,
+        attribution_mode: repo.attribution_mode.to_string(),
+        sync_mode: repo.sync_mode.to_string(),
+        secret_scan_mode: repo.secret_scan_mode.to_string(),
+        check_interval_seconds: repo.check_interval_seconds,
+        sync_status: SyncStatus {
+            workspace_ahead: 0,
+            mirror_ahead: 0,
+            remote_ahead: 0,
+        },
+        credential_status,
+        mirror_exists,
+        created_at: repo.created_at.to_rfc3339(),
+        updated_at: repo.updated_at.to_rfc3339(),
+    };
+
+    Ok((StatusCode::CREATED, Json(response)))
 }
