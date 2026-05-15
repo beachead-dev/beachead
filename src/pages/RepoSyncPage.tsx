@@ -7,6 +7,7 @@ import {
   pullFromAgent,
   fetchFromRemote,
   pushToAgent,
+  deleteRepo,
   getMirrorsDir,
   setMirrorsDir,
   ManagedRepoResponse,
@@ -579,10 +580,26 @@ function RepoCard({
   onSettingsSaved: () => void;
 }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const projectName = folderName(repo.workspace_path);
   const isLocalOnly = repo.sync_mode === "local_only";
   const isOperationInProgress = activeOperation?.repoId === repo.id;
   const currentOp = isOperationInProgress ? activeOperation.operation : null;
+
+  const handleDelete = async () => {
+    setDeleting(true);
+    try {
+      await deleteRepo(repo.id, true);
+      onSettingsSaved(); // refresh list
+    } catch {
+      // Error handling — refresh anyway to show current state
+      onSettingsSaved();
+    } finally {
+      setDeleting(false);
+      setConfirmDelete(false);
+    }
+  };
 
   return (
     <div className="card repo-sync-card">
@@ -600,7 +617,39 @@ function RepoCard({
         >
           {settingsOpen ? "Hide Settings" : "Settings"}
         </button>
+        <button
+          className="btn btn-sm btn-danger"
+          onClick={() => setConfirmDelete(true)}
+          aria-label={`Remove ${projectName} from Repo Sync`}
+          type="button"
+        >
+          Remove
+        </button>
       </div>
+      {confirmDelete && (
+        <div className="repo-delete-confirm">
+          <p>
+            Remove <strong>{projectName}</strong> from Repo Sync? This deletes the mirror
+            directory but leaves the workspace code untouched.
+          </p>
+          <button
+            className="btn btn-danger btn-sm"
+            onClick={handleDelete}
+            disabled={deleting}
+            type="button"
+          >
+            {deleting ? "Removing…" : "Confirm Remove"}
+          </button>
+          <button
+            className="btn btn-sm"
+            onClick={() => setConfirmDelete(false)}
+            disabled={deleting}
+            type="button"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
       <div className="card-body">
         {repo.remote_url && (
           <p className="card-description">{repo.remote_url}</p>
