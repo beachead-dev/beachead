@@ -398,6 +398,20 @@ Deferred improvements, bug fixes, and future features for implementation.
 ### ~~Repo Sync — Isolated Git Remote Management~~ ✅ DONE
 
 **Completed:** 2026-05-14  
+
+---
+
+### Repo Sync — Configurable Check Interval UI
+
+**Priority:** Low  
+**Affected area:** `src/components/RepoSettingsPanel.tsx`, `src-tauri/src/repo_sync_manager.rs`
+
+**Description:** Add a user-configurable "Check Interval" field to the per-repo settings panel so users can control how often the background checker polls for new commits. Currently the interval is stored in the DB (`check_interval_seconds`, default 300) but there's no UI to change it.
+
+**Implementation:**
+- Add a numeric input field to `RepoSettingsPanel` for check interval (in seconds)
+- Include the value in the `UpdateRepoRequest` when saving settings
+- **Important:** Add backend validation in `update_repo()` to reject values outside the 30–3600 second range (Req 16.8). Currently the field is accepted without range checking.
 **Affected area:** New sidebar menu item, new pages, new backend module, DB schema additions, persona workspace config
 
 **What was done:** Full implementation of isolated git remote management with two-directory architecture (workspace = no remotes, mirror = has remotes + credentials). Git CLI wrapper with timeout, error classification, and credential injection. GIT_ASKPASS credential helper binary with OS keyring integration. Secret scanner for pre-push detection of .env files, private keys, and API tokens. Full sync operations: pull from agent, push to remote, fetch from remote, push to agent. Commit review with cherry-pick and squash support. Background sync status checker with sidebar notification badge. Per-repo configuration (branch strategy, attribution, secret scan mode). Frontend page with scan, enable, sync operations, and settings panel. Export/import support (repos exported, credentials excluded). Property-based tests for git CLI argument building, error classification, and secret scanner pattern matching.
