@@ -259,7 +259,7 @@ fn builtin_agent_definitions() -> Vec<AgentType> {
             is_builtin: true,
             metadata: AgentMetadata {
                 required_secrets: vec!["anthropic".to_string()],
-                auth_methods: vec![AuthMethod::ApiKey, AuthMethod::OAuth],
+                auth_methods: vec![AuthMethod::ApiKey],
                 description: "Anthropic's Claude Code agent for software development".to_string(),
                 supports_interactive_auth: true,
                 mcp_config_path: Some(".mcp.json".to_string()),
@@ -307,7 +307,7 @@ fn builtin_agent_definitions() -> Vec<AgentType> {
             is_builtin: true,
             metadata: AgentMetadata {
                 required_secrets: vec!["cursor".to_string()],
-                auth_methods: vec![AuthMethod::ApiKey, AuthMethod::OAuth],
+                auth_methods: vec![AuthMethod::ApiKey],
                 description: "Cursor AI agent for code editing and generation".to_string(),
                 supports_interactive_auth: true,
                 mcp_config_path: Some(".cursor/mcp.json".to_string()),
@@ -323,7 +323,7 @@ fn builtin_agent_definitions() -> Vec<AgentType> {
             is_builtin: true,
             metadata: AgentMetadata {
                 required_secrets: vec!["droid".to_string()],
-                auth_methods: vec![AuthMethod::ApiKey, AuthMethod::OAuth],
+                auth_methods: vec![AuthMethod::ApiKey],
                 description: "Factory/Droid AI agent for automated development".to_string(),
                 supports_interactive_auth: true,
                 mcp_config_path: Some(".mcp.json".to_string()),
@@ -339,7 +339,7 @@ fn builtin_agent_definitions() -> Vec<AgentType> {
             is_builtin: true,
             metadata: AgentMetadata {
                 required_secrets: vec!["google".to_string()],
-                auth_methods: vec![AuthMethod::ApiKey, AuthMethod::OAuth],
+                auth_methods: vec![AuthMethod::ApiKey],
                 description: "Google's Gemini agent for code and reasoning tasks".to_string(),
                 supports_interactive_auth: true,
                 mcp_config_path: Some(".gemini/settings.json".to_string()),
@@ -507,11 +507,11 @@ mod tests {
 
         let agents = mgr.list().unwrap();
 
-        // Claude Code: requires anthropic, supports ApiKey + OAuth, interactive auth
+        // Claude Code: requires anthropic, supports ApiKey only, interactive auth (OAuth via /login inside sandbox)
         let claude = agents.iter().find(|a| a.name == "Claude Code").unwrap();
         assert_eq!(claude.metadata.required_secrets, vec!["anthropic"]);
         assert!(claude.metadata.auth_methods.contains(&AuthMethod::ApiKey));
-        assert!(claude.metadata.auth_methods.contains(&AuthMethod::OAuth));
+        assert!(!claude.metadata.auth_methods.contains(&AuthMethod::OAuth));
         assert!(claude.metadata.supports_interactive_auth);
 
         // Kiro: no required secrets, device flow only, interactive auth
