@@ -28,3 +28,7 @@ __pycache__/
 
 # Logs
 *.log
+
+# Claude Code
+CLAUDE.md
+CODE_REVIEW.md

@@ -617,6 +617,48 @@ Deferred improvements, bug fixes, and future features for implementation.
 
 ---
 
+### Linter and Formatter Configuration
+
+**Priority:** Medium  
+**Effort:** Low (config setup) + Medium (initial warning triage)  
+**Affected area:** CI pipeline, all source files
+
+**Description:** Add static analysis tooling for all three languages in the project. Should be done alongside CI/CD setup so enforcement is automated from day one.
+
+**Tools to add:**
+- **Rust — Clippy:** Add `#![warn(clippy::pedantic, clippy::nursery, clippy::unwrap_used)]` to `main.rs`. Add `clippy.toml` if needed for project-specific allows. Run `cargo clippy -- -D warnings` in CI. Expect 100+ initial warnings to triage (most will be `module_name_repetitions`, `missing_errors_doc`, `must_use_candidate`).
+- **Rust — rustfmt:** Already added `rustfmt.toml`. Run `cargo fmt --check` in CI.
+- **TypeScript — ESLint:** Add `eslint` + `@typescript-eslint/eslint-plugin` + `eslint-plugin-react-hooks`. Configure `eslint.config.mjs`. Add `"lint": "eslint src --ext .ts,.tsx"` to package.json. Expect ~50 initial warnings (unused vars in tests, missing return types).
+- **Python — Ruff:** Add `[tool.ruff]` section to `pyproject.toml` with `select = ["E", "F", "B", "S", "I", "ANN"]`. Run `ruff check` in CI. Expect minimal issues (codebase is already clean).
+
+**Implementation order:**
+1. Set up CI/CD first (prerequisite — no point adding configs without enforcement)
+2. Add ruff config (Python — fewest expected issues, quick win)
+3. Add ESLint config (TypeScript — moderate triage)
+4. Add Clippy enforcement (Rust — most triage, do last)
+
+**Scope:** Config files are 5 minutes each. Initial warning triage is 2–4 hours total across all three.
+
+---
+
+### RepoSyncManager Encapsulation Refactor
+
+**Priority:** Low  
+**Effort:** Low-Medium (30–60 minutes)  
+**Affected area:** `src-tauri/src/repo_sync_manager.rs`, `src-tauri/src/routes/repo_sync.rs`
+
+**Problem:** All fields on `RepoSyncManager` are `pub`, violating Rust API Guidelines (C-STRUCT-PRIVATE). This exposes internal state — notably `check_handle: Option<JoinHandle<()>>` which lets callers abort the background sync task, and `mirrors_dir: RwLock<PathBuf>` which lets callers bypass validation in `update_mirrors_dir()`.
+
+**Solution:**
+1. Make all fields `pub(crate)` or private
+2. Add getter methods where external access is needed: `db()`, `git()`, `get_mirrors_dir()`, `get_cached_status()`
+3. Update route handlers in `routes/repo_sync.rs` to use getters instead of direct field access
+4. Keep `cached_status` accessible via a read-only getter (the `DashMap` is already concurrent-safe)
+
+**Risk:** Low. All callers are within the same crate. This is a mechanical refactor with no behavior change.
+
+---
+
 ### Website (beachead.net)
 
 **Priority:** Medium  
