@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -53,6 +54,7 @@ class VectorStore:
         self._data_dir = data_dir
         self._dimension = dimension
         self._data_dir.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()
 
         self._db_path = self._data_dir / "metadata.db"
         self._index_path = self._data_dir / "vectors.index"
@@ -129,17 +131,18 @@ class VectorStore:
         # Normalize for cosine similarity
         normalized = self._normalize(embedding.astype(np.float32)).reshape(1, -1)
 
-        # Add to FAISS index
-        faiss_idx = self._index.ntotal
-        self._index.add(normalized)
+        with self._lock:
+            # Add to FAISS index
+            faiss_idx = self._index.ntotal
+            self._index.add(normalized)
 
-        # Persist metadata
-        self._db.execute(
-            "INSERT INTO entries (id, text, metadata, faiss_idx, created_at) VALUES (?, ?, ?, ?, ?)",
-            (entry_id, text, json.dumps(meta), faiss_idx, created_at),
-        )
-        self._db.commit()
-        self._save_index()
+            # Persist metadata
+            self._db.execute(
+                "INSERT INTO entries (id, text, metadata, faiss_idx, created_at) VALUES (?, ?, ?, ?, ?)",
+                (entry_id, text, json.dumps(meta), faiss_idx, created_at),
+            )
+            self._db.commit()
+            self._save_index()
 
         return entry_id
 
@@ -153,31 +156,33 @@ class VectorStore:
         Returns:
             List of SearchResult ordered by descending similarity.
         """
-        if self._index.ntotal == 0:
-            return []
-
-        # Clamp top_k to available entries
-        k = min(top_k, self._index.ntotal)
-
         normalized = self._normalize(query_embedding.astype(np.float32)).reshape(1, -1)
-        scores, indices = self._index.search(normalized, k)
 
-        results = []
-        for score, idx in zip(scores[0], indices[0]):
-            if idx == -1:
-                continue
-            row = self._db.execute(
-                "SELECT id, text, metadata, created_at FROM entries WHERE faiss_idx = ?",
-                (int(idx),),
-            ).fetchone()
-            if row:
-                entry = MemoryEntry(
-                    id=row[0],
-                    text=row[1],
-                    metadata=json.loads(row[2]),
-                    created_at=row[3],
-                )
-                results.append(SearchResult(entry=entry, score=float(score)))
+        with self._lock:
+            if self._index.ntotal == 0:
+                return []
+
+            # Clamp top_k to available entries
+            k = min(top_k, self._index.ntotal)
+
+            scores, indices = self._index.search(normalized, k)
+
+            results = []
+            for score, idx in zip(scores[0], indices[0]):
+                if idx == -1:
+                    continue
+                row = self._db.execute(
+                    "SELECT id, text, metadata, created_at FROM entries WHERE faiss_idx = ?",
+                    (int(idx),),
+                ).fetchone()
+                if row:
+                    entry = MemoryEntry(
+                        id=row[0],
+                        text=row[1],
+                        metadata=json.loads(row[2]),
+                        created_at=row[3],
+                    )
+                    results.append(SearchResult(entry=entry, score=float(score)))
 
         return results
 
@@ -187,9 +192,10 @@ class VectorStore:
         Returns:
             List of all MemoryEntry objects, ordered by creation time.
         """
-        rows = self._db.execute(
-            "SELECT id, text, metadata, created_at FROM entries ORDER BY created_at DESC"
-        ).fetchall()
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT id, text, metadata, created_at FROM entries ORDER BY created_at DESC"
+            ).fetchall()
         return [
             MemoryEntry(
                 id=row[0],
@@ -200,6 +206,34 @@ class VectorStore:
             for row in rows
         ]
 
+    def list_paginated(self, limit: int, offset: int) -> tuple[list[MemoryEntry], int]:
+        """Return a paginated slice of memory entries.
+
+        Args:
+            limit: Maximum number of entries to return.
+            offset: Number of entries to skip.
+
+        Returns:
+            Tuple of (entries, total_count).
+        """
+        with self._lock:
+            total_row = self._db.execute("SELECT COUNT(*) FROM entries").fetchone()
+            total_count = total_row[0] if total_row else 0
+
+            rows = self._db.execute(
+                "SELECT id, text, metadata, created_at FROM entries ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                (limit, offset),
+            ).fetchall()
+        return [
+            MemoryEntry(
+                id=row[0],
+                text=row[1],
+                metadata=json.loads(row[2]),
+                created_at=row[3],
+            )
+            for row in rows
+        ], total_count
+
     def get(self, entry_id: str) -> MemoryEntry | None:
         """Get a single entry by ID.
 
@@ -209,10 +243,11 @@ class VectorStore:
         Returns:
             The MemoryEntry if found, None otherwise.
         """
-        row = self._db.execute(
-            "SELECT id, text, metadata, created_at FROM entries WHERE id = ?",
-            (entry_id,),
-        ).fetchone()
+        with self._lock:
+            row = self._db.execute(
+                "SELECT id, text, metadata, created_at FROM entries WHERE id = ?",
+                (entry_id,),
+            ).fetchone()
         if row is None:
             return None
         return MemoryEntry(
@@ -235,18 +270,19 @@ class VectorStore:
         Returns:
             True if the entry was found and deleted, False otherwise.
         """
-        row = self._db.execute(
-            "SELECT faiss_idx FROM entries WHERE id = ?", (entry_id,)
-        ).fetchone()
-        if row is None:
-            return False
+        with self._lock:
+            row = self._db.execute(
+                "SELECT faiss_idx FROM entries WHERE id = ?", (entry_id,)
+            ).fetchone()
+            if row is None:
+                return False
 
-        # Remove from SQLite
-        self._db.execute("DELETE FROM entries WHERE id = ?", (entry_id,))
-        self._db.commit()
+            # Remove from SQLite
+            self._db.execute("DELETE FROM entries WHERE id = ?", (entry_id,))
+            self._db.commit()
 
-        # Rebuild FAISS index from remaining entries
-        self._rebuild_index()
+            # Rebuild FAISS index from remaining entries
+            self._rebuild_index()
         return True
 
     def _rebuild_index(self) -> None:
@@ -285,7 +321,8 @@ class VectorStore:
     @property
     def count(self) -> int:
         """Return the number of stored entries."""
-        row = self._db.execute("SELECT COUNT(*) FROM entries").fetchone()
+        with self._lock:
+            row = self._db.execute("SELECT COUNT(*) FROM entries").fetchone()
         return row[0] if row else 0
 
     def close(self) -> None:

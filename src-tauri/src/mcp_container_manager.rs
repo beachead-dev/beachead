@@ -50,14 +50,18 @@ impl ContainerStatus {
             Self::Failed => "failed",
         }
     }
+}
 
-    pub fn from_str(s: &str) -> Self {
+impl std::str::FromStr for ContainerStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "created" => Self::Created,
-            "running" => Self::Running,
-            "stopped" => Self::Stopped,
-            "failed" => Self::Failed,
-            _ => Self::Failed,
+            "created" => Ok(Self::Created),
+            "running" => Ok(Self::Running),
+            "stopped" => Ok(Self::Stopped),
+            "failed" => Ok(Self::Failed),
+            other => Err(format!("unknown container status: '{}'", other)),
         }
     }
 }
@@ -697,7 +701,7 @@ impl McpContainerManager {
                         port: row.get::<_, i64>(4)? as u16,
                         bearer_token: row.get::<_, String>(5)?,
                         volume_name: row.get::<_, String>(6)?,
-                        status: ContainerStatus::from_str(&row.get::<_, String>(7)?),
+                        status: row.get::<_, String>(7)?.parse::<ContainerStatus>().unwrap_or(ContainerStatus::Failed),
                         created_at: row.get::<_, String>(8)?,
                         updated_at: row.get::<_, String>(9)?,
                     })
@@ -733,7 +737,7 @@ impl McpContainerManager {
                         port: row.get::<_, i64>(4)? as u16,
                         bearer_token: row.get::<_, String>(5)?,
                         volume_name: row.get::<_, String>(6)?,
-                        status: ContainerStatus::from_str(&row.get::<_, String>(7)?),
+                        status: row.get::<_, String>(7)?.parse::<ContainerStatus>().unwrap_or(ContainerStatus::Failed),
                         created_at: row.get::<_, String>(8)?,
                         updated_at: row.get::<_, String>(9)?,
                     })
@@ -777,7 +781,7 @@ impl McpContainerManager {
                         port: row.get::<_, i64>(4)? as u16,
                         bearer_token: row.get::<_, String>(5)?,
                         volume_name: row.get::<_, String>(6)?,
-                        status: ContainerStatus::from_str(&row.get::<_, String>(7)?),
+                        status: row.get::<_, String>(7)?.parse::<ContainerStatus>().unwrap_or(ContainerStatus::Failed),
                         created_at: row.get::<_, String>(8)?,
                         updated_at: row.get::<_, String>(9)?,
                     })

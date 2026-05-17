@@ -76,8 +76,12 @@ export function useWebSocket(
       if (unmountedRef.current) return;
       setReadyState(ReadyState.CLOSED);
       if (reconnect && reconnectCount.current < maxReconnectAttempts) {
+        const delay = Math.min(
+          reconnectInterval * Math.pow(2, reconnectCount.current),
+          30_000,
+        ) + Math.random() * 1000;
         reconnectCount.current += 1;
-        reconnectTimer.current = setTimeout(connect, reconnectInterval);
+        reconnectTimer.current = setTimeout(connect, delay);
       }
     };
 

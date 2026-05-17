@@ -16,15 +16,18 @@ export class ApiError extends Error {
   }
 }
 
+async function extractErrorBody(response: Response): Promise<unknown> {
+  const text = await response.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
+
 async function handleResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
-    const text = await response.text();
-    let body: unknown;
-    try {
-      body = JSON.parse(text);
-    } catch {
-      body = text;
-    }
+    const body = await extractErrorBody(response);
     throw new ApiError(response.status, response.statusText, body);
   }
   const text = await response.text();
@@ -71,13 +74,7 @@ export async function getText(path: string): Promise<string> {
     method: "GET",
   });
   if (!response.ok) {
-    const text = await response.text();
-    let body: unknown;
-    try {
-      body = JSON.parse(text);
-    } catch {
-      body = text;
-    }
+    const body = await extractErrorBody(response);
     throw new ApiError(response.status, response.statusText, body);
   }
   return response.text();
@@ -90,13 +87,7 @@ export async function postForBlob(path: string, body?: unknown): Promise<Blob> {
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   if (!response.ok) {
-    const text = await response.text();
-    let errBody: unknown;
-    try {
-      errBody = JSON.parse(text);
-    } catch {
-      errBody = text;
-    }
+    const errBody = await extractErrorBody(response);
     throw new ApiError(response.status, response.statusText, errBody);
   }
   return response.blob();

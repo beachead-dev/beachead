@@ -44,6 +44,12 @@ pub struct SecretScanner {
     patterns: Vec<SecretPattern>,
 }
 
+impl Default for SecretScanner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SecretScanner {
     /// Create a new SecretScanner with default detection patterns.
     pub fn new() -> Self {

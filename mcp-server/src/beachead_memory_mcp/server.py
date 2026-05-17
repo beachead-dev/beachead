@@ -163,10 +163,7 @@ def memory_list(limit: int = 50, offset: int = 0) -> dict:
         offset = 0
 
     store = _get_vector_store()
-    all_entries = store.list_all()
-
-    # Apply pagination
-    paginated = all_entries[offset : offset + limit]
+    entries, total_count = store.list_paginated(limit, offset)
 
     return {
         "entries": [
@@ -176,9 +173,9 @@ def memory_list(limit: int = 50, offset: int = 0) -> dict:
                 "metadata": e.metadata,
                 "created_at": e.created_at,
             }
-            for e in paginated
+            for e in entries
         ],
-        "total_count": len(all_entries),
+        "total_count": total_count,
         "limit": limit,
         "offset": offset,
     }
@@ -237,12 +234,13 @@ def main():
     # Compatible with all modern MCP clients
     app = mcp.streamable_http_app()
 
-    # Add bearer token auth if configured
-    if BEARER_TOKEN:
-        app.add_middleware(BearerTokenMiddleware, expected_token=BEARER_TOKEN)
-        logger.info("Bearer token authentication enabled")
-    else:
-        logger.warning("No BEACHEAD_BEARER_TOKEN set — running without authentication")
+    # Add bearer token auth — refuse to start without it (fail-closed)
+    if not BEARER_TOKEN:
+        raise RuntimeError(
+            "BEACHEAD_BEARER_TOKEN is not set. Refusing to start without authentication."
+        )
+    app.add_middleware(BearerTokenMiddleware, expected_token=BEARER_TOKEN)
+    logger.info("Bearer token authentication enabled")
 
     config = uvicorn.Config(app, host=HOST, port=PORT, log_level="info")
     server = uvicorn.Server(config)

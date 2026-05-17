@@ -20,7 +20,7 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; connect-src 'self' http://127.0.0.1:9876 ws://127.0.0.1:9876; img-src 'self' data:; style-src 'self' 'unsafe-inline'"
     }
   },
   "bundle": {

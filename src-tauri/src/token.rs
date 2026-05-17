@@ -45,14 +45,18 @@ pub fn validate_token_uniqueness(db: &Database, token: &str) -> Result<bool, Orc
 
 /// Generate a bearer token that is guaranteed unique across all mcp_containers records.
 ///
-/// In the astronomically unlikely event of a collision, regenerates until unique.
+/// Uses a retry cap of 10 attempts. With 256-bit tokens, collision is astronomically
+/// unlikely — this cap exists to satisfy static analysis and prevent theoretical infinite loops.
 pub fn generate_unique_bearer_token(db: &Database) -> Result<String, OrchestratorError> {
-    loop {
+    for _ in 0..10 {
         let token = generate_bearer_token();
         if validate_token_uniqueness(db, &token)? {
             return Ok(token);
         }
     }
+    Err(OrchestratorError::Internal(
+        "token uniqueness check failed after 10 attempts".into(),
+    ))
 }
 
 #[cfg(test)]
