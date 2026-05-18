@@ -618,6 +618,12 @@ body {
   margin-left: 0.5rem;
 }
 
+.badge-info {
+  background: #e8eaf6;
+  color: #3949ab;
+  margin-left: 0.5rem;
+}
+
 /* Status indicators */
 .status-dot {
   display: inline-block;
@@ -1989,6 +1995,11 @@ body {
     color: #90caf9;
   }
 
+  :root:not([data-theme="light"]) .badge-info {
+    background: rgba(57, 73, 171, 0.2);
+    color: #9fa8da;
+  }
+
   :root:not([data-theme="light"]) .badge-readonly {
     background: rgba(230, 81, 0, 0.2);
     color: #ffab91;
@@ -2021,6 +2032,11 @@ body {
 :root[data-theme="dark"] .badge-primary {
   background: rgba(21, 101, 192, 0.2);
   color: #90caf9;
+}
+
+:root[data-theme="dark"] .badge-info {
+  background: rgba(57, 73, 171, 0.2);
+  color: #9fa8da;
 }
 
 :root[data-theme="dark"] .badge-readonly {

@@ -388,9 +388,17 @@ export function PersonasPage() {
   const hasMissingSecrets = (persona: Persona) => {
     const agent = agents.find((a) => a.id === persona.agent_type_id);
     if (!agent) return false;
+    // Agents with interactive auth (OAuth/device flow inside sandbox) don't need pre-configured secrets
+    if (agent.metadata.supports_interactive_auth) return false;
     return agent.metadata.required_secrets.some(
       (s) => !secrets.find((sec) => sec.service === s && sec.configured)
     );
+  };
+
+  const usesInteractiveAuth = (persona: Persona) => {
+    const agent = agents.find((a) => a.id === persona.agent_type_id);
+    if (!agent) return false;
+    return agent.metadata.supports_interactive_auth;
   };
 
   const getContainerStatus = (persona: Persona): McpContainer | undefined => {
@@ -431,6 +439,9 @@ export function PersonasPage() {
                   {persona.name}
                   {hasMissingSecrets(persona) && (
                     <span className="warning-badge" title="Missing required agent secrets">⚠️</span>
+                  )}
+                  {usesInteractiveAuth(persona) && (
+                    <span className="badge badge-info" title="This agent authenticates interactively inside the sandbox">Sandbox Auth</span>
                   )}
                 </h3>
                 <div className="card-actions">
