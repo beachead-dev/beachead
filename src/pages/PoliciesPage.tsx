@@ -32,6 +32,7 @@ export function PoliciesPage() {
   const [ruleSearch, setRuleSearch] = useState("");
   const [sandboxFilter, setSandboxFilter] = useState("");
   const [view, setView] = useState<"rules" | "log">("rules");
+  const [autoRefresh, setAutoRefresh] = useState(false);
 
   const fetchPolicies = useCallback(async () => {
     try {
@@ -60,9 +61,10 @@ export function PoliciesPage() {
 
   useEffect(() => {
     fetchPolicies();
+    if (!autoRefresh) return;
     const interval = setInterval(fetchPolicies, 30000);
     return () => clearInterval(interval);
-  }, [fetchPolicies]);
+  }, [fetchPolicies, autoRefresh]);
 
   useEffect(() => {
     if (view === "log") {
@@ -131,9 +133,6 @@ export function PoliciesPage() {
         <button className={`tab-btn ${view === "log" ? "active" : ""}`} onClick={() => setView("log")}>
           Traffic Log
         </button>
-        <button className="btn btn-sm" onClick={fetchPolicies} aria-label="Refresh policies" style={{ marginLeft: "auto" }}>
-          Refresh
-        </button>
       </nav>
 
       {view === "rules" && policyState && (
@@ -185,7 +184,20 @@ export function PoliciesPage() {
           </div>
 
           <div className="rule-list">
-            <h3>Active Rules</h3>
+            <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "0.5rem" }}>
+              <h3 style={{ margin: 0 }}>Active Rules</h3>
+              <button className="btn btn-sm" onClick={fetchPolicies} aria-label="Refresh policies">
+                Refresh
+              </button>
+              <label style={{ display: "flex", alignItems: "center", gap: "0.25rem", fontSize: "0.8rem", marginLeft: "auto" }}>
+                <input
+                  type="checkbox"
+                  checked={autoRefresh}
+                  onChange={(e) => setAutoRefresh(e.target.checked)}
+                />
+                Auto-refresh
+              </label>
+            </div>
             <div className="rule-search">
               <input
                 type="text"
