@@ -792,11 +792,41 @@ impl SbxCli {
     }
 
     /// Remove a global policy rule: `sbx policy rm network -g --id <rule_id>`
+    /// For kit-originated rules (id starts with "kit:"), uses --resource since
+    /// kit rules cannot be removed by --id.
     pub async fn policy_remove_rule(
         &self,
         rule_id: &str,
     ) -> Result<(), OrchestratorError> {
-        // Strip "local:" prefix if present — sbx expects just the UUID
+        // Kit rules can't be removed by --id; look up the resource and remove by that
+        if rule_id.starts_with("kit:") {
+            // Get current policy state to find the resource for this kit rule
+            let state = self.policy_ls().await?;
+            let rule = state.rules.iter().find(|r| r.id.as_deref() == Some(rule_id));
+            match rule {
+                Some(r) => {
+                    let resource = &r.target;
+                    let output = self
+                        .exec_multi_command(&["policy", "rm", "network"], &["-g", "--resource", resource])
+                        .await?;
+                    if !output.success {
+                        return Err(OrchestratorError::SbxError(format!(
+                            "sbx policy rm failed: {}",
+                            output.stderr.trim()
+                        )));
+                    }
+                    return Ok(());
+                }
+                None => {
+                    return Err(OrchestratorError::NotFound(format!(
+                        "Policy rule '{}' not found",
+                        rule_id
+                    )));
+                }
+            }
+        }
+
+        // Standard local rules: strip "local:" prefix and remove by UUID
         let id = rule_id.strip_prefix("local:").unwrap_or(rule_id);
         let output = self
             .exec_multi_command(&["policy", "rm", "network"], &["-g", "--id", id])
