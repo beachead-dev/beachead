@@ -380,7 +380,7 @@ exit 1
     #[tokio::test]
     async fn test_remove_sandbox_success() {
         let script = r#"#!/bin/sh
-if [ "$1" = "rm" ] && [ "$2" = "sandbox-to-remove" ]; then
+if [ "$1" = "rm" ] && [ "$2" = "--force" ] && [ "$3" = "sandbox-to-remove" ]; then
     exit 0
 fi
 echo "unexpected command: $@" >&2
@@ -414,7 +414,7 @@ exit 1
     async fn test_remove_sandbox_not_found() {
         let script = r#"#!/bin/sh
 if [ "$1" = "rm" ]; then
-    echo "No such sandbox: $2" >&2
+    echo "No such sandbox: $3" >&2
     exit 1
 fi
 echo "unexpected command: $@" >&2

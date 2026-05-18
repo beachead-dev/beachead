@@ -471,7 +471,7 @@ impl SbxCli {
 
     /// Remove a sandbox: `sbx rm <sandbox_id>`
     pub async fn rm(&self, sandbox_id: &str) -> Result<(), OrchestratorError> {
-        let output = self.exec_command("rm", &[sandbox_id]).await?;
+        let output = self.exec_command("rm", &["--force", sandbox_id]).await?;
         if !output.success {
             return Err(OrchestratorError::SbxError(format!(
                 "sbx rm failed: {}",
