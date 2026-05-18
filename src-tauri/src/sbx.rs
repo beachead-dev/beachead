@@ -159,7 +159,8 @@ pub struct SbxCli {
 pub fn build_create_args(args: &SbxCreateArgs) -> Vec<String> {
     let mut cmd_args: Vec<String> = Vec::new();
 
-    cmd_args.push(args.agent.clone());
+    // Flags must come before positional args per new CLI syntax:
+    // sbx create [flags] AGENT PATH [PATH...]
 
     // Quiet mode to get just the sandbox name on stdout
     cmd_args.push("-q".to_string());
@@ -178,6 +179,9 @@ pub fn build_create_args(args: &SbxCreateArgs) -> Vec<String> {
         cmd_args.push("-t".to_string());
         cmd_args.push(template.clone());
     }
+
+    // Agent (positional)
+    cmd_args.push(args.agent.clone());
 
     // Workspace path as positional argument
     cmd_args.push(args.workspace.to_string_lossy().to_string());
@@ -391,10 +395,10 @@ impl SbxCli {
     pub async fn run(&self, args: &SbxRunArgs) -> Result<String, OrchestratorError> {
         let mut cmd_args: Vec<String> = Vec::new();
 
-        // Agent identifier
-        cmd_args.push(args.agent.clone());
+        // Flags must come before positional args per new CLI syntax:
+        // sbx run [flags] AGENT [PATH...] [-- AGENT_ARGS...]
 
-        // Kit paths (flags must come before positional args)
+        // Kit paths
         for kit_path in &args.kit_paths {
             cmd_args.push("--kit".to_string());
             cmd_args.push(kit_path.to_string_lossy().to_string());
@@ -412,7 +416,10 @@ impl SbxCli {
             cmd_args.push(template.clone());
         }
 
-        // Workspace path (positional argument after agent and flags)
+        // Agent identifier (positional)
+        cmd_args.push(args.agent.clone());
+
+        // Workspace path (positional argument after agent)
         cmd_args.push(args.workspace.to_string_lossy().to_string());
 
         // Agent args after separator
@@ -730,12 +737,13 @@ impl SbxCli {
     }
 
     /// Allow network access: `sbx policy allow network "<target>"`
+    /// Allow network access globally: `sbx policy allow network -g "<target>"`
     pub async fn policy_allow_network(
         &self,
         target: &str,
     ) -> Result<(), OrchestratorError> {
         let output = self
-            .exec_multi_command(&["policy", "allow", "network"], &[target])
+            .exec_multi_command(&["policy", "allow", "network"], &["-g", target])
             .await?;
         if !output.success {
             return Err(OrchestratorError::SbxError(format!(
@@ -746,13 +754,13 @@ impl SbxCli {
         Ok(())
     }
 
-    /// Deny network access: `sbx policy deny network "<target>"`
+    /// Deny network access globally: `sbx policy deny network -g "<target>"`
     pub async fn policy_deny_network(
         &self,
         target: &str,
     ) -> Result<(), OrchestratorError> {
         let output = self
-            .exec_multi_command(&["policy", "deny", "network"], &[target])
+            .exec_multi_command(&["policy", "deny", "network"], &["-g", target])
             .await?;
         if !output.success {
             return Err(OrchestratorError::SbxError(format!(
@@ -763,7 +771,7 @@ impl SbxCli {
         Ok(())
     }
 
-    /// Remove a policy rule: `sbx policy rm network --id <rule_id>`
+    /// Remove a global policy rule: `sbx policy rm network -g --id <rule_id>`
     pub async fn policy_remove_rule(
         &self,
         rule_id: &str,
@@ -771,7 +779,7 @@ impl SbxCli {
         // Strip "local:" prefix if present — sbx expects just the UUID
         let id = rule_id.strip_prefix("local:").unwrap_or(rule_id);
         let output = self
-            .exec_multi_command(&["policy", "rm", "network"], &["--id", id])
+            .exec_multi_command(&["policy", "rm", "network"], &["-g", "--id", id])
             .await?;
         if !output.success {
             return Err(OrchestratorError::SbxError(format!(
@@ -815,10 +823,10 @@ impl SbxCli {
         Ok(entries)
     }
 
-    /// Reset all policy rules: `sbx policy reset`
+    /// Reset all policy rules: `sbx policy reset --force`
     pub async fn policy_reset(&self) -> Result<(), OrchestratorError> {
         let output = self
-            .exec_multi_command(&["policy", "reset"], &[])
+            .exec_multi_command(&["policy", "reset"], &["--force"])
             .await?;
         if !output.success {
             return Err(OrchestratorError::SbxError(format!(

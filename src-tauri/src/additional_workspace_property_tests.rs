@@ -1118,12 +1118,22 @@ mod tests {
             // (i.e., it's not preceded by another positional workspace path)
             // All elements before primary_idx should be flags/options or their values
             prop_assert_eq!(
-                &cmd_args[0], &agent_name,
-                "First arg should be the agent name"
+                &cmd_args[0], "-q",
+                "First arg should be -q (quiet mode)"
             );
-            prop_assert_eq!(
-                &cmd_args[1], "-q",
-                "Second arg should be -q (quiet mode)"
+
+            // Agent name should appear before the primary workspace (as first positional arg after flags)
+            let agent_idx = cmd_args.iter().position(|a| *a == agent_name);
+            prop_assert!(
+                agent_idx.is_some(),
+                "Agent name '{}' must appear in the args vector. Args: {:?}",
+                agent_name, cmd_args
+            );
+            let agent_idx = agent_idx.unwrap();
+            prop_assert!(
+                agent_idx < primary_idx,
+                "Agent name should appear before primary workspace. agent_idx={}, primary_idx={}",
+                agent_idx, primary_idx
             );
         }
     }

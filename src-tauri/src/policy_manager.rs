@@ -234,7 +234,7 @@ exit 1
     #[tokio::test]
     async fn test_add_rule_allow() {
         let script = r#"#!/bin/sh
-if [ "$1" = "policy" ] && [ "$2" = "allow" ] && [ "$3" = "network" ] && [ "$4" = "127.0.0.1:8080" ]; then
+if [ "$1" = "policy" ] && [ "$2" = "allow" ] && [ "$3" = "network" ] && [ "$4" = "-g" ] && [ "$5" = "127.0.0.1:8080" ]; then
     exit 0
 fi
 exit 1
@@ -247,7 +247,7 @@ exit 1
     #[tokio::test]
     async fn test_add_rule_deny() {
         let script = r#"#!/bin/sh
-if [ "$1" = "policy" ] && [ "$2" = "deny" ] && [ "$3" = "network" ] && [ "$4" = "evil.com" ]; then
+if [ "$1" = "policy" ] && [ "$2" = "deny" ] && [ "$3" = "network" ] && [ "$4" = "-g" ] && [ "$5" = "evil.com" ]; then
     exit 0
 fi
 exit 1
@@ -314,7 +314,7 @@ exit 1
     #[tokio::test]
     async fn test_remove_rule_success() {
         let script = r#"#!/bin/sh
-if [ "$1" = "policy" ] && [ "$2" = "rm" ] && [ "$3" = "network" ] && [ "$4" = "--id" ] && [ "$5" = "rule-123" ]; then
+if [ "$1" = "policy" ] && [ "$2" = "rm" ] && [ "$3" = "network" ] && [ "$4" = "-g" ] && [ "$5" = "--id" ] && [ "$6" = "rule-123" ]; then
     exit 0
 fi
 exit 1
@@ -361,7 +361,7 @@ exit 1
     #[tokio::test]
     async fn test_remove_rule_strips_local_prefix() {
         let script = r#"#!/bin/sh
-if [ "$1" = "policy" ] && [ "$2" = "rm" ] && [ "$3" = "network" ] && [ "$4" = "--id" ] && [ "$5" = "5fa4ef3f-009e-4ffb-8812-1ca77e211eff" ]; then
+if [ "$1" = "policy" ] && [ "$2" = "rm" ] && [ "$3" = "network" ] && [ "$4" = "-g" ] && [ "$5" = "--id" ] && [ "$6" = "5fa4ef3f-009e-4ffb-8812-1ca77e211eff" ]; then
     exit 0
 fi
 exit 1
