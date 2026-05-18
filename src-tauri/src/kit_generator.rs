@@ -141,8 +141,12 @@ impl KitGenerator {
         let has_memory = mcp_config.is_some();
         let has_additional = !persona.mcp_servers.is_empty();
 
+        // Always emit the MCP config file to ensure stale entries from previous
+        // sessions are overwritten (e.g., memory server removed but file persists).
         if !has_memory && !has_additional {
-            return None;
+            // Write an empty config to clear any stale .mcp.json from prior sessions
+            let empty = serde_json::json!({ "mcpServers": {} });
+            return Some(serde_json::to_string_pretty(&empty).unwrap_or_default());
         }
 
         let mut servers = serde_json::Map::new();
@@ -255,8 +259,9 @@ mod tests {
         assert!(content.contains("kind: mixin"));
         assert!(content.contains("name: persona-test-agent"));
         assert!(content.contains("BEACHEAD_PERSONA: \"test-agent\""));
-        // No initFiles or network when no MCP servers
-        assert!(!content.contains("initFiles:"));
+        // Should have initFiles with empty mcpServers to clear stale configs
+        assert!(content.contains("initFiles:"));
+        assert!(content.contains("mcpServers"));
         assert!(!content.contains("network:"));
         // No memory field when memory disabled
         assert!(!content.contains("memory: |"));
@@ -673,9 +678,11 @@ mod tests {
                         );
                     }
                 } else {
+                    // Even with no MCP servers, initFiles is emitted with empty config
+                    // to clear stale .mcp.json from prior sessions
                     prop_assert!(
-                        !content.contains("initFiles:"),
-                        "No MCP servers but initFiles section present"
+                        content.contains("initFiles:"),
+                        "initFiles section should always be present to clear stale configs"
                     );
                 }
 
