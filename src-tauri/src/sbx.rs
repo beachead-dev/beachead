@@ -85,6 +85,9 @@ pub struct PolicyRule {
     pub id: Option<String>,
     pub action: String,
     pub target: String,
+    /// Origin/scope: "local" for global rules, "sandbox:<name>" for per-sandbox rules.
+    #[serde(default)]
+    pub origin: Option<String>,
 }
 
 /// Default policy mode.
@@ -791,53 +794,62 @@ impl SbxCli {
         Ok(())
     }
 
-    /// Remove a global policy rule: `sbx policy rm network -g --id <rule_id>`
-    /// For kit-originated rules (id starts with "kit:"), uses --resource since
-    /// kit rules cannot be removed by --id.
+    /// Remove a policy rule: handles global, per-sandbox, and kit-originated rules.
+    /// - Kit rules (id starts with "kit:"): removed by --resource
+    /// - Per-sandbox rules: uses sandbox name instead of -g
+    /// - Global rules: uses -g --id <uuid>
     pub async fn policy_remove_rule(
         &self,
         rule_id: &str,
     ) -> Result<(), OrchestratorError> {
-        // Kit rules can't be removed by --id; look up the resource and remove by that
-        if rule_id.starts_with("kit:") {
-            // Get current policy state to find the resource for this kit rule
-            let state = self.policy_ls().await?;
-            let rule = state.rules.iter().find(|r| r.id.as_deref() == Some(rule_id));
-            match rule {
-                Some(r) => {
-                    let resource = &r.target;
-                    let output = self
-                        .exec_multi_command(&["policy", "rm", "network"], &["-g", "--resource", resource])
-                        .await?;
-                    if !output.success {
-                        return Err(OrchestratorError::SbxError(format!(
-                            "sbx policy rm failed: {}",
-                            output.stderr.trim()
-                        )));
-                    }
-                    return Ok(());
-                }
-                None => {
-                    return Err(OrchestratorError::NotFound(format!(
-                        "Policy rule '{}' not found",
-                        rule_id
-                    )));
-                }
+        // Look up the rule to determine its origin and resource
+        let state = self.policy_ls().await?;
+        let rule = state.rules.iter().find(|r| r.id.as_deref() == Some(rule_id));
+
+        let rule = match rule {
+            Some(r) => r.clone(),
+            None => {
+                return Err(OrchestratorError::NotFound(format!(
+                    "Policy rule '{}' not found",
+                    rule_id
+                )));
+            }
+        };
+
+        // Determine scope flag: -g for global, sandbox name for per-sandbox
+        let scope_arg = match &rule.origin {
+            Some(origin) if origin.starts_with("sandbox:") => {
+                origin.strip_prefix("sandbox:").unwrap().to_string()
+            }
+            _ => "-g".to_string(),
+        };
+
+        // Kit rules must be removed by --resource; local rules by --id (UUID)
+        if rule_id.starts_with("kit:") || rule_id.starts_with("default-") {
+            let output = self
+                .exec_multi_command(&["policy", "rm", "network"], &[&scope_arg, "--resource", &rule.target])
+                .await?;
+            if !output.success {
+                return Err(OrchestratorError::SbxError(format!(
+                    "sbx policy rm failed: {}",
+                    output.stderr.trim()
+                )));
+            }
+            Ok(())
+        } else {
+            let id = rule_id.strip_prefix("local:").unwrap_or(rule_id);
+            let output = self
+                .exec_multi_command(&["policy", "rm", "network"], &[&scope_arg, "--id", id])
+                .await?;
+            if !output.success {
+                Err(OrchestratorError::SbxError(format!(
+                    "sbx policy rm failed: {}",
+                    output.stderr.trim()
+                )))
+            } else {
+                Ok(())
             }
         }
-
-        // Standard local rules: strip "local:" prefix and remove by UUID
-        let id = rule_id.strip_prefix("local:").unwrap_or(rule_id);
-        let output = self
-            .exec_multi_command(&["policy", "rm", "network"], &["-g", "--id", id])
-            .await?;
-        if !output.success {
-            return Err(OrchestratorError::SbxError(format!(
-                "sbx policy rm failed: {}",
-                output.stderr.trim()
-            )));
-        }
-        Ok(())
     }
 
     /// Get policy traffic log: `sbx policy log [SANDBOX] [--limit <n>]`
@@ -1203,6 +1215,7 @@ fn parse_policy_text(output: &str) -> PolicyState {
     let mut rules = Vec::new();
     let mut current_name: Option<String> = None;
     let mut current_decision: Option<String> = None;
+    let mut current_origin: Option<String> = None;
     let mut current_resources: Vec<String> = Vec::new();
 
     for line in output.lines() {
@@ -1216,6 +1229,7 @@ fn parse_policy_text(output: &str) -> PolicyState {
                             id: Some(name.clone()),
                             action: decision.clone(),
                             target: resource.clone(),
+                            origin: current_origin.clone(),
                         });
                     }
                 }
@@ -1223,6 +1237,7 @@ fn parse_policy_text(output: &str) -> PolicyState {
             if line.starts_with("NAME") {
                 current_name = None;
                 current_decision = None;
+                current_origin = None;
                 current_resources = Vec::new();
                 continue;
             }
@@ -1230,6 +1245,7 @@ fn parse_policy_text(output: &str) -> PolicyState {
                 // End of current rule's resources
                 current_name = None;
                 current_decision = None;
+                current_origin = None;
                 current_resources = Vec::new();
             }
             continue;
@@ -1248,6 +1264,7 @@ fn parse_policy_text(output: &str) -> PolicyState {
                             id: Some(name.clone()),
                             action: decision.clone(),
                             target: resource.clone(),
+                            origin: current_origin.clone(),
                         });
                     }
                 }
@@ -1258,15 +1275,18 @@ fn parse_policy_text(output: &str) -> PolicyState {
             // Expected: NAME TYPE ORIGIN DECISION STATUS RESOURCE...
             if parts.len() >= 6 {
                 current_name = Some(parts[0].to_string());
+                current_origin = Some(parts[2].to_string()); // ORIGIN column
                 current_decision = Some(parts[3].to_string()); // DECISION column
                 current_resources = vec![parts[5..].join(" ")];
             } else if parts.len() >= 4 {
                 current_name = Some(parts[0].to_string());
+                current_origin = Some(parts.get(2).unwrap_or(&"local").to_string());
                 current_decision = Some(parts[3].to_string());
                 current_resources = Vec::new();
             } else {
                 current_name = None;
                 current_decision = None;
+                current_origin = None;
                 current_resources = Vec::new();
             }
         } else {
@@ -1286,6 +1306,7 @@ fn parse_policy_text(output: &str) -> PolicyState {
                     id: Some(name.clone()),
                     action: decision.clone(),
                     target: resource.clone(),
+                    origin: current_origin.clone(),
                 });
             }
         }
