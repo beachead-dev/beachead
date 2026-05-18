@@ -224,6 +224,24 @@ Deferred improvements, bug fixes, and future features for implementation.
 
 ## UX Improvements
 
+### Move Templates Tab from Agents to Docker Page
+
+**Priority:** Medium  
+**Effort:** Low  
+**Affected area:** `src/pages/AgentsPage.tsx`, `src/pages/DockerPage.tsx`
+
+**Problem:** The Templates tab is currently under Agents, but templates are Docker sandbox images — they're a Docker resource, not an agent configuration. The Agents page should focus on agent types and credentials. The Docker page already manages sandboxes and containers, so templates belong there.
+
+**Implementation:**
+1. Remove from AgentsPage: delete `TemplateInfo` interface, `templates` state, `handleRemoveTemplate`, the templates tab button, and the `{view === "templates" && ...}` render block. Remove `api.get<TemplateInfo[]>("/api/templates")` from `fetchData`.
+2. Add to DockerPage: create a `TemplatesTab` component following the same pattern as `SandboxesTab`/`ContainersTab` (usePolling, action handlers, table rendering). Add "templates" to the `DockerTab` type union and add the tab button.
+3. Add "Clean up old images" button: identify templates with the same tag but different image IDs (stale versions from sbx updates). Button removes all but the newest for each tag. Uses `api.del(/api/templates/${encodeURIComponent(tag)})` — may need a backend change to target by image ID rather than tag if multiple share the same tag.
+4. Update AgentsPage tab default to `"agents" | "credentials"` (remove "templates" from the union type).
+
+**Note:** The `sbx template rm` command removes by tag, but multiple entries can share the same tag (different image IDs from updates). May need to investigate whether `sbx template rm` removes all entries for a tag or just one. If it removes all, the "clean up" button just removes and re-pulls. If it targets a specific image ID, the API may need a new parameter.
+
+---
+
 ### No Visual Indicator When Agent Exits
 
 **Priority:** Medium  
