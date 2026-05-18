@@ -33,6 +33,8 @@ export function PoliciesPage() {
   const [sandboxFilter, setSandboxFilter] = useState("");
   const [view, setView] = useState<"rules" | "log">("rules");
   const [autoRefresh, setAutoRefresh] = useState(false);
+  const [sortColumn, setSortColumn] = useState<"id" | "action" | "target">("id");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
 
   const fetchPolicies = useCallback(async () => {
     try {
@@ -100,6 +102,20 @@ export function PoliciesPage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to remove rule");
     }
+  };
+
+  const handleSort = (column: "id" | "action" | "target") => {
+    if (sortColumn === column) {
+      setSortDirection(sortDirection === "asc" ? "desc" : "asc");
+    } else {
+      setSortColumn(column);
+      setSortDirection("asc");
+    }
+  };
+
+  const sortIndicator = (column: "id" | "action" | "target") => {
+    if (sortColumn !== column) return "";
+    return sortDirection === "asc" ? " ▲" : " ▼";
   };
 
   if (loading) {
@@ -213,9 +229,9 @@ export function PoliciesPage() {
               <table className="rules-table" aria-label="Policy rules">
                 <thead>
                   <tr>
-                    <th>Rule</th>
-                    <th>Action</th>
-                    <th>Target</th>
+                    <th onClick={() => handleSort("id")} style={{ cursor: "pointer" }}>Rule{sortIndicator("id")}</th>
+                    <th onClick={() => handleSort("action")} style={{ cursor: "pointer" }}>Action{sortIndicator("action")}</th>
+                    <th onClick={() => handleSort("target")} style={{ cursor: "pointer" }}>Target{sortIndicator("target")}</th>
                     <th></th>
                   </tr>
                 </thead>
@@ -229,6 +245,12 @@ export function PoliciesPage() {
                         (rule.id && rule.id.toLowerCase().includes(search)) ||
                         rule.action.toLowerCase().includes(search)
                       );
+                    })
+                    .sort((a, b) => {
+                      const aVal = (sortColumn === "id" ? a.id || "" : a[sortColumn]).toLowerCase();
+                      const bVal = (sortColumn === "id" ? b.id || "" : b[sortColumn]).toLowerCase();
+                      const cmp = aVal.localeCompare(bVal);
+                      return sortDirection === "asc" ? cmp : -cmp;
                     })
                     .map((rule, i) => (
                     <tr key={`${rule.id}-${i}`}>
