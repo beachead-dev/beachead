@@ -210,10 +210,11 @@ impl SessionManager {
             db_ops::update_session_sandbox_id(conn, &session_id, &sandbox_id)
         })?;
 
-        // Allow network access to MCP memory container if configured
+        // Allow network access to MCP memory container if configured (scoped to this sandbox)
         if let Some(ref config) = mcp_config {
             let target = format!("localhost:{}", config.port);
-            if let Err(e) = self.sbx.policy_allow_network(&target).await {
+            let sandbox_name = crate::sbx::extract_sandbox_name(&sandbox_id);
+            if let Err(e) = self.sbx.policy_allow_network_for_sandbox(&sandbox_name, &target).await {
                 eprintln!("Warning: failed to allow network for MCP port {}: {}", config.port, e);
             }
         }

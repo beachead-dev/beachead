@@ -754,6 +754,26 @@ impl SbxCli {
         Ok(())
     }
 
+    /// Allow network access scoped to a specific sandbox: `sbx policy allow network <sandbox> "<target>"`
+    /// The rule is automatically cleaned up when the sandbox is removed.
+    pub async fn policy_allow_network_for_sandbox(
+        &self,
+        sandbox_name: &str,
+        target: &str,
+    ) -> Result<(), OrchestratorError> {
+        let output = self
+            .exec_multi_command(&["policy", "allow", "network"], &[sandbox_name, target])
+            .await?;
+        if !output.success {
+            return Err(OrchestratorError::SbxError(format!(
+                "sbx policy allow network (sandbox '{}') failed: {}",
+                sandbox_name,
+                output.stderr.trim()
+            )));
+        }
+        Ok(())
+    }
+
     /// Deny network access globally: `sbx policy deny network -g "<target>"`
     pub async fn policy_deny_network(
         &self,
