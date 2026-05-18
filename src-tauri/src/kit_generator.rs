@@ -148,10 +148,10 @@ impl KitGenerator {
         let mut servers = serde_json::Map::new();
 
         // Memory MCP server
-        // Auth is via token query parameter embedded in the URL.
-        // The MCP server validates the token on each request.
-        // "type": "http" is required for Kiro and other agents to recognize this
-        // as an HTTP-based MCP server (vs stdio-based command servers).
+        // Auth is provided via both mechanisms for maximum client compatibility:
+        // 1. Token as URL query parameter (works for clients that preserve query params)
+        // 2. Authorization header (required by Claude Code and other header-aware clients)
+        // The MCP server accepts either method (checks query param first, header as fallback).
         if let Some(config) = mcp_config {
             let mut memory_server = serde_json::Map::new();
             memory_server.insert(
@@ -161,6 +161,17 @@ impl KitGenerator {
             memory_server.insert(
                 "url".to_string(),
                 serde_json::Value::String(config.url.clone()),
+            );
+
+            // Add Authorization header for clients that don't pass query params through
+            let mut headers = serde_json::Map::new();
+            headers.insert(
+                "Authorization".to_string(),
+                serde_json::Value::String(format!("Bearer {}", config.bearer_token)),
+            );
+            memory_server.insert(
+                "headers".to_string(),
+                serde_json::Value::Object(headers),
             );
 
             servers.insert("memory".to_string(), serde_json::Value::Object(memory_server));
@@ -273,9 +284,10 @@ mod tests {
         assert!(content.contains("memory"));
         assert!(content.contains("host.docker.internal:9100/mcp?token=secret-token-123"));
 
-        // Auth is via query parameter in URL, not via headers
-        assert!(!content.contains("Authorization"));
-        assert!(!content.contains("headers"));
+        // Auth is via both query parameter in URL and Authorization header
+        assert!(content.contains("host.docker.internal:9100/mcp?token=secret-token-123"));
+        assert!(content.contains("Authorization"));
+        assert!(content.contains("Bearer secret-token-123"));
 
         // Should NOT have network allowedDomains (restrictive allowlist removed)
         assert!(!content.contains("network:"));
@@ -674,10 +686,10 @@ mod tests {
                         "McpConfig URL '{}' not found in spec.yaml",
                         config.url
                     );
-                    // Memory server should not have bearer token in the config
+                    // Memory server should include bearer token in Authorization header
                     prop_assert!(
-                        !content.contains(&format!("Bearer {}", config.bearer_token)),
-                        "Memory MCP bearer token should not be in spec.yaml"
+                        content.contains(&format!("Bearer {}", config.bearer_token)),
+                        "Memory MCP Authorization header not found in spec.yaml"
                     );
                 }
 
