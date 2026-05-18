@@ -69,10 +69,22 @@ impl KitGenerator {
     fn build_spec_yaml(&self, persona: &Persona, mcp_config: Option<&McpConfig>, mcp_config_path: Option<&str>) -> String {
         let mut yaml = String::new();
 
+        // Kit manifest name must be lowercase alphanumeric with hyphens, 1-64 chars
+        let sanitized_name: String = format!("persona-{}", persona.name)
+            .to_lowercase()
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '-' })
+            .collect::<String>()
+            .replace("--", "-")
+            .trim_matches('-')
+            .chars()
+            .take(64)
+            .collect();
+
         // Header
         yaml.push_str("schemaVersion: \"1\"\n");
         yaml.push_str("kind: mixin\n");
-        yaml.push_str(&format!("name: persona-{}\n", persona.name));
+        yaml.push_str(&format!("name: {}\n", sanitized_name));
         yaml.push_str(&format!(
             "description: Auto-generated kit for persona {}\n",
             persona.name
