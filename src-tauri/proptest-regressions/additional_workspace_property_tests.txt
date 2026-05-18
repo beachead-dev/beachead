@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 8728dac2cde34cc293b81226a09be2c7a53bc4f20ee9a331b36207290dc8abac # shrinks to agent_name = "a", primary_workspace = "/tmp/A/A", additional_workspaces = [], kit_count = 0, kit_paths = [], use_name = false, sandbox_name = "a", use_template = false, template_name = "A"

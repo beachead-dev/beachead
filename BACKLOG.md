@@ -66,17 +66,12 @@ Deferred improvements, bug fixes, and future features for implementation.
 
 ---
 
-### Kit allowedDomains Persists in Global Policy
+### ~~Kit allowedDomains Persists in Global Policy~~ ✅ RESOLVED
 
-**Priority:** Medium  
-**Affected area:** Kit generator, policy management
+**Fixed:** 2026-05-17  
+**Affected area:** Kit generator, policy management, session manager
 
-**Problem:** Domains added via kit `network.allowedDomains` are merged into the global `sbx policy`. They can only be removed by the same kit or by clearing all policies (`sbx policy reset`). Over time, the global policy accumulates allow rules from every kit applied. Removing a sandbox does not remove its kit's policy entries.
-
-**Solution options:**
-1. Track kit-injected domains and manage cleanup via `sbx policy rm` at session removal (requires knowing the rule IDs — may not be exposed)
-2. Accept the accumulation and document it — user manages global policy separately
-3. Stop using kit `allowedDomains` entirely — add MCP port rules via `sbx policy allow network` at session start and `sbx policy rm` at session stop (gives orchestrator explicit control over lifecycle)
+**What was done:** The new sbx release introduced per-sandbox policy scoping. MCP port allow rules are now added with `sbx policy allow network <sandbox-name> localhost:<port>` instead of the global `-g` flag. Per-sandbox rules are automatically cleaned up when the sandbox is removed via `sbx rm`. The kit generator does NOT emit `network.allowedDomains` (was already removed earlier). The orchestrator no longer pollutes the global policy with per-session rules.
 
 ---
 
