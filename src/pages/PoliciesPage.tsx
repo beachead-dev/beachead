@@ -60,6 +60,8 @@ export function PoliciesPage() {
 
   useEffect(() => {
     fetchPolicies();
+    const interval = setInterval(fetchPolicies, 30000);
+    return () => clearInterval(interval);
   }, [fetchPolicies]);
 
   useEffect(() => {
@@ -128,6 +130,9 @@ export function PoliciesPage() {
         </button>
         <button className={`tab-btn ${view === "log" ? "active" : ""}`} onClick={() => setView("log")}>
           Traffic Log
+        </button>
+        <button className="btn btn-sm" onClick={fetchPolicies} aria-label="Refresh policies" style={{ marginLeft: "auto" }}>
+          Refresh
         </button>
       </nav>
 
