@@ -148,7 +148,7 @@ export function SessionsPage() {
       if (!name) {
         // Generate random tag: persona-name + 6 random hex chars
         const tag = Math.random().toString(16).slice(2, 8);
-        name = `${personaName}-${tag}`.replace(/[^a-zA-Z0-9.\-+]/g, "-");
+        name = `${personaName}-${tag}`.replace(/[^a-zA-Z0-9.\-+]/g, "-").toLowerCase();
       }
 
       const resp = await api.post<{ session_id: string; ws_url: string }>("/api/sessions", {
