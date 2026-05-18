@@ -108,9 +108,13 @@ impl SessionManager {
             })?;
 
         // 3. Generate kit (includes agent-specific MCP config at the correct path)
-        // If persona has memory enabled, look up the running MCP container config.
-        // Containers are started at app startup; we just need the connection details.
+        // If persona has memory enabled, ensure the MCP container is running and get config.
         let mcp_config = if persona.memory_enabled {
+            if let Some(ref mgr) = self.mcp_container_manager {
+                if let Err(e) = mgr.ensure_container_running(&persona.id).await {
+                    eprintln!("Warning: failed to ensure MCP container for persona {}: {}", persona.id.0, e);
+                }
+            }
             self.lookup_mcp_config(&persona.id)?
         } else {
             None
