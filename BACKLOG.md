@@ -301,6 +301,27 @@ Deferred improvements, bug fixes, and future features for implementation.
 
 ## Security Items
 
+### Sandbox OAuth Opens Host Browser Without User Consent
+
+**Priority:** Medium  
+**Affected area:** Docker Sandboxes behavior (not directly controllable by Beachhead)
+
+**Problem:** When an agent inside a sandbox initiates an OAuth flow (e.g., Claude Code running `/login`), the Docker Sandboxes proxy automatically opens a browser window on the host machine without any permission prompt from Beachhead. The user has no opportunity to approve or deny the URL before it opens.
+
+This is a Docker Sandboxes architectural behavior — the sandbox daemon proxies URL-open requests from the microVM to the host. Beachhead has no hook into this because it happens below the `sbx` CLI layer.
+
+**Risk:** A compromised or malicious agent could open arbitrary URLs on the host (phishing pages, exploit URLs) without user awareness. The sandbox network policy controls which domains the agent can *reach*, but not which URLs it can ask the host to *open in a browser*.
+
+**Mitigation options:**
+1. **Document the behavior** — Add a note in the Help page and persona creation flow explaining that agents with sandbox auth can open browser windows on the host.
+2. **Network policy restriction** — Use `sbx policy deny network` to restrict which domains the sandbox can reach. This limits what OAuth endpoints are reachable but doesn't prevent the browser-open action itself.
+3. **Monitor sbx releases** — Docker may add a permission prompt or URL allowlist for browser-open requests in future versions. Track their changelog.
+4. **Pre-session warning** — Show a one-time warning when launching a session with an interactive-auth agent: "This agent may open browser windows on your host for authentication."
+
+**Current status:** No fix available at the Beachhead level. This is a Docker Sandboxes platform limitation. Option 4 (pre-session warning) is the most actionable near-term mitigation.
+
+---
+
 ### WebSocket Authentication
 
 **Priority:** Medium  
