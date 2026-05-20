@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 18f77ebb91b39aeba89e04f5c9ddbedf6d9594a9dcde528df0579cb0b887d75c # shrinks to name = "aaa", memory_enabled = false, mcp_servers_raw = [], mcp_config = Some(McpConfig { url: "http://host.docker.internal:1024/mcp?token=AAAa0A0aAa", bearer_token: "AAAa0A0aAa", port: 1024 })
+cc 59203e805bfaaec894d63ed18a008c08c9f08582ccf2da8edf929b8464494b92 # shrinks to name = "aaa", memory_enabled = false, mcp_servers_raw = [], mcp_config = None

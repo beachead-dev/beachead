@@ -11,9 +11,11 @@ use bollard::container::{
     Config, CreateContainerOptions, RemoveContainerOptions,
     StartContainerOptions, StopContainerOptions,
 };
+use bollard::image::CreateImageOptions;
 use bollard::models::{HostConfig, PortBinding};
 use bollard::Docker;
 use chrono::Utc;
+use futures_util::TryStreamExt;
 use rusqlite::params;
 use rusqlite::OptionalExtension;
 
@@ -118,26 +120,34 @@ impl McpContainerManager {
         })
     }
 
-    /// Ensure the MCP Docker image exists locally.
-    ///
-    /// Checks if `beachead-memory-mcp:latest` is available. Returns an error
-    /// if the image is missing — it should have been built by the installer.
+    /// Ensure the MCP Docker image is present locally, pulling from the registry if needed.
     pub async fn ensure_image_available(&self) -> Result<(), OrchestratorError> {
         match self.docker.inspect_image(MCP_IMAGE).await {
-            Ok(_) => Ok(()),
-            Err(bollard::errors::Error::DockerResponseServerError { status_code: 404, .. }) => {
-                Err(OrchestratorError::DockerError(format!(
-                    "MCP image '{}' not found. Please re-run the installer or \
-                     build it manually: docker build -t {} mcp-server/",
-                    MCP_IMAGE, MCP_IMAGE
-                )))
-            }
+            Ok(_) => return Ok(()),
+            Err(bollard::errors::Error::DockerResponseServerError { status_code: 404, .. }) => {}
             Err(e) => {
-                Err(OrchestratorError::DockerError(
+                return Err(OrchestratorError::DockerError(
                     format!("Failed to inspect image '{}': {}", MCP_IMAGE, e),
-                ))
+                ));
             }
         }
+
+        self.docker
+            .create_image(
+                Some(CreateImageOptions {
+                    from_image: MCP_IMAGE,
+                    ..Default::default()
+                }),
+                None,
+                None,
+            )
+            .try_collect::<Vec<_>>()
+            .await
+            .map_err(|e| OrchestratorError::DockerError(
+                format!("Failed to pull MCP image '{}': {}", MCP_IMAGE, e),
+            ))?;
+
+        Ok(())
     }
 
     /// Ensure the MCP container for a persona is running.
