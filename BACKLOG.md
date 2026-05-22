@@ -614,42 +614,6 @@ This is a Docker Sandboxes architectural behavior — the sandbox daemon proxies
 
 ---
 
-### Build Process and CI/CD
-
-**Priority:** High  
-**Effort:** Medium  
-**Affected area:** New CI config files, release automation
-
-**Description:** Set up automated build, test, and release pipeline. Decide on hosting (GitHub, AWS CodeCommit, or both).
-
-**Options to evaluate:**
-
-| Platform | Pros | Cons |
-|----------|------|------|
-| **GitHub Actions** | Free for open source, marketplace actions for Tauri, community standard | Costs for private repos, Microsoft-owned |
-| **AWS CodeCommit + CodePipeline** | Already in AWS ecosystem, private by default | Less community tooling, more setup |
-| **Both** (mirror) | GitHub for community/CI, CodeCommit for private/backup | Maintenance of two remotes |
-
-**Pipeline stages needed:**
-1. **PR checks:** `cargo test`, `cargo clippy`, `npx tsc --noEmit`, `npx vitest run`
-2. **Build matrix:** Linux x86_64, macOS x86_64, macOS ARM64, Windows x86_64
-3. **Release:** Tag-triggered, builds all platforms, uploads artifacts
-4. **Signing:** Code signing for macOS (.dmg) and Windows (.msi)
-
-**Tauri-specific:**
-- Use `tauri-apps/tauri-action` GitHub Action for cross-platform builds
-- macOS requires Apple Developer certificate for notarization
-- Windows requires code signing certificate for SmartScreen trust
-- Linux builds need the webkit2gtk dev packages in CI
-
-**Action items:**
-1. Decide on primary hosting platform
-2. Set up CI config (`.github/workflows/ci.yml` or `buildspec.yml`)
-3. Configure release workflow with artifact upload
-4. Set up code signing (if distributing publicly)
-5. Document the build/release process in CONTRIBUTING.md
-
----
 
 ### Linter and Formatter Configuration
 
@@ -693,39 +657,6 @@ This is a Docker Sandboxes architectural behavior — the sandbox daemon proxies
 
 ---
 
-### Website (beachead.net)
-
-**Priority:** Medium  
-**Effort:** Medium  
-**Affected area:** External — new web project
-
-**Description:** Create a public-facing website at beachead.net for the application. Hosting on AWS Amplify (or similar static hosting).
-
-**Expected content:**
-- **Landing page:** Hero section with tagline, key features, screenshot/demo
-- **Download page:** Platform-specific download links (.deb, .AppImage, .dmg, .msi)
-- **Documentation:** Mirror of in-app help content (or link to GitHub docs)
-- **Getting started guide:** Prerequisites, install, first session walkthrough
-- **Changelog:** Release notes per version
-- **About/Contact:** Project info, maintainer, links to repo
-
-**Technical stack options:**
-| Option | Pros | Cons |
-|--------|------|------|
-| **AWS Amplify + Next.js/Astro** | Serverless, scales, custom domain easy | AWS costs (minimal for static) |
-| **GitHub Pages + Hugo/Jekyll** | Free, simple, auto-deploys from repo | Limited to static, no server functions |
-| **Cloudflare Pages + Astro** | Free tier generous, fast CDN, easy DNS | Another vendor account |
-
-**Action items:**
-1. Choose static site generator (Astro recommended — modern, fast, markdown-friendly)
-2. Set up AWS Amplify with beachead.net domain
-3. Design landing page (can reuse README content as starting point)
-4. Set up auto-deploy from a `website/` directory or separate repo
-5. Add download links once CI/CD produces release artifacts
-6. Set up analytics (privacy-respecting: Plausible or Fathom)
-
-
----
 
 ## Completed
 
