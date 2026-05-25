@@ -32,8 +32,9 @@ mod tests {
         ));
         let persona_manager = Arc::new(crate::persona_manager::PersonaManager::new(db.clone()));
         let agent_manager = Arc::new(crate::agent_manager::AgentManager::new(db.clone(), None));
-        let export_import_manager =
-            Arc::new(crate::export_import_manager::ExportImportManager::new(db.clone()));
+        let export_import_manager = Arc::new(
+            crate::export_import_manager::ExportImportManager::new(db.clone()),
+        );
 
         AppState {
             persona_manager,

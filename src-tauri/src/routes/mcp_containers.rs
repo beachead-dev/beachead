@@ -234,19 +234,13 @@ async fn find_unmanaged_containers(
         }
 
         // Extract status from Docker container summary
-        let status = container
-            .state
-            .as_deref()
-            .unwrap_or("unknown")
-            .to_string();
+        let status = container.state.as_deref().unwrap_or("unknown").to_string();
 
         // Extract port from the container's port bindings (first host port found)
         let port = container
             .ports
             .as_ref()
-            .and_then(|ports| {
-                ports.iter().find_map(|p| p.public_port.map(|pp| pp as u16))
-            })
+            .and_then(|ports| ports.iter().find_map(|p| p.public_port))
             .unwrap_or(0);
 
         // Extract container name (Docker prefixes with '/')
@@ -261,23 +255,19 @@ async fn find_unmanaged_containers(
         let volume_name = container
             .mounts
             .as_ref()
-            .and_then(|mounts| {
-                mounts.iter().find_map(|m| m.name.clone())
-            })
+            .and_then(|mounts| mounts.iter().find_map(|m| m.name.clone()))
             .unwrap_or_default();
 
         // Extract image name
-        let image = container
-            .image
-            .as_deref()
-            .unwrap_or("unknown")
-            .to_string();
+        let image = container.image.as_deref().unwrap_or("unknown").to_string();
 
         let created_at = container
             .created
-            .map(|ts| chrono::DateTime::from_timestamp(ts, 0)
-                .map(|dt| dt.to_rfc3339())
-                .unwrap_or_default())
+            .map(|ts| {
+                chrono::DateTime::from_timestamp(ts, 0)
+                    .map(|dt| dt.to_rfc3339())
+                    .unwrap_or_default()
+            })
             .unwrap_or_default();
 
         unmanaged.push(McpContainerListResponse {
@@ -311,49 +301,48 @@ async fn start_container(
     Path(id): Path<String>,
 ) -> Result<Json<McpContainerListResponse>, OrchestratorError> {
     // 1. Look up the container in the DB by its primary key
-    let db_row: DbContainerRow = state.db.with_conn(|conn| {
-        let mut stmt = conn
-            .prepare(
-                "SELECT mc.id, mc.persona_id, COALESCE(p.name, '') as persona_name,
+    let db_row: DbContainerRow = state
+        .db
+        .with_conn(|conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT mc.id, mc.persona_id, COALESCE(p.name, '') as persona_name,
                         mc.container_id, mc.port, mc.volume_name, mc.status,
                         mc.created_at, mc.updated_at
                  FROM mcp_containers mc
                  LEFT JOIN personas p ON mc.persona_id = p.id
                  WHERE mc.id = ?1",
-            )
-            .map_err(|e| OrchestratorError::Database(e.to_string()))?;
+                )
+                .map_err(|e| OrchestratorError::Database(e.to_string()))?;
 
-        stmt.query_row(rusqlite::params![id], |row| {
-            Ok(DbContainerRow {
-                id: row.get(0)?,
-                persona_id: row.get(1)?,
-                persona_name: row.get(2)?,
-                container_id: row.get(3)?,
-                port: row.get::<_, i64>(4)? as u16,
-                volume_name: row.get(5)?,
-                status: row.get(6)?,
-                created_at: row.get(7)?,
-                updated_at: row.get(8)?,
+            stmt.query_row(rusqlite::params![id], |row| {
+                Ok(DbContainerRow {
+                    id: row.get(0)?,
+                    persona_id: row.get(1)?,
+                    persona_name: row.get(2)?,
+                    container_id: row.get(3)?,
+                    port: row.get::<_, i64>(4)? as u16,
+                    volume_name: row.get(5)?,
+                    status: row.get(6)?,
+                    created_at: row.get(7)?,
+                    updated_at: row.get(8)?,
+                })
             })
-        })
-        .optional()
-        .map_err(|e| OrchestratorError::Database(e.to_string()))
-    })?
-    .ok_or_else(|| OrchestratorError::NotFound(format!("Container '{}' not found", id)))?;
+            .optional()
+            .map_err(|e| OrchestratorError::Database(e.to_string()))
+        })?
+        .ok_or_else(|| OrchestratorError::NotFound(format!("Container '{}' not found", id)))?;
 
     // 2. Connect to Docker
-    let docker = Docker::connect_with_local_defaults()
-        .map_err(|e| OrchestratorError::DockerError(format!("Failed to connect to Docker: {}", e)))?;
+    let docker = Docker::connect_with_local_defaults().map_err(|e| {
+        OrchestratorError::DockerError(format!("Failed to connect to Docker: {}", e))
+    })?;
 
     // 3. Check if already running via Docker inspect
     if let Some(ref docker_id) = db_row.container_id {
         if !docker_id.is_empty() {
             if let Ok(info) = docker.inspect_container(docker_id, None).await {
-                let is_running = info
-                    .state
-                    .as_ref()
-                    .and_then(|s| s.running)
-                    .unwrap_or(false);
+                let is_running = info.state.as_ref().and_then(|s| s.running).unwrap_or(false);
 
                 if is_running {
                     // Already running — return current record (idempotent)
@@ -439,35 +428,37 @@ async fn stop_container(
     Path(id): Path<String>,
 ) -> Result<Json<McpContainerListResponse>, OrchestratorError> {
     // 1. Look up the container in the DB by its primary key
-    let db_row: DbContainerRow = state.db.with_conn(|conn| {
-        let mut stmt = conn
-            .prepare(
-                "SELECT mc.id, mc.persona_id, COALESCE(p.name, '') as persona_name,
+    let db_row: DbContainerRow = state
+        .db
+        .with_conn(|conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT mc.id, mc.persona_id, COALESCE(p.name, '') as persona_name,
                         mc.container_id, mc.port, mc.volume_name, mc.status,
                         mc.created_at, mc.updated_at
                  FROM mcp_containers mc
                  LEFT JOIN personas p ON mc.persona_id = p.id
                  WHERE mc.id = ?1",
-            )
-            .map_err(|e| OrchestratorError::Database(e.to_string()))?;
+                )
+                .map_err(|e| OrchestratorError::Database(e.to_string()))?;
 
-        stmt.query_row(rusqlite::params![id], |row| {
-            Ok(DbContainerRow {
-                id: row.get(0)?,
-                persona_id: row.get(1)?,
-                persona_name: row.get(2)?,
-                container_id: row.get(3)?,
-                port: row.get::<_, i64>(4)? as u16,
-                volume_name: row.get(5)?,
-                status: row.get(6)?,
-                created_at: row.get(7)?,
-                updated_at: row.get(8)?,
+            stmt.query_row(rusqlite::params![id], |row| {
+                Ok(DbContainerRow {
+                    id: row.get(0)?,
+                    persona_id: row.get(1)?,
+                    persona_name: row.get(2)?,
+                    container_id: row.get(3)?,
+                    port: row.get::<_, i64>(4)? as u16,
+                    volume_name: row.get(5)?,
+                    status: row.get(6)?,
+                    created_at: row.get(7)?,
+                    updated_at: row.get(8)?,
+                })
             })
-        })
-        .optional()
-        .map_err(|e| OrchestratorError::Database(e.to_string()))
-    })?
-    .ok_or_else(|| OrchestratorError::NotFound(format!("Container '{}' not found", id)))?;
+            .optional()
+            .map_err(|e| OrchestratorError::Database(e.to_string()))
+        })?
+        .ok_or_else(|| OrchestratorError::NotFound(format!("Container '{}' not found", id)))?;
 
     // 2. If already stopped, return current record (idempotent)
     if db_row.status == "stopped" {
@@ -487,8 +478,9 @@ async fn stop_container(
     }
 
     // 3. Connect to Docker
-    let docker = Docker::connect_with_local_defaults()
-        .map_err(|e| OrchestratorError::DockerError(format!("Failed to connect to Docker: {}", e)))?;
+    let docker = Docker::connect_with_local_defaults().map_err(|e| {
+        OrchestratorError::DockerError(format!("Failed to connect to Docker: {}", e))
+    })?;
 
     // 4. Stop the container via bollard with 10-second timeout
     let docker_id = db_row.container_id.as_deref().ok_or_else(|| {
@@ -562,8 +554,9 @@ async fn remove_container(
     if id.starts_with("unmanaged-") {
         let docker_id = id.strip_prefix("unmanaged-").unwrap_or(&id);
 
-        let docker = Docker::connect_with_local_defaults()
-            .map_err(|e| OrchestratorError::DockerError(format!("Failed to connect to Docker: {}", e)))?;
+        let docker = Docker::connect_with_local_defaults().map_err(|e| {
+            OrchestratorError::DockerError(format!("Failed to connect to Docker: {}", e))
+        })?;
 
         // Stop (best-effort)
         let _ = docker
@@ -585,35 +578,37 @@ async fn remove_container(
     }
 
     // 1. Look up the container in the DB by its primary key
-    let db_row: DbContainerRow = state.db.with_conn(|conn| {
-        let mut stmt = conn
-            .prepare(
-                "SELECT mc.id, mc.persona_id, COALESCE(p.name, '') as persona_name,
+    let db_row: DbContainerRow = state
+        .db
+        .with_conn(|conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT mc.id, mc.persona_id, COALESCE(p.name, '') as persona_name,
                         mc.container_id, mc.port, mc.volume_name, mc.status,
                         mc.created_at, mc.updated_at
                  FROM mcp_containers mc
                  LEFT JOIN personas p ON mc.persona_id = p.id
                  WHERE mc.id = ?1",
-            )
-            .map_err(|e| OrchestratorError::Database(e.to_string()))?;
+                )
+                .map_err(|e| OrchestratorError::Database(e.to_string()))?;
 
-        stmt.query_row(rusqlite::params![id], |row| {
-            Ok(DbContainerRow {
-                id: row.get(0)?,
-                persona_id: row.get(1)?,
-                persona_name: row.get(2)?,
-                container_id: row.get(3)?,
-                port: row.get::<_, i64>(4)? as u16,
-                volume_name: row.get(5)?,
-                status: row.get(6)?,
-                created_at: row.get(7)?,
-                updated_at: row.get(8)?,
+            stmt.query_row(rusqlite::params![id], |row| {
+                Ok(DbContainerRow {
+                    id: row.get(0)?,
+                    persona_id: row.get(1)?,
+                    persona_name: row.get(2)?,
+                    container_id: row.get(3)?,
+                    port: row.get::<_, i64>(4)? as u16,
+                    volume_name: row.get(5)?,
+                    status: row.get(6)?,
+                    created_at: row.get(7)?,
+                    updated_at: row.get(8)?,
+                })
             })
-        })
-        .optional()
-        .map_err(|e| OrchestratorError::Database(e.to_string()))
-    })?
-    .ok_or_else(|| OrchestratorError::NotFound(format!("Container '{}' not found", id)))?;
+            .optional()
+            .map_err(|e| OrchestratorError::Database(e.to_string()))
+        })?
+        .ok_or_else(|| OrchestratorError::NotFound(format!("Container '{}' not found", id)))?;
 
     // 2. Connect to Docker (best-effort — if unavailable, skip Docker operations)
     let docker = Docker::connect_with_local_defaults().ok();

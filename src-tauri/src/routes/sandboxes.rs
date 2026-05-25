@@ -69,9 +69,10 @@ async fn list_sandboxes(
     State(state): State<AppState>,
     Query(query): Query<ListSandboxesQuery>,
 ) -> Result<Json<Vec<SandboxInfoEnriched>>, OrchestratorError> {
-    let sbx = state.sbx.as_ref().ok_or_else(|| {
-        OrchestratorError::SbxError("sbx CLI is not available".to_string())
-    })?;
+    let sbx = state
+        .sbx
+        .as_ref()
+        .ok_or_else(|| OrchestratorError::SbxError("sbx CLI is not available".to_string()))?;
 
     let sandboxes = sbx.ls_json().await?;
 
@@ -95,19 +96,22 @@ async fn list_sandboxes(
             // sbx ls --json uses `name` as the sandbox identifier.
             // The sessions table stores the sandbox name as `sandbox_id`.
             // Check both `id` and `name` fields against managed_ids.
-            let managed = s
-                .id
-                .as_ref()
-                .map(|id| managed_ids.contains(id))
-                .unwrap_or(false)
-                || s.name
-                    .as_ref()
-                    .map(|name| managed_ids.contains(name))
-                    .unwrap_or(false);
+            let managed =
+                s.id.as_ref()
+                    .map(|id| managed_ids.contains(id))
+                    .unwrap_or(false)
+                    || s.name
+                        .as_ref()
+                        .map(|name| managed_ids.contains(name))
+                        .unwrap_or(false);
             SandboxInfoEnriched {
                 name: s.name.clone(),
                 id: s.id.or(s.name),
-                agent: s.extra.get("agent").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                agent: s
+                    .extra
+                    .get("agent")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
                 status: s.status,
                 managed,
             }
@@ -131,9 +135,10 @@ async fn stop_sandbox(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<SandboxActionResponse>, OrchestratorError> {
-    let sbx = state.sbx.as_ref().ok_or_else(|| {
-        OrchestratorError::SbxUnavailable("sbx CLI is not available".to_string())
-    })?;
+    let sbx = state
+        .sbx
+        .as_ref()
+        .ok_or_else(|| OrchestratorError::SbxUnavailable("sbx CLI is not available".to_string()))?;
 
     // First, check current status to handle idempotent case
     let sandboxes = timeout(SBX_COMMAND_TIMEOUT, sbx.ls_json()).await;
@@ -207,9 +212,10 @@ async fn start_sandbox(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<SandboxStartResponse>, OrchestratorError> {
-    let sbx = state.sbx.as_ref().ok_or_else(|| {
-        OrchestratorError::SbxUnavailable("sbx CLI is not available".to_string())
-    })?;
+    let sbx = state
+        .sbx
+        .as_ref()
+        .ok_or_else(|| OrchestratorError::SbxUnavailable("sbx CLI is not available".to_string()))?;
 
     // Look up the session associated with this sandbox_id to find the persona
     let persona_id: PersonaId = state.db.with_conn(|conn| {
@@ -234,19 +240,20 @@ async fn start_sandbox(
     })?;
 
     // Get the persona to find agent_type_id and workspace_path
-    let persona = state.db.with_conn(|conn| db_ops::get_persona(conn, &persona_id))?;
+    let persona = state
+        .db
+        .with_conn(|conn| db_ops::get_persona(conn, &persona_id))?;
 
     // Get the agent type to find the sbx_agent identifier
-    let agent_type = state.db.with_conn(|conn| db_ops::get_agent_type(conn, &persona.agent_type_id))?;
-    let agent = agent_type
-        .sbx_agent
-        .or(agent_type.kit_ref)
-        .ok_or_else(|| {
-            OrchestratorError::Internal(format!(
-                "Agent type '{}' has no sbx_agent or kit_ref configured",
-                agent_type.name
-            ))
-        })?;
+    let agent_type = state
+        .db
+        .with_conn(|conn| db_ops::get_agent_type(conn, &persona.agent_type_id))?;
+    let agent = agent_type.sbx_agent.or(agent_type.kit_ref).ok_or_else(|| {
+        OrchestratorError::Internal(format!(
+            "Agent type '{}' has no sbx_agent or kit_ref configured",
+            agent_type.name
+        ))
+    })?;
 
     // Build run args and execute sbx run with timeout
     let run_args = SbxRunArgs {
@@ -289,9 +296,10 @@ async fn remove_sandbox(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, OrchestratorError> {
-    let sbx = state.sbx.as_ref().ok_or_else(|| {
-        OrchestratorError::SbxUnavailable("sbx CLI is not available".to_string())
-    })?;
+    let sbx = state
+        .sbx
+        .as_ref()
+        .ok_or_else(|| OrchestratorError::SbxUnavailable("sbx CLI is not available".to_string()))?;
 
     let result = timeout(SBX_COMMAND_TIMEOUT, sbx.rm(&id)).await;
 
@@ -320,9 +328,10 @@ async fn list_ports(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<Vec<PortMapping>>, OrchestratorError> {
-    let sbx = state.sbx.as_ref().ok_or_else(|| {
-        OrchestratorError::SbxError("sbx CLI is not available".to_string())
-    })?;
+    let sbx = state
+        .sbx
+        .as_ref()
+        .ok_or_else(|| OrchestratorError::SbxError("sbx CLI is not available".to_string()))?;
     let ports = sbx.ports_list(&id).await?;
     Ok(Json(ports))
 }
@@ -333,9 +342,10 @@ async fn publish_port(
     Path(id): Path<String>,
     Json(req): Json<PublishPortRequest>,
 ) -> Result<(StatusCode, Json<PortMapping>), OrchestratorError> {
-    let sbx = state.sbx.as_ref().ok_or_else(|| {
-        OrchestratorError::SbxError("sbx CLI is not available".to_string())
-    })?;
+    let sbx = state
+        .sbx
+        .as_ref()
+        .ok_or_else(|| OrchestratorError::SbxError("sbx CLI is not available".to_string()))?;
     let mapping = sbx.ports_publish(&id, &req.port_spec).await?;
     Ok((StatusCode::CREATED, Json(mapping)))
 }
@@ -352,9 +362,10 @@ async fn unpublish_port(
     Path(id): Path<String>,
     Json(req): Json<UnpublishPortRequest>,
 ) -> Result<StatusCode, OrchestratorError> {
-    let sbx = state.sbx.as_ref().ok_or_else(|| {
-        OrchestratorError::SbxError("sbx CLI is not available".to_string())
-    })?;
+    let sbx = state
+        .sbx
+        .as_ref()
+        .ok_or_else(|| OrchestratorError::SbxError("sbx CLI is not available".to_string()))?;
     sbx.ports_unpublish(&id, &req.port_spec).await?;
     Ok(StatusCode::NO_CONTENT)
 }

@@ -26,9 +26,7 @@ pub fn router() -> Router<AppState> {
 }
 
 /// GET /api/system/version — get the sbx CLI version.
-async fn get_version(
-    State(state): State<AppState>,
-) -> Result<Json<SbxVersion>, OrchestratorError> {
+async fn get_version(State(state): State<AppState>) -> Result<Json<SbxVersion>, OrchestratorError> {
     let mgr = state.require_system_manager()?;
     let version = mgr.get_version().await?;
     Ok(Json(version))
@@ -59,18 +57,14 @@ async fn auth_status(
 }
 
 /// POST /api/system/login — initiate Docker login.
-async fn login(
-    State(state): State<AppState>,
-) -> Result<StatusCode, OrchestratorError> {
+async fn login(State(state): State<AppState>) -> Result<StatusCode, OrchestratorError> {
     let mgr = state.require_system_manager()?;
     mgr.login().await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 /// POST /api/system/logout — sign out of Docker.
-async fn logout(
-    State(state): State<AppState>,
-) -> Result<StatusCode, OrchestratorError> {
+async fn logout(State(state): State<AppState>) -> Result<StatusCode, OrchestratorError> {
     let mgr = state.require_system_manager()?;
     mgr.logout().await?;
     Ok(StatusCode::NO_CONTENT)
@@ -107,9 +101,7 @@ pub fn resolve_help_topic(topic: &str) -> Result<&'static str, OrchestratorError
 }
 
 /// GET /api/system/help/{topic} — serve static help content.
-async fn help_topic(
-    Path(topic): Path<String>,
-) -> Result<String, OrchestratorError> {
+async fn help_topic(Path(topic): Path<String>) -> Result<String, OrchestratorError> {
     let content = resolve_help_topic(&topic)?;
     Ok(content.to_string())
 }
@@ -213,10 +205,9 @@ mod tests {
     /// Strategy that generates invalid help topic identifiers.
     /// These are arbitrary strings that do NOT match any valid topic.
     fn invalid_topic_strategy() -> impl Strategy<Value = String> {
-        "[a-zA-Z0-9_\\-]{1,50}".prop_filter(
-            "must not be a valid topic",
-            |s| !VALID_TOPICS.contains(&s.as_str()),
-        )
+        "[a-zA-Z0-9_\\-]{1,50}".prop_filter("must not be a valid topic", |s| {
+            !VALID_TOPICS.contains(&s.as_str())
+        })
     }
 
     proptest! {

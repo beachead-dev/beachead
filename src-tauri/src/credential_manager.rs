@@ -314,9 +314,7 @@ fi
 exit 1
 "#;
         let (mgr, _dir) = create_test_manager(script);
-        let result = mgr
-            .set_secret("openai", "sk-key".to_string())
-            .await;
+        let result = mgr.set_secret("openai", "sk-key".to_string()).await;
         assert!(matches!(result, Err(OrchestratorError::SbxError(_))));
     }
 

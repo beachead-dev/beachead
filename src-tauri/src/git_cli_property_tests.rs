@@ -12,23 +12,20 @@
 use proptest::prelude::*;
 
 use crate::git_cli::{
-    classify_git_error, sanitize_stderr, GitCli, GitError, MAX_OUTPUT_BYTES,
-    NETWORK_TIMEOUT_SECS, LOCAL_TIMEOUT_SECS,
+    classify_git_error, sanitize_stderr, GitCli, GitError, LOCAL_TIMEOUT_SECS, MAX_OUTPUT_BYTES,
+    NETWORK_TIMEOUT_SECS,
 };
 
 /// Strategy for generating arbitrary "prefix" text that does NOT contain known error patterns.
 fn non_pattern_text() -> impl Strategy<Value = String> {
     // Generate text that avoids the known classification keywords
-    "[a-z0-9 .,;:!?\\-_]{0,100}".prop_filter(
-        "must not contain classification patterns",
-        |s| {
-            !s.contains("Authentication failed")
-                && !s.contains("could not read Username")
-                && !s.contains("CONFLICT")
-                && !s.contains("Automatic merge failed")
-                && !s.contains("non-fast-forward")
-        },
-    )
+    "[a-z0-9 .,;:!?\\-_]{0,100}".prop_filter("must not contain classification patterns", |s| {
+        !s.contains("Authentication failed")
+            && !s.contains("could not read Username")
+            && !s.contains("CONFLICT")
+            && !s.contains("Automatic merge failed")
+            && !s.contains("non-fast-forward")
+    })
 }
 
 /// Strategy for generating arbitrary git args.
@@ -44,10 +41,7 @@ fn exit_code_strategy() -> impl Strategy<Value = i32> {
 /// Strategy for generating credential URLs with user:password embedded.
 fn credential_url_strategy() -> impl Strategy<Value = (String, String, String)> {
     (
-        prop_oneof![
-            Just("https".to_string()),
-            Just("http".to_string()),
-        ],
+        prop_oneof![Just("https".to_string()), Just("http".to_string()),],
         // username:password portion (no @ allowed)
         "[a-zA-Z0-9._-]{1,20}:[a-zA-Z0-9._-]{1,40}".prop_map(|s| s),
         // host portion

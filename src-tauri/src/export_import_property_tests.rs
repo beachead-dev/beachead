@@ -30,9 +30,7 @@ mod tests {
 
     use crate::db::Database;
     use crate::error::OrchestratorError;
-    use crate::export_import_manager::{
-        ConflictAction, ConflictResolutions, ExportImportManager,
-    };
+    use crate::export_import_manager::{ConflictAction, ConflictResolutions, ExportImportManager};
 
     // Argon2id key derivation is intentionally slow, so we limit test cases.
     const CRYPTO_CASES: u32 = 10;
@@ -73,11 +71,7 @@ mod tests {
     // --- Helper functions ---
 
     /// Set up a database with an agent type and return the agent type id.
-    fn setup_db_with_agent(
-        db: &Database,
-        agent_name: &str,
-        secrets: &[String],
-    ) -> String {
+    fn setup_db_with_agent(db: &Database, agent_name: &str, secrets: &[String]) -> String {
         let agent_id = uuid::Uuid::new_v4().to_string();
         let secrets_json: Vec<String> = secrets.iter().map(|s| format!("\"{}\"", s)).collect();
         let metadata = format!(
@@ -123,11 +117,7 @@ mod tests {
     }
 
     /// Insert an MCP container record (bearer_token excluded from export).
-    fn insert_mcp_container(
-        db: &Database,
-        persona_id: &str,
-        port: i64,
-    ) {
+    fn insert_mcp_container(db: &Database, persona_id: &str, port: i64) {
         let container_id = uuid::Uuid::new_v4().to_string();
 
         db.with_conn(|conn| {
@@ -148,7 +138,7 @@ mod tests {
 
     mod property_15 {
         use super::*;
-        use crate::export_import_manager::{encrypt_data, decrypt_data};
+        use crate::export_import_manager::{decrypt_data, encrypt_data};
 
         proptest! {
             #![proptest_config(ProptestConfig::with_cases(CRYPTO_CASES))]

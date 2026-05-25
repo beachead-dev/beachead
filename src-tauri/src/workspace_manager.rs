@@ -75,17 +75,11 @@ impl WorkspaceManager {
 
         // SECURITY: Canonicalize the output path and verify it's still under uploads_dir
         let canonical_path = fs::canonicalize(&target_path).map_err(|e| {
-            OrchestratorError::Internal(format!(
-                "Failed to canonicalize uploaded file path: {}",
-                e
-            ))
+            OrchestratorError::Internal(format!("Failed to canonicalize uploaded file path: {}", e))
         })?;
 
         let canonical_uploads = fs::canonicalize(&uploads_dir).map_err(|e| {
-            OrchestratorError::Internal(format!(
-                "Failed to canonicalize uploads directory: {}",
-                e
-            ))
+            OrchestratorError::Internal(format!("Failed to canonicalize uploads directory: {}", e))
         })?;
 
         if !canonical_path.starts_with(&canonical_uploads) {
@@ -108,7 +102,8 @@ impl WorkspaceManager {
         // Attempt to canonicalize both paths for accurate comparison.
         // If canonicalization fails (e.g., path doesn't exist yet), fall back to
         // starts_with on the raw paths.
-        let canonical_file = fs::canonicalize(file_path).unwrap_or_else(|_| file_path.to_path_buf());
+        let canonical_file =
+            fs::canonicalize(file_path).unwrap_or_else(|_| file_path.to_path_buf());
         let canonical_workspace =
             fs::canonicalize(workspace).unwrap_or_else(|_| workspace.to_path_buf());
 
@@ -262,8 +257,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let content = b"hello world";
 
-        let result =
-            WorkspaceManager::upload_to_workspace(tmp.path(), "test.txt", content);
+        let result = WorkspaceManager::upload_to_workspace(tmp.path(), "test.txt", content);
         assert!(result.is_ok());
 
         let path = result.unwrap();
@@ -281,8 +275,7 @@ mod tests {
         let uploads_dir = tmp.path().join(".beachead").join("uploads");
         assert!(!uploads_dir.exists());
 
-        let result =
-            WorkspaceManager::upload_to_workspace(tmp.path(), "file.bin", b"data");
+        let result = WorkspaceManager::upload_to_workspace(tmp.path(), "file.bin", b"data");
         assert!(result.is_ok());
         assert!(uploads_dir.exists());
     }
@@ -291,8 +284,7 @@ mod tests {
     fn test_upload_to_workspace_rejects_traversal() {
         let tmp = TempDir::new().unwrap();
 
-        let result =
-            WorkspaceManager::upload_to_workspace(tmp.path(), "../escape.txt", b"bad");
+        let result = WorkspaceManager::upload_to_workspace(tmp.path(), "../escape.txt", b"bad");
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(matches!(err, OrchestratorError::Validation(_)));
@@ -302,8 +294,7 @@ mod tests {
     fn test_upload_to_workspace_rejects_absolute_path() {
         let tmp = TempDir::new().unwrap();
 
-        let result =
-            WorkspaceManager::upload_to_workspace(tmp.path(), "/etc/passwd", b"bad");
+        let result = WorkspaceManager::upload_to_workspace(tmp.path(), "/etc/passwd", b"bad");
         assert!(result.is_err());
     }
 
@@ -311,8 +302,7 @@ mod tests {
     fn test_upload_to_workspace_rejects_null_bytes() {
         let tmp = TempDir::new().unwrap();
 
-        let result =
-            WorkspaceManager::upload_to_workspace(tmp.path(), "file\0.txt", b"bad");
+        let result = WorkspaceManager::upload_to_workspace(tmp.path(), "file\0.txt", b"bad");
         assert!(result.is_err());
     }
 
@@ -449,10 +439,7 @@ mod tests {
     fn nonexistent_absolute_path_strategy() -> impl Strategy<Value = PathBuf> {
         "[a-z]{4,8}".prop_flat_map(|seg1| {
             "[a-z]{4,8}".prop_map(move |seg2| {
-                PathBuf::from(format!(
-                    "/nonexistent_beachead_test_{}/{}",
-                    seg1, seg2
-                ))
+                PathBuf::from(format!("/nonexistent_beachead_test_{}/{}", seg1, seg2))
             })
         })
     }

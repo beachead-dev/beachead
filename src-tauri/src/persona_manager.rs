@@ -176,7 +176,7 @@ impl PersonaManager {
 
     /// List all personas.
     pub fn list(&self) -> Result<Vec<Persona>, OrchestratorError> {
-        self.db.with_conn(|conn| db_ops::list_personas(conn))
+        self.db.with_conn(db_ops::list_personas)
     }
 
     /// Update a persona.
@@ -195,9 +195,13 @@ impl PersonaManager {
 
         let new_name = req.name.unwrap_or(existing.name.clone());
         let new_agent_type_id = req.agent_type_id.unwrap_or(existing.agent_type_id.clone());
-        let new_workspace_path = req.workspace_path.unwrap_or(existing.workspace_path.clone());
+        let new_workspace_path = req
+            .workspace_path
+            .unwrap_or(existing.workspace_path.clone());
         let new_memory_enabled = req.memory_enabled.unwrap_or(existing.memory_enabled);
-        let new_cli_args = req.agent_cli_args.unwrap_or(existing.agent_cli_args.clone());
+        let new_cli_args = req
+            .agent_cli_args
+            .unwrap_or(existing.agent_cli_args.clone());
 
         // Validate name is not empty
         if new_name.trim().is_empty() {
@@ -241,9 +245,10 @@ impl PersonaManager {
         };
 
         // Determine if MCP servers are being removed (requires-restart)
-        let has_active_sessions = self.db.with_conn(|conn| {
-            db_ops::count_active_sessions_for_persona(conn, id)
-        })? > 0;
+        let has_active_sessions = self
+            .db
+            .with_conn(|conn| db_ops::count_active_sessions_for_persona(conn, id))?
+            > 0;
 
         let mcp_requires_restart = if has_active_sessions {
             if let Some(ref new_mcp_servers) = req.mcp_servers {
@@ -262,14 +267,13 @@ impl PersonaManager {
 
         self.db.with_conn(|conn| {
             // Check name uniqueness (excluding self)
-            if new_name != existing.name {
-                if db_ops::persona_name_exists(conn, &new_name, Some(id))? {
+            if new_name != existing.name
+                && db_ops::persona_name_exists(conn, &new_name, Some(id))? {
                     return Err(OrchestratorError::DuplicateName(format!(
                         "Persona with name '{}' already exists",
                         new_name
                     )));
                 }
-            }
 
             // Check workspace path uniqueness (excluding self)
             if new_workspace_path != existing.workspace_path {
@@ -395,7 +399,10 @@ impl PersonaManager {
                 rusqlite::params![id.0],
             )?;
 
-            conn.execute("DELETE FROM personas WHERE id = ?1", rusqlite::params![id.0])?;
+            conn.execute(
+                "DELETE FROM personas WHERE id = ?1",
+                rusqlite::params![id.0],
+            )?;
             Ok(())
         })
     }
@@ -442,16 +449,23 @@ impl PersonaManager {
 
         let now = Utc::now();
         self.db.with_conn(|conn| {
-            db_ops::update_persona_mcp_server(conn, mcp_id, name, url, description, auth_headers, &now)?;
+            db_ops::update_persona_mcp_server(
+                conn,
+                mcp_id,
+                name,
+                url,
+                description,
+                auth_headers,
+                &now,
+            )?;
             db_ops::get_persona_mcp_server(conn, mcp_id)
         })
     }
 
     /// Remove an MCP server entry.
     pub fn remove_mcp_server(&self, mcp_id: &str) -> Result<(), OrchestratorError> {
-        self.db.with_conn(|conn| {
-            db_ops::delete_persona_mcp_server(conn, mcp_id)
-        })
+        self.db
+            .with_conn(|conn| db_ops::delete_persona_mcp_server(conn, mcp_id))
     }
 }
 
@@ -467,15 +481,15 @@ fn validate_mcp_url(url: &str) -> Result<(), OrchestratorError> {
     }
 
     // Extract host portion (after scheme, before optional port/path)
-    let after_scheme = if url.starts_with("https://") {
-        &url[8..]
+    let after_scheme = if let Some(s) = url.strip_prefix("https://") {
+        s
     } else {
         &url[7..]
     };
 
     // Host is the part before the first '/' or ':' or end of string
     let host = after_scheme
-        .split(|c| c == '/' || c == ':')
+        .split(['/', ':'])
         .next()
         .unwrap_or("");
 
@@ -588,10 +602,7 @@ pub fn validate_additional_workspaces(
 
         // 4. Canonicalization
         let canonical = std::fs::canonicalize(&entry.path).map_err(|e| {
-            OrchestratorError::Internal(format!(
-                "Failed to canonicalize path {}: {}",
-                path_str, e
-            ))
+            OrchestratorError::Internal(format!("Failed to canonicalize path {}: {}", path_str, e))
         })?;
 
         // 5. Sensitive directory warning
@@ -683,7 +694,8 @@ mod tests {
             created_at: now,
             updated_at: now,
         };
-        db.with_conn(|conn| db_ops::insert_agent_type(conn, &agent)).unwrap();
+        db.with_conn(|conn| db_ops::insert_agent_type(conn, &agent))
+            .unwrap();
         agent_id
     }
 
@@ -829,7 +841,10 @@ mod tests {
         };
 
         let result = mgr.create(req);
-        assert!(matches!(result, Err(OrchestratorError::WorkspaceNotFound(_))));
+        assert!(matches!(
+            result,
+            Err(OrchestratorError::WorkspaceNotFound(_))
+        ));
     }
 
     #[test]
@@ -862,8 +877,16 @@ mod tests {
         let result = mgr.create(req2);
         match result {
             Err(OrchestratorError::Validation(msg)) => {
-                assert!(msg.contains("First Persona"), "Error should name the conflicting persona: {}", msg);
-                assert!(msg.contains("unique primary workspace"), "Error should mention uniqueness: {}", msg);
+                assert!(
+                    msg.contains("First Persona"),
+                    "Error should name the conflicting persona: {}",
+                    msg
+                );
+                assert!(
+                    msg.contains("unique primary workspace"),
+                    "Error should mention uniqueness: {}",
+                    msg
+                );
             }
             other => panic!("Expected Validation error, got: {:?}", other),
         }
@@ -912,7 +935,11 @@ mod tests {
         let result = mgr.update(&mover.id, update_req);
         match result {
             Err(OrchestratorError::Validation(msg)) => {
-                assert!(msg.contains("Owner"), "Error should name the conflicting persona: {}", msg);
+                assert!(
+                    msg.contains("Owner"),
+                    "Error should name the conflicting persona: {}",
+                    msg
+                );
             }
             other => panic!("Expected Validation error, got: {:?}", other),
         }
@@ -1234,9 +1261,11 @@ mod tests {
                 "INSERT INTO sessions (id, persona_id, status, created_at, updated_at) \
                  VALUES ('s1', ?1, 'running', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')",
                 rusqlite::params![created.id.0],
-            ).map_err(|e| OrchestratorError::Database(e.to_string()))?;
+            )
+            .map_err(|e| OrchestratorError::Database(e.to_string()))?;
             Ok(())
-        }).unwrap();
+        })
+        .unwrap();
 
         // Additive change: keep existing + add new
         let update_req = UpdatePersonaRequest {
@@ -1302,9 +1331,11 @@ mod tests {
                 "INSERT INTO sessions (id, persona_id, status, created_at, updated_at) \
                  VALUES ('s1', ?1, 'running', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')",
                 rusqlite::params![created.id.0],
-            ).map_err(|e| OrchestratorError::Database(e.to_string()))?;
+            )
+            .map_err(|e| OrchestratorError::Database(e.to_string()))?;
             Ok(())
-        }).unwrap();
+        })
+        .unwrap();
 
         // Remove "remove-me" server
         let update_req = UpdatePersonaRequest {
@@ -1377,9 +1408,11 @@ mod tests {
                 "INSERT INTO sessions (id, persona_id, status, created_at, updated_at) \
                  VALUES ('s1', ?1, 'starting', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')",
                 rusqlite::params![created.id.0],
-            ).map_err(|e| OrchestratorError::Database(e.to_string()))?;
+            )
+            .map_err(|e| OrchestratorError::Database(e.to_string()))?;
             Ok(())
-        }).unwrap();
+        })
+        .unwrap();
 
         let result = mgr.delete(&created.id);
         assert!(matches!(result, Err(OrchestratorError::ActiveSessions)));
@@ -1409,9 +1442,11 @@ mod tests {
                 "INSERT INTO sessions (id, persona_id, status, created_at, updated_at) \
                  VALUES ('s1', ?1, 'stopped', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')",
                 rusqlite::params![created.id.0],
-            ).map_err(|e| OrchestratorError::Database(e.to_string()))?;
+            )
+            .map_err(|e| OrchestratorError::Database(e.to_string()))?;
             Ok(())
-        }).unwrap();
+        })
+        .unwrap();
 
         // Should succeed because session is stopped
         mgr.delete(&created.id).unwrap();
@@ -1504,7 +1539,13 @@ mod tests {
         let mcp_id = &created.mcp_servers[0].id;
 
         let updated = mgr
-            .update_mcp_server(mcp_id, "renamed", "https://new.example.com", Some("Updated"), None)
+            .update_mcp_server(
+                mcp_id,
+                "renamed",
+                "https://new.example.com",
+                Some("Updated"),
+                None,
+            )
             .unwrap();
         assert_eq!(updated.name, "renamed");
         assert_eq!(updated.url, "https://new.example.com");
@@ -1581,10 +1622,7 @@ mod tests {
 
     #[test]
     fn test_classify_mcp_changes_with_removal() {
-        let existing = vec![
-            make_mcp_server("server-a"),
-            make_mcp_server("server-b"),
-        ];
+        let existing = vec![make_mcp_server("server-a"), make_mcp_server("server-b")];
         let new_entries = vec![CreateMcpServerEntry {
             name: "server-a".to_string(),
             url: "http://localhost:8080".to_string(),
@@ -1613,8 +1651,7 @@ mod tests {
     #[test]
     fn test_validate_additional_workspaces_empty_list() {
         let primary = temp_workspace();
-        let result =
-            validate_additional_workspaces(&[], primary.path()).unwrap();
+        let result = validate_additional_workspaces(&[], primary.path()).unwrap();
         assert!(result.canonical_paths.is_empty());
         assert!(result.warnings.is_empty());
     }
@@ -1628,8 +1665,7 @@ mod tests {
             read_only: false,
             label: None,
         }];
-        let result =
-            validate_additional_workspaces(&entries, primary.path()).unwrap();
+        let result = validate_additional_workspaces(&entries, primary.path()).unwrap();
         assert_eq!(result.canonical_paths.len(), 1);
         assert_eq!(
             result.canonical_paths[0],
@@ -1647,7 +1683,9 @@ mod tests {
             label: None,
         }];
         let result = validate_additional_workspaces(&entries, primary.path());
-        assert!(matches!(result, Err(OrchestratorError::Validation(msg)) if msg.contains("null bytes")));
+        assert!(
+            matches!(result, Err(OrchestratorError::Validation(msg)) if msg.contains("null bytes"))
+        );
     }
 
     #[test]
@@ -1659,7 +1697,9 @@ mod tests {
             label: None,
         }];
         let result = validate_additional_workspaces(&entries, primary.path());
-        assert!(matches!(result, Err(OrchestratorError::Validation(msg)) if msg.contains("must be absolute")));
+        assert!(
+            matches!(result, Err(OrchestratorError::Validation(msg)) if msg.contains("must be absolute"))
+        );
     }
 
     #[test]
@@ -1671,7 +1711,10 @@ mod tests {
             label: None,
         }];
         let result = validate_additional_workspaces(&entries, primary.path());
-        assert!(matches!(result, Err(OrchestratorError::WorkspaceNotFound(_))));
+        assert!(matches!(
+            result,
+            Err(OrchestratorError::WorkspaceNotFound(_))
+        ));
     }
 
     #[test]
@@ -1691,7 +1734,9 @@ mod tests {
             },
         ];
         let result = validate_additional_workspaces(&entries, primary.path());
-        assert!(matches!(result, Err(OrchestratorError::Validation(msg)) if msg.contains("Duplicate")));
+        assert!(
+            matches!(result, Err(OrchestratorError::Validation(msg)) if msg.contains("Duplicate"))
+        );
     }
 
     #[test]
@@ -1703,7 +1748,9 @@ mod tests {
             label: None,
         }];
         let result = validate_additional_workspaces(&entries, primary.path());
-        assert!(matches!(result, Err(OrchestratorError::Validation(msg)) if msg.contains("matches primary")));
+        assert!(
+            matches!(result, Err(OrchestratorError::Validation(msg)) if msg.contains("matches primary"))
+        );
     }
 
     #[test]
@@ -1716,7 +1763,9 @@ mod tests {
             label: Some("a".repeat(65)),
         }];
         let result = validate_additional_workspaces(&entries, primary.path());
-        assert!(matches!(result, Err(OrchestratorError::Validation(msg)) if msg.contains("maximum length")));
+        assert!(
+            matches!(result, Err(OrchestratorError::Validation(msg)) if msg.contains("maximum length"))
+        );
     }
 
     #[test]
@@ -1729,7 +1778,9 @@ mod tests {
             label: Some("bad\x01label".to_string()),
         }];
         let result = validate_additional_workspaces(&entries, primary.path());
-        assert!(matches!(result, Err(OrchestratorError::Validation(msg)) if msg.contains("control characters")));
+        assert!(
+            matches!(result, Err(OrchestratorError::Validation(msg)) if msg.contains("control characters"))
+        );
     }
 
     #[test]
@@ -1755,8 +1806,7 @@ mod tests {
                 read_only: true,
                 label: None,
             }];
-            let result =
-                validate_additional_workspaces(&entries, primary.path()).unwrap();
+            let result = validate_additional_workspaces(&entries, primary.path()).unwrap();
             assert_eq!(result.canonical_paths.len(), 1);
             assert!(!result.warnings.is_empty());
             assert!(result.warnings[0].contains("sensitive system data"));
@@ -1776,8 +1826,7 @@ mod tests {
             read_only: false,
             label: None,
         }];
-        let result =
-            validate_additional_workspaces(&entries, primary.path()).unwrap();
+        let result = validate_additional_workspaces(&entries, primary.path()).unwrap();
         assert_eq!(
             result.canonical_paths[0],
             std::fs::canonicalize(additional.path()).unwrap()

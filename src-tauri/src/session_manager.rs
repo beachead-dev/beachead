@@ -90,12 +90,20 @@ impl SessionManager {
     /// 7. Return Session with ws_url like "ws://127.0.0.1:9876/api/sessions/{id}/terminal"
     ///
     /// Requirements: 3.1–3.4, 3.7, 3.11, 3.12
-    pub async fn start(&self, persona_id: &PersonaId, name: Option<&str>) -> Result<Session, OrchestratorError> {
+    pub async fn start(
+        &self,
+        persona_id: &PersonaId,
+        name: Option<&str>,
+    ) -> Result<Session, OrchestratorError> {
         // 1. Get persona from DB
-        let persona = self.db.with_conn(|conn| db_ops::get_persona(conn, persona_id))?;
+        let persona = self
+            .db
+            .with_conn(|conn| db_ops::get_persona(conn, persona_id))?;
 
         // 2. Resolve agent type (needed for kit generation and sandbox creation)
-        let agent_type = self.db.with_conn(|conn| db_ops::get_agent_type(conn, &persona.agent_type_id))?;
+        let agent_type = self
+            .db
+            .with_conn(|conn| db_ops::get_agent_type(conn, &persona.agent_type_id))?;
         let agent = agent_type
             .sbx_agent
             .clone()
@@ -112,7 +120,10 @@ impl SessionManager {
         let mcp_config = if persona.memory_enabled {
             if let Some(ref mgr) = self.mcp_container_manager {
                 if let Err(e) = mgr.ensure_container_running(&persona.id).await {
-                    eprintln!("Warning: failed to ensure MCP container for persona {}: {}", persona.id.0, e);
+                    eprintln!(
+                        "Warning: failed to ensure MCP container for persona {}: {}",
+                        persona.id.0, e
+                    );
                 }
             }
             self.lookup_mcp_config(&persona.id)?
@@ -120,7 +131,9 @@ impl SessionManager {
             None
         };
         let mcp_config_path = agent_type.metadata.mcp_config_path.as_deref();
-        let kit_path = self.kit_generator.generate(&persona, mcp_config.as_ref(), mcp_config_path)?;
+        let kit_path =
+            self.kit_generator
+                .generate(&persona, mcp_config.as_ref(), mcp_config_path)?;
 
         // 4. Create session record in "starting" state
         let session_id = SessionId::new();
@@ -135,7 +148,8 @@ impl SessionManager {
             created_at: now,
             updated_at: now,
         };
-        self.db.with_conn(|conn| db_ops::insert_session(conn, &session))?;
+        self.db
+            .with_conn(|conn| db_ops::insert_session(conn, &session))?;
 
         // 5. Build args and call sbx create (creates sandbox without attaching)
         let additional_ws: Vec<AdditionalWorkspaceArg> = persona
@@ -156,14 +170,18 @@ impl SessionManager {
             agent_args: persona.agent_cli_args.clone(),
         };
 
-        let sandbox_id = match self.sbx.create(&crate::sbx::SbxCreateArgs {
-            agent: run_args.agent,
-            kit_paths: run_args.kit_paths,
-            workspace: run_args.workspace,
-            name: run_args.name,
-            template: run_args.template,
-            additional_workspaces: additional_ws,
-        }).await {
+        let sandbox_id = match self
+            .sbx
+            .create(&crate::sbx::SbxCreateArgs {
+                agent: run_args.agent,
+                kit_paths: run_args.kit_paths,
+                workspace: run_args.workspace,
+                name: run_args.name,
+                template: run_args.template,
+                additional_workspaces: additional_ws,
+            })
+            .await
+        {
             Ok(id) => id,
             Err(OrchestratorError::SbxError(ref msg)) => {
                 // Check stderr for credential error patterns
@@ -210,16 +228,22 @@ impl SessionManager {
         };
 
         // Update session with sandbox_id
-        self.db.with_conn(|conn| {
-            db_ops::update_session_sandbox_id(conn, &session_id, &sandbox_id)
-        })?;
+        self.db
+            .with_conn(|conn| db_ops::update_session_sandbox_id(conn, &session_id, &sandbox_id))?;
 
         // Allow network access to MCP memory container if configured (scoped to this sandbox)
         if let Some(ref config) = mcp_config {
             let target = format!("localhost:{}", config.port);
             let sandbox_name = crate::sbx::extract_sandbox_name(&sandbox_id);
-            if let Err(e) = self.sbx.policy_allow_network_for_sandbox(&sandbox_name, &target).await {
-                eprintln!("Warning: failed to allow network for MCP port {}: {}", config.port, e);
+            if let Err(e) = self
+                .sbx
+                .policy_allow_network_for_sandbox(&sandbox_name, &target)
+                .await
+            {
+                eprintln!(
+                    "Warning: failed to allow network for MCP port {}: {}",
+                    config.port, e
+                );
             }
         }
 
@@ -229,11 +253,7 @@ impl SessionManager {
         let pty_session_id = session_id.clone();
         let sandbox_id_clone = sandbox_id.clone();
         tokio::task::spawn_blocking(move || {
-            pty_bridge.spawn(
-                pty_session_id,
-                &sbx_path,
-                &["run", &sandbox_id_clone],
-            )
+            pty_bridge.spawn(pty_session_id, &sbx_path, &["run", &sandbox_id_clone])
         })
         .await
         .map_err(|e| OrchestratorError::Internal(format!("PTY spawn task failed: {}", e)))??;
@@ -244,7 +264,9 @@ impl SessionManager {
         })?;
 
         // 7. Return session with ws_url
-        let session = self.db.with_conn(|conn| db_ops::get_session(conn, &session_id))?;
+        let session = self
+            .db
+            .with_conn(|conn| db_ops::get_session(conn, &session_id))?;
         Ok(session)
     }
 
@@ -263,7 +285,9 @@ impl SessionManager {
     ///
     /// Requirements: 3.5, 4.1
     pub async fn stop(&self, session_id: &SessionId) -> Result<(), OrchestratorError> {
-        let session = self.db.with_conn(|conn| db_ops::get_session(conn, session_id))?;
+        let session = self
+            .db
+            .with_conn(|conn| db_ops::get_session(conn, session_id))?;
 
         if let Some(ref raw_sandbox_id) = session.sandbox_id {
             // Kill PTY first (ignore errors if already stopped)
@@ -301,7 +325,9 @@ impl SessionManager {
     /// Reattaches to the sandbox by spawning a new PTY with `sbx run <sandbox_name>`.
     /// The sandbox must be in stopped state.
     pub async fn resume(&self, session_id: &SessionId) -> Result<(), OrchestratorError> {
-        let session = self.db.with_conn(|conn| db_ops::get_session(conn, session_id))?;
+        let session = self
+            .db
+            .with_conn(|conn| db_ops::get_session(conn, session_id))?;
 
         if session.status != SessionStatus::Stopped {
             return Err(OrchestratorError::Validation(format!(
@@ -320,11 +346,7 @@ impl SessionManager {
         let pty_session_id = session_id.clone();
         let sandbox_id_clone = sandbox_id.clone();
         tokio::task::spawn_blocking(move || {
-            pty_bridge.spawn(
-                pty_session_id,
-                &sbx_path,
-                &["run", &sandbox_id_clone],
-            )
+            pty_bridge.spawn(pty_session_id, &sbx_path, &["run", &sandbox_id_clone])
         })
         .await
         .map_err(|e| OrchestratorError::Internal(format!("PTY spawn task failed: {}", e)))??;
@@ -344,7 +366,9 @@ impl SessionManager {
     ///
     /// Requirements: 3.6, 3.10
     pub async fn remove(&self, session_id: &SessionId) -> Result<(), OrchestratorError> {
-        let session = self.db.with_conn(|conn| db_ops::get_session(conn, session_id))?;
+        let session = self
+            .db
+            .with_conn(|conn| db_ops::get_session(conn, session_id))?;
 
         // Kill PTY if still active (ignore errors)
         let pty_bridge = self.pty_bridge.clone();
@@ -379,7 +403,7 @@ impl SessionManager {
     ///
     /// Requirements: 4.6
     pub fn list(&self) -> Result<Vec<Session>, OrchestratorError> {
-        self.db.with_conn(|conn| db_ops::list_sessions(conn))
+        self.db.with_conn(db_ops::list_sessions)
     }
 
     /// Recover previously active sessions on startup.
@@ -393,7 +417,7 @@ impl SessionManager {
     ///
     /// Requirements: 5.1–5.7
     pub async fn recover_sessions(&self) -> Vec<RecoveryResult> {
-        let active_sessions = match self.db.with_conn(|conn| db_ops::list_active_sessions(conn)) {
+        let active_sessions = match self.db.with_conn(db_ops::list_active_sessions) {
             Ok(sessions) => sessions,
             Err(e) => {
                 eprintln!("Failed to query active sessions for recovery: {}", e);
@@ -457,8 +481,11 @@ impl SessionManager {
                 if sandbox_name.is_empty() {
                     // No valid sandbox name — remove orphan
                     let _ = self.db.with_conn(|conn| {
-                        conn.execute("DELETE FROM sessions WHERE id = ?1", rusqlite::params![session.id.0])
-                            .map_err(|e| OrchestratorError::Database(e.to_string()))?;
+                        conn.execute(
+                            "DELETE FROM sessions WHERE id = ?1",
+                            rusqlite::params![session.id.0],
+                        )
+                        .map_err(|e| OrchestratorError::Database(e.to_string()))?;
                         Ok(())
                     });
                     continue;
@@ -474,16 +501,22 @@ impl SessionManager {
                 if !found {
                     // Sandbox truly gone — delete session record
                     let _ = self.db.with_conn(|conn| {
-                        conn.execute("DELETE FROM sessions WHERE id = ?1", rusqlite::params![session.id.0])
-                            .map_err(|e| OrchestratorError::Database(e.to_string()))?;
+                        conn.execute(
+                            "DELETE FROM sessions WHERE id = ?1",
+                            rusqlite::params![session.id.0],
+                        )
+                        .map_err(|e| OrchestratorError::Database(e.to_string()))?;
                         Ok(())
                     });
                 }
             } else {
                 // No sandbox_id at all — remove orphan
                 let _ = self.db.with_conn(|conn| {
-                    conn.execute("DELETE FROM sessions WHERE id = ?1", rusqlite::params![session.id.0])
-                        .map_err(|e| OrchestratorError::Database(e.to_string()))?;
+                    conn.execute(
+                        "DELETE FROM sessions WHERE id = ?1",
+                        rusqlite::params![session.id.0],
+                    )
+                    .map_err(|e| OrchestratorError::Database(e.to_string()))?;
                     Ok(())
                 });
             }
@@ -501,8 +534,11 @@ impl SessionManager {
                 let reason = "No sandbox_id recorded".to_string();
                 // No sandbox to verify — delete the orphaned session record
                 let _ = self.db.with_conn(|conn| {
-                    conn.execute("DELETE FROM sessions WHERE id = ?1", rusqlite::params![session_id.0])
-                        .map_err(|e| OrchestratorError::Database(e.to_string()))?;
+                    conn.execute(
+                        "DELETE FROM sessions WHERE id = ?1",
+                        rusqlite::params![session_id.0],
+                    )
+                    .map_err(|e| OrchestratorError::Database(e.to_string()))?;
                     Ok(())
                 });
                 return RecoveryResult::Failed {
@@ -596,17 +632,15 @@ impl SessionManager {
                         conn.execute(
                             "DELETE FROM sessions WHERE id = ?1",
                             rusqlite::params![session_id.0],
-                        ).map_err(|e| OrchestratorError::Database(e.to_string()))?;
+                        )
+                        .map_err(|e| OrchestratorError::Database(e.to_string()))?;
                         Ok(())
                     });
 
                     // Attempt sbx rm cleanup (best-effort)
                     let _ = self.sbx.rm(&sandbox_id).await;
 
-                    let reason = format!(
-                        "Sandbox {} not found; session removed",
-                        sandbox_id
-                    );
+                    let reason = format!("Sandbox {} not found; session removed", sandbox_id);
                     RecoveryResult::Failed {
                         session_id: session_id.clone(),
                         reason,
@@ -640,12 +674,13 @@ impl SessionManager {
     /// - Ok(Some(status)) if sandbox found
     /// - Ok(None) if sandbox definitively not in the list
     /// - Err if we couldn't query sbx ls (unreliable — don't act on this)
-    async fn check_sandbox_status(&self, sandbox_id: &str) -> Result<Option<String>, OrchestratorError> {
+    async fn check_sandbox_status(
+        &self,
+        sandbox_id: &str,
+    ) -> Result<Option<String>, OrchestratorError> {
         let sandboxes = self.sbx.ls_json().await?;
         for sb in sandboxes {
-            if sb.id.as_deref() == Some(sandbox_id)
-                || sb.name.as_deref() == Some(sandbox_id)
-            {
+            if sb.id.as_deref() == Some(sandbox_id) || sb.name.as_deref() == Some(sandbox_id) {
                 return Ok(sb.status);
             }
         }
@@ -666,7 +701,9 @@ impl SessionManager {
         content: &[u8],
         source_path: Option<&Path>,
     ) -> Result<UploadResult, OrchestratorError> {
-        let session = self.db.with_conn(|conn| db_ops::get_session(conn, session_id))?;
+        let session = self
+            .db
+            .with_conn(|conn| db_ops::get_session(conn, session_id))?;
 
         if session.status != SessionStatus::Running {
             return Err(OrchestratorError::Validation(
@@ -674,9 +711,10 @@ impl SessionManager {
             ));
         }
 
-        let sandbox_id = session.sandbox_id.as_ref().ok_or_else(|| {
-            OrchestratorError::Internal("Session has no sandbox_id".to_string())
-        })?;
+        let sandbox_id = session
+            .sandbox_id
+            .as_ref()
+            .ok_or_else(|| OrchestratorError::Internal("Session has no sandbox_id".to_string()))?;
 
         // Get the persona to determine workspace path
         let persona = self
@@ -690,11 +728,8 @@ impl SessionManager {
 
         if use_workspace {
             // Upload to workspace uploads directory
-            let _uploaded_path = WorkspaceManager::upload_to_workspace(
-                &persona.workspace_path,
-                filename,
-                content,
-            )?;
+            let _uploaded_path =
+                WorkspaceManager::upload_to_workspace(&persona.workspace_path, filename, content)?;
             // The sandbox path is relative to the workspace mount
             let sandbox_path = format!("/workspace/.beachead/uploads/{}", filename);
             Ok(UploadResult {
@@ -737,7 +772,10 @@ impl SessionManager {
     ///
     /// Containers are started at app startup and stopped at shutdown.
     /// Returns None if no container exists or it's not running.
-    fn lookup_mcp_config(&self, persona_id: &PersonaId) -> Result<Option<McpConfig>, OrchestratorError> {
+    fn lookup_mcp_config(
+        &self,
+        persona_id: &PersonaId,
+    ) -> Result<Option<McpConfig>, OrchestratorError> {
         let mgr = match &self.mcp_container_manager {
             Some(mgr) => mgr,
             None => return Ok(None),
@@ -879,7 +917,14 @@ esac
     /// Helper to set up a test environment with DB, persona, and agent type.
     fn setup_test_env(
         sbx_path: PathBuf,
-    ) -> (Arc<Database>, Arc<SbxCli>, Arc<KitGenerator>, Arc<PtyBridge>, TempDir, TempDir) {
+    ) -> (
+        Arc<Database>,
+        Arc<SbxCli>,
+        Arc<KitGenerator>,
+        Arc<PtyBridge>,
+        TempDir,
+        TempDir,
+    ) {
         let db = Arc::new(Database::open_in_memory().unwrap());
         let sbx = Arc::new(SbxCli::with_path(sbx_path));
 
@@ -1162,7 +1207,10 @@ esac
             .await
             .unwrap();
 
-        assert_eq!(result.sandbox_path, "/workspace/.beachead/uploads/myfile.txt");
+        assert_eq!(
+            result.sandbox_path,
+            "/workspace/.beachead/uploads/myfile.txt"
+        );
         assert!(matches!(result.method, UploadMethod::Workspace));
 
         // Clean up
@@ -1401,11 +1449,15 @@ esac
 
         let results = manager.recover_sessions().await;
         assert_eq!(results.len(), 1);
-        assert!(matches!(&results[0], RecoveryResult::Recovered(id) if id.0 == "session-recover-1"));
+        assert!(
+            matches!(&results[0], RecoveryResult::Recovered(id) if id.0 == "session-recover-1")
+        );
 
         // Verify session is still running in DB
         let session = db
-            .with_conn(|conn| db_ops::get_session(conn, &SessionId("session-recover-1".to_string())))
+            .with_conn(|conn| {
+                db_ops::get_session(conn, &SessionId("session-recover-1".to_string()))
+            })
             .unwrap();
         assert_eq!(session.status, SessionStatus::Running);
 
@@ -1444,11 +1496,15 @@ esac
 
         let results = manager.recover_sessions().await;
         assert_eq!(results.len(), 1);
-        assert!(matches!(&results[0], RecoveryResult::Failed { session_id, .. } if session_id.0 == "session-stopped-1"));
+        assert!(
+            matches!(&results[0], RecoveryResult::Failed { session_id, .. } if session_id.0 == "session-stopped-1")
+        );
 
         // Verify session was marked as stopped in DB
         let session = db
-            .with_conn(|conn| db_ops::get_session(conn, &SessionId("session-stopped-1".to_string())))
+            .with_conn(|conn| {
+                db_ops::get_session(conn, &SessionId("session-stopped-1".to_string()))
+            })
             .unwrap();
         assert_eq!(session.status, SessionStatus::Stopped);
     }
@@ -1482,13 +1538,18 @@ esac
 
         let results = manager.recover_sessions().await;
         assert_eq!(results.len(), 1);
-        assert!(matches!(&results[0], RecoveryResult::Failed { session_id, reason }
-            if session_id.0 == "session-no-sbx" && reason.contains("No sandbox_id")));
+        assert!(
+            matches!(&results[0], RecoveryResult::Failed { session_id, reason }
+            if session_id.0 == "session-no-sbx" && reason.contains("No sandbox_id"))
+        );
 
         // Session with no sandbox_id should be cleaned up (deleted from DB)
         let session_result = db
             .with_conn(|conn| db_ops::get_session(conn, &SessionId("session-no-sbx".to_string())));
-        assert!(session_result.is_err(), "Session with no sandbox_id should be deleted");
+        assert!(
+            session_result.is_err(),
+            "Session with no sandbox_id should be deleted"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

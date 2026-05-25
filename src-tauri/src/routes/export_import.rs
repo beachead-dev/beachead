@@ -83,7 +83,9 @@ async fn import_preview(
         .decode(&req.data)
         .map_err(|e| OrchestratorError::Validation(format!("Invalid base64 data: {}", e)))?;
 
-    let preview = state.export_import_manager.preview_import(&data, &req.password)?;
+    let preview = state
+        .export_import_manager
+        .preview_import(&data, &req.password)?;
 
     Ok(Json(preview))
 }

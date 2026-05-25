@@ -257,10 +257,7 @@ impl SbxCli {
         cmd.stderr(Stdio::piped());
 
         let output = cmd.output().await.map_err(|e| {
-            OrchestratorError::SbxError(format!(
-                "Failed to execute sbx {}: {}",
-                subcommand, e
-            ))
+            OrchestratorError::SbxError(format!("Failed to execute sbx {}: {}", subcommand, e))
         })?;
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -295,10 +292,7 @@ impl SbxCli {
         cmd.stderr(Stdio::piped());
 
         let output = cmd.output().await.map_err(|e| {
-            OrchestratorError::SbxError(format!(
-                "Failed to execute sbx {}: {}",
-                subcommand, e
-            ))
+            OrchestratorError::SbxError(format!("Failed to execute sbx {}: {}", subcommand, e))
         })?;
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -538,10 +532,7 @@ impl SbxCli {
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| {
-                OrchestratorError::SbxError(format!(
-                    "Failed to spawn sbx exec -it: {}",
-                    e
-                ))
+                OrchestratorError::SbxError(format!("Failed to spawn sbx exec -it: {}", e))
             })?;
 
         Ok(child)
@@ -676,9 +667,7 @@ impl SbxCli {
         // Parse the single port mapping from output
         let mappings = parse_port_output(&output.stdout);
         mappings.into_iter().next().ok_or_else(|| {
-            OrchestratorError::SbxError(
-                "sbx ports --publish returned no port mapping".to_string(),
-            )
+            OrchestratorError::SbxError("sbx ports --publish returned no port mapping".to_string())
         })
     }
 
@@ -722,10 +711,7 @@ impl SbxCli {
     }
 
     /// Set the default policy: `sbx policy set-default <mode>`
-    pub async fn policy_set_default(
-        &self,
-        mode: PolicyDefault,
-    ) -> Result<(), OrchestratorError> {
+    pub async fn policy_set_default(&self, mode: PolicyDefault) -> Result<(), OrchestratorError> {
         let mode_str = mode.to_string();
         let output = self
             .exec_multi_command(&["policy", "set-default"], &[&mode_str])
@@ -741,10 +727,7 @@ impl SbxCli {
 
     /// Allow network access: `sbx policy allow network "<target>"`
     /// Allow network access globally: `sbx policy allow network -g "<target>"`
-    pub async fn policy_allow_network(
-        &self,
-        target: &str,
-    ) -> Result<(), OrchestratorError> {
+    pub async fn policy_allow_network(&self, target: &str) -> Result<(), OrchestratorError> {
         let output = self
             .exec_multi_command(&["policy", "allow", "network"], &["-g", target])
             .await?;
@@ -778,10 +761,7 @@ impl SbxCli {
     }
 
     /// Deny network access globally: `sbx policy deny network -g "<target>"`
-    pub async fn policy_deny_network(
-        &self,
-        target: &str,
-    ) -> Result<(), OrchestratorError> {
+    pub async fn policy_deny_network(&self, target: &str) -> Result<(), OrchestratorError> {
         let output = self
             .exec_multi_command(&["policy", "deny", "network"], &["-g", target])
             .await?;
@@ -798,13 +778,13 @@ impl SbxCli {
     /// - Kit rules (id starts with "kit:"): removed by --resource
     /// - Per-sandbox rules: uses sandbox name instead of -g
     /// - Global rules: uses -g --id <uuid>
-    pub async fn policy_remove_rule(
-        &self,
-        rule_id: &str,
-    ) -> Result<(), OrchestratorError> {
+    pub async fn policy_remove_rule(&self, rule_id: &str) -> Result<(), OrchestratorError> {
         // Look up the rule to determine its origin and resource
         let state = self.policy_ls().await?;
-        let rule = state.rules.iter().find(|r| r.id.as_deref() == Some(rule_id));
+        let rule = state
+            .rules
+            .iter()
+            .find(|r| r.id.as_deref() == Some(rule_id));
 
         let rule = match rule {
             Some(r) => r.clone(),
@@ -827,7 +807,10 @@ impl SbxCli {
         // Kit rules must be removed by --resource; local rules by --id (UUID)
         if rule_id.starts_with("kit:") || rule_id.starts_with("default-") {
             let output = self
-                .exec_multi_command(&["policy", "rm", "network"], &[&scope_arg, "--resource", &rule.target])
+                .exec_multi_command(
+                    &["policy", "rm", "network"],
+                    &[&scope_arg, "--resource", &rule.target],
+                )
                 .await?;
             if !output.success {
                 return Err(OrchestratorError::SbxError(format!(
@@ -880,8 +863,7 @@ impl SbxCli {
         }
 
         // Attempt JSON parse
-        let entries: Vec<PolicyLogEntry> =
-            serde_json::from_str(&output.stdout).unwrap_or_default();
+        let entries: Vec<PolicyLogEntry> = serde_json::from_str(&output.stdout).unwrap_or_default();
         Ok(entries)
     }
 
@@ -926,11 +908,7 @@ impl SbxCli {
     /// Set a global secret: `sbx secret set -g <service> -t <value>`
     ///
     /// SECURITY: The value is passed as a single arg and never logged.
-    pub async fn secret_set(
-        &self,
-        service: &str,
-        value: &str,
-    ) -> Result<(), OrchestratorError> {
+    pub async fn secret_set(&self, service: &str, value: &str) -> Result<(), OrchestratorError> {
         let output = self
             .exec_multi_command(&["secret", "set"], &["-g", service, "-t", value])
             .await?;
@@ -964,10 +942,7 @@ impl SbxCli {
     }
 
     /// Initiate OAuth flow for a service: `sbx secret set -g <service> --oauth`
-    pub async fn secret_set_oauth(
-        &self,
-        service: &str,
-    ) -> Result<(), OrchestratorError> {
+    pub async fn secret_set_oauth(&self, service: &str) -> Result<(), OrchestratorError> {
         let output = self
             .exec_multi_command(&["secret", "set"], &["-g", service, "--oauth"])
             .await?;
@@ -996,9 +971,7 @@ impl SbxCli {
 
     /// List saved templates: `sbx template ls`
     pub async fn template_ls(&self) -> Result<Vec<TemplateInfo>, OrchestratorError> {
-        let output = self
-            .exec_multi_command(&["template", "ls"], &[])
-            .await?;
+        let output = self.exec_multi_command(&["template", "ls"], &[]).await?;
         if !output.success {
             return Err(OrchestratorError::SbxError(format!(
                 "sbx template ls failed: {}",
@@ -1042,10 +1015,7 @@ impl SbxCli {
     }
 
     /// Load a template from a tar file: `sbx template load <file.tar>`
-    pub async fn template_load(
-        &self,
-        tar_path: &Path,
-    ) -> Result<(), OrchestratorError> {
+    pub async fn template_load(&self, tar_path: &Path) -> Result<(), OrchestratorError> {
         let path_str = tar_path.to_string_lossy();
         let output = self
             .exec_multi_command(&["template", "load"], &[&path_str])
@@ -1061,9 +1031,7 @@ impl SbxCli {
 
     /// Remove a template: `sbx template rm <tag>`
     pub async fn template_rm(&self, tag: &str) -> Result<(), OrchestratorError> {
-        let output = self
-            .exec_multi_command(&["template", "rm"], &[tag])
-            .await?;
+        let output = self.exec_multi_command(&["template", "rm"], &[tag]).await?;
         if !output.success {
             return Err(OrchestratorError::SbxError(format!(
                 "sbx template rm failed: {}",
@@ -1170,9 +1138,10 @@ fn parse_port_output(output: &str) -> Vec<PortMapping> {
             };
 
             let (sandbox_port, protocol) = match right.split_once('/') {
-                Some((port, proto)) => {
-                    (port.trim().parse::<u16>().unwrap_or(0), proto.trim().to_string())
-                }
+                Some((port, proto)) => (
+                    port.trim().parse::<u16>().unwrap_or(0),
+                    proto.trim().to_string(),
+                ),
                 None => (right.parse::<u16>().unwrap_or(0), "tcp".to_string()),
             };
 
@@ -1361,7 +1330,7 @@ fn parse_template_ls_text(output: &str) -> Vec<TemplateInfo> {
         if let Some(tag) = parts.first() {
             // Skip lines that look like prose messages rather than template entries
             // Template tags are typically short identifiers without spaces in the first token
-            if tag.len() > 0 && !tag.contains(' ') {
+            if !tag.is_empty() && !tag.contains(' ') {
                 templates.push(TemplateInfo {
                     tag: tag.to_string(),
                     size: parts.get(1).map(|s| s.to_string()),
@@ -1404,8 +1373,8 @@ pub fn extract_sandbox_name(output: &str) -> String {
     // Case 3: look for "sbx run NAME" pattern at end of output
     for line in output.lines().rev() {
         let line = line.trim();
-        if line.starts_with("sbx run ") {
-            return line["sbx run ".len()..].trim().to_string();
+        if let Some(rest) = line.strip_prefix("sbx run ") {
+            return rest.trim().to_string();
         }
     }
 

@@ -22,10 +22,9 @@ impl Database {
             .map_err(|e| OrchestratorError::Database(format!("Failed to set WAL mode: {}", e)))?;
 
         // Enable foreign keys
-        conn.execute_batch("PRAGMA foreign_keys=ON;")
-            .map_err(|e| {
-                OrchestratorError::Database(format!("Failed to enable foreign keys: {}", e))
-            })?;
+        conn.execute_batch("PRAGMA foreign_keys=ON;").map_err(|e| {
+            OrchestratorError::Database(format!("Failed to enable foreign keys: {}", e))
+        })?;
 
         let db = Self {
             conn: Mutex::new(conn),
@@ -38,13 +37,13 @@ impl Database {
 
     /// Open an in-memory database (useful for testing).
     pub fn open_in_memory() -> Result<Self, OrchestratorError> {
-        let conn = Connection::open_in_memory()
-            .map_err(|e| OrchestratorError::Database(format!("Failed to open in-memory db: {}", e)))?;
+        let conn = Connection::open_in_memory().map_err(|e| {
+            OrchestratorError::Database(format!("Failed to open in-memory db: {}", e))
+        })?;
 
-        conn.execute_batch("PRAGMA foreign_keys=ON;")
-            .map_err(|e| {
-                OrchestratorError::Database(format!("Failed to enable foreign keys: {}", e))
-            })?;
+        conn.execute_batch("PRAGMA foreign_keys=ON;").map_err(|e| {
+            OrchestratorError::Database(format!("Failed to enable foreign keys: {}", e))
+        })?;
 
         let db = Self {
             conn: Mutex::new(conn),
@@ -337,12 +336,7 @@ mod tests {
 
         db.with_conn(|conn| {
             // Verify all Phase 1 tables exist by querying their schema
-            let tables = vec![
-                "agent_types",
-                "personas",
-                "persona_mcp_servers",
-                "sessions",
-            ];
+            let tables = vec!["agent_types", "personas", "persona_mcp_servers", "sessions"];
 
             for table in tables {
                 let count: i64 = conn

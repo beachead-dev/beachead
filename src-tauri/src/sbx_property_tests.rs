@@ -49,10 +49,7 @@ fn kit_paths_strategy() -> impl Strategy<Value = Vec<PathBuf>> {
 
 /// Strategy for generating optional template names.
 fn template_strategy() -> impl Strategy<Value = Option<String>> {
-    prop_oneof![
-        Just(None),
-        "[a-z][a-z0-9-]{2,15}".prop_map(|s| Some(s)),
-    ]
+    prop_oneof![Just(None), "[a-z][a-z0-9-]{2,15}".prop_map(|s| Some(s)),]
 }
 
 /// Strategy for generating optional agent CLI args.
@@ -62,10 +59,7 @@ fn agent_args_strategy() -> impl Strategy<Value = Vec<String>> {
 
 /// Strategy for generating optional sandbox names.
 fn name_strategy() -> impl Strategy<Value = Option<String>> {
-    prop_oneof![
-        Just(None),
-        "[a-z][a-z0-9-]{2,15}".prop_map(|s| Some(s)),
-    ]
+    prop_oneof![Just(None), "[a-z][a-z0-9-]{2,15}".prop_map(|s| Some(s)),]
 }
 
 /// Strategy for generating complete SbxRunArgs.

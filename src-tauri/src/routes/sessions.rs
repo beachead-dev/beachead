@@ -10,15 +10,17 @@ use crate::error::OrchestratorError;
 use crate::server::AppState;
 use crate::session_manager::SessionManager;
 use crate::types::{
-    CreateSessionRequest, CreateSessionResponse, Session, SessionId, SessionStatus,
-    UploadResult,
+    CreateSessionRequest, CreateSessionResponse, Session, SessionId, SessionStatus, UploadResult,
 };
 
 /// Build the session routes sub-router.
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/sessions", post(create_session).get(list_sessions))
-        .route("/api/sessions/{id}", get(get_session).delete(remove_session))
+        .route(
+            "/api/sessions/{id}",
+            get(get_session).delete(remove_session),
+        )
         .route("/api/sessions/{id}/stop", post(stop_session))
         .route("/api/sessions/{id}/resume", post(resume_session))
         .route("/api/sessions/{id}/upload", post(upload_file))

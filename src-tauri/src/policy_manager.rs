@@ -43,11 +43,7 @@ impl PolicyManager {
     /// # Arguments
     /// * `action` - Must be "allow" or "deny"
     /// * `target` - The network target (e.g., "127.0.0.1:8080" or "*.example.com")
-    pub async fn add_rule(
-        &self,
-        action: &str,
-        target: &str,
-    ) -> Result<(), OrchestratorError> {
+    pub async fn add_rule(&self, action: &str, target: &str) -> Result<(), OrchestratorError> {
         if action.trim().is_empty() {
             return Err(OrchestratorError::Validation(
                 "Action cannot be empty".to_string(),
@@ -93,7 +89,6 @@ impl PolicyManager {
         self.sbx.policy_log(sandbox_id, limit).await
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -377,7 +372,9 @@ exit 1
 "#;
         let (mgr, _dir) = create_test_manager(script);
         // Pass with "local:" prefix — should be stripped for --id
-        let result = mgr.remove_rule("local:5fa4ef3f-009e-4ffb-8812-1ca77e211eff").await;
+        let result = mgr
+            .remove_rule("local:5fa4ef3f-009e-4ffb-8812-1ca77e211eff")
+            .await;
         assert!(result.is_ok());
     }
 

@@ -40,7 +40,13 @@ fn github_token_strategy() -> impl Strategy<Value = String> {
 /// Generate a valid GitLab token (glpat- followed by 20+ alphanumeric/dash/underscore chars).
 fn gitlab_token_strategy() -> impl Strategy<Value = String> {
     prop::collection::vec(
-        prop_oneof![b'a'..=b'z', b'A'..=b'Z', b'0'..=b'9', Just(b'-'), Just(b'_')],
+        prop_oneof![
+            b'a'..=b'z',
+            b'A'..=b'Z',
+            b'0'..=b'9',
+            Just(b'-'),
+            Just(b'_')
+        ],
         20..=40,
     )
     .prop_map(|chars| {

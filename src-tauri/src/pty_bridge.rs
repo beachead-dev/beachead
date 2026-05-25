@@ -44,6 +44,12 @@ pub struct PtyBridge {
     sessions: DashMap<SessionId, Arc<PtySession>>,
 }
 
+impl Default for PtyBridge {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PtyBridge {
     /// Create a new PtyBridge with no active sessions.
     pub fn new() -> Self {
@@ -137,12 +143,9 @@ impl PtyBridge {
 
     /// Write data to the PTY stdin for the given session.
     pub fn write(&self, session_id: &SessionId, data: &[u8]) -> Result<(), OrchestratorError> {
-        let session = self
-            .sessions
-            .get(session_id)
-            .ok_or_else(|| {
-                OrchestratorError::PtyError(format!("No PTY session for {}", session_id))
-            })?;
+        let session = self.sessions.get(session_id).ok_or_else(|| {
+            OrchestratorError::PtyError(format!("No PTY session for {}", session_id))
+        })?;
 
         let session = session.clone();
         let mut writer = session.writer.blocking_lock();
@@ -154,16 +157,18 @@ impl PtyBridge {
 
     /// Resize the PTY for the given session.
     /// Clamps rows to 1–500 and cols to 1–1000 to prevent extreme values.
-    pub fn resize(&self, session_id: &SessionId, rows: u16, cols: u16) -> Result<(), OrchestratorError> {
+    pub fn resize(
+        &self,
+        session_id: &SessionId,
+        rows: u16,
+        cols: u16,
+    ) -> Result<(), OrchestratorError> {
         let rows = rows.clamp(1, 500);
         let cols = cols.clamp(1, 1000);
 
-        let session = self
-            .sessions
-            .get(session_id)
-            .ok_or_else(|| {
-                OrchestratorError::PtyError(format!("No PTY session for {}", session_id))
-            })?;
+        let session = self.sessions.get(session_id).ok_or_else(|| {
+            OrchestratorError::PtyError(format!("No PTY session for {}", session_id))
+        })?;
 
         let session = session.clone();
         let master = session.master.blocking_lock();
@@ -242,8 +247,7 @@ impl PtyBridge {
                         .await;
                     }
                     Message::Text(text) => {
-                        if text.starts_with('\x01') {
-                            let json_str = &text[1..];
+                        if let Some(json_str) = text.strip_prefix('\x01') {
                             if let Ok(resize) = serde_json::from_str::<ResizeMessage>(json_str) {
                                 let rows = resize.rows.clamp(1, 500);
                                 let cols = resize.cols.clamp(1, 1000);
@@ -287,9 +291,9 @@ impl PtyBridge {
 
         // Kill the child process
         let mut child = session.child.blocking_lock();
-        child
-            .kill()
-            .map_err(|e| OrchestratorError::PtyError(format!("Failed to kill PTY process: {}", e)))?;
+        child.kill().map_err(|e| {
+            OrchestratorError::PtyError(format!("Failed to kill PTY process: {}", e))
+        })?;
 
         // Mark as stopped
         let mut status = session.status.blocking_lock();
@@ -299,13 +303,10 @@ impl PtyBridge {
     }
 
     /// Check if a session exists and return its status.
-    pub fn session_status(
-        &self,
-        session_id: &SessionId,
-    ) -> Option<PtySessionStatus> {
-        self.sessions.get(session_id).map(|s| {
-            s.status.blocking_lock().clone()
-        })
+    pub fn session_status(&self, session_id: &SessionId) -> Option<PtySessionStatus> {
+        self.sessions
+            .get(session_id)
+            .map(|s| s.status.blocking_lock().clone())
     }
 
     /// Get the number of active sessions.

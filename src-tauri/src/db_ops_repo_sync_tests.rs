@@ -33,7 +33,8 @@ mod tests {
             updated_at: now,
         };
 
-        db.with_conn(|conn| insert_agent_type(conn, &agent)).unwrap();
+        db.with_conn(|conn| insert_agent_type(conn, &agent))
+            .unwrap();
 
         let persona_id = PersonaId::new();
         let persona = Persona {
@@ -82,18 +83,27 @@ mod tests {
         let (db, persona_id) = setup_db_with_persona();
         let repo = make_managed_repo(&persona_id, "/home/user/project", "/mirrors/project");
 
-        db.with_conn(|conn| insert_managed_repo(conn, &repo)).unwrap();
+        db.with_conn(|conn| insert_managed_repo(conn, &repo))
+            .unwrap();
 
-        let fetched = db.with_conn(|conn| get_managed_repo(conn, &repo.id)).unwrap();
+        let fetched = db
+            .with_conn(|conn| get_managed_repo(conn, &repo.id))
+            .unwrap();
 
         assert_eq!(fetched.id.0, repo.id.0);
         assert_eq!(fetched.persona_id.0, persona_id.0);
         assert_eq!(fetched.workspace_path, "/home/user/project");
         assert_eq!(fetched.mirror_path, "/mirrors/project");
-        assert_eq!(fetched.remote_url, Some("https://github.com/user/repo.git".to_string()));
+        assert_eq!(
+            fetched.remote_url,
+            Some("https://github.com/user/repo.git".to_string())
+        );
         assert_eq!(fetched.remote_provider, Some(RemoteProvider::Github));
         assert_eq!(fetched.branch_strategy, BranchStrategy::Direct);
-        assert_eq!(fetched.branch_pattern, Some("ai/<persona-name>/<date>".to_string()));
+        assert_eq!(
+            fetched.branch_pattern,
+            Some("ai/<persona-name>/<date>".to_string())
+        );
         assert_eq!(fetched.attribution_mode, AttributionMode::KeepAgent);
         assert_eq!(fetched.sync_mode, SyncMode::Remote);
         assert_eq!(fetched.secret_scan_mode, SecretScanMode::Block);
@@ -124,8 +134,10 @@ mod tests {
         let repo1 = make_managed_repo(&persona_id, "/home/user/alpha", "/mirrors/alpha");
         let repo2 = make_managed_repo(&persona_id, "/home/user/beta", "/mirrors/beta");
 
-        db.with_conn(|conn| insert_managed_repo(conn, &repo1)).unwrap();
-        db.with_conn(|conn| insert_managed_repo(conn, &repo2)).unwrap();
+        db.with_conn(|conn| insert_managed_repo(conn, &repo1))
+            .unwrap();
+        db.with_conn(|conn| insert_managed_repo(conn, &repo2))
+            .unwrap();
 
         let repos = db.with_conn(|conn| list_managed_repos(conn)).unwrap();
         assert_eq!(repos.len(), 2);
@@ -154,22 +166,29 @@ mod tests {
             created_at: now,
             updated_at: now,
         };
-        db.with_conn(|conn| insert_persona(conn, &persona2)).unwrap();
+        db.with_conn(|conn| insert_persona(conn, &persona2))
+            .unwrap();
 
         // Insert repos for both personas
         let repo1 = make_managed_repo(&persona_id, "/home/user/project1", "/mirrors/project1");
         let repo2 = make_managed_repo(&persona2_id, "/home/user/project2", "/mirrors/project2");
 
-        db.with_conn(|conn| insert_managed_repo(conn, &repo1)).unwrap();
-        db.with_conn(|conn| insert_managed_repo(conn, &repo2)).unwrap();
+        db.with_conn(|conn| insert_managed_repo(conn, &repo1))
+            .unwrap();
+        db.with_conn(|conn| insert_managed_repo(conn, &repo2))
+            .unwrap();
 
         // List by first persona
-        let repos = db.with_conn(|conn| list_managed_repos_by_persona(conn, &persona_id)).unwrap();
+        let repos = db
+            .with_conn(|conn| list_managed_repos_by_persona(conn, &persona_id))
+            .unwrap();
         assert_eq!(repos.len(), 1);
         assert_eq!(repos[0].workspace_path, "/home/user/project1");
 
         // List by second persona
-        let repos2 = db.with_conn(|conn| list_managed_repos_by_persona(conn, &persona2_id)).unwrap();
+        let repos2 = db
+            .with_conn(|conn| list_managed_repos_by_persona(conn, &persona2_id))
+            .unwrap();
         assert_eq!(repos2.len(), 1);
         assert_eq!(repos2[0].workspace_path, "/home/user/project2");
     }
@@ -179,7 +198,8 @@ mod tests {
         let (db, persona_id) = setup_db_with_persona();
         let repo = make_managed_repo(&persona_id, "/home/user/project", "/mirrors/project");
 
-        db.with_conn(|conn| insert_managed_repo(conn, &repo)).unwrap();
+        db.with_conn(|conn| insert_managed_repo(conn, &repo))
+            .unwrap();
 
         // Modify fields
         let mut updated = repo.clone();
@@ -193,13 +213,22 @@ mod tests {
         updated.check_interval_seconds = 600;
         updated.updated_at = Utc::now();
 
-        db.with_conn(|conn| update_managed_repo(conn, &repo.id, &updated)).unwrap();
+        db.with_conn(|conn| update_managed_repo(conn, &repo.id, &updated))
+            .unwrap();
 
-        let fetched = db.with_conn(|conn| get_managed_repo(conn, &repo.id)).unwrap();
-        assert_eq!(fetched.remote_url, Some("https://gitlab.com/user/repo.git".to_string()));
+        let fetched = db
+            .with_conn(|conn| get_managed_repo(conn, &repo.id))
+            .unwrap();
+        assert_eq!(
+            fetched.remote_url,
+            Some("https://gitlab.com/user/repo.git".to_string())
+        );
         assert_eq!(fetched.remote_provider, Some(RemoteProvider::Gitlab));
         assert_eq!(fetched.branch_strategy, BranchStrategy::FeatureBranch);
-        assert_eq!(fetched.branch_pattern, Some("feature/<persona>/<date>".to_string()));
+        assert_eq!(
+            fetched.branch_pattern,
+            Some("feature/<persona>/<date>".to_string())
+        );
         assert_eq!(fetched.attribution_mode, AttributionMode::CoAuthoredBy);
         assert_eq!(fetched.sync_mode, SyncMode::LocalOnly);
         assert_eq!(fetched.secret_scan_mode, SecretScanMode::WarnOnly);
@@ -221,10 +250,12 @@ mod tests {
         let (db, persona_id) = setup_db_with_persona();
         let repo = make_managed_repo(&persona_id, "/home/user/project", "/mirrors/project");
 
-        db.with_conn(|conn| insert_managed_repo(conn, &repo)).unwrap();
+        db.with_conn(|conn| insert_managed_repo(conn, &repo))
+            .unwrap();
 
         // Delete
-        db.with_conn(|conn| delete_managed_repo(conn, &repo.id)).unwrap();
+        db.with_conn(|conn| delete_managed_repo(conn, &repo.id))
+            .unwrap();
 
         // Verify gone
         let result = db.with_conn(|conn| get_managed_repo(conn, &repo.id));
@@ -246,16 +277,23 @@ mod tests {
         let repo = make_managed_repo(&persona_id, "/home/user/project", "/mirrors/project");
 
         // Before insert
-        let exists = db.with_conn(|conn| managed_repo_exists(conn, &persona_id, "/home/user/project")).unwrap();
+        let exists = db
+            .with_conn(|conn| managed_repo_exists(conn, &persona_id, "/home/user/project"))
+            .unwrap();
         assert!(!exists);
 
         // After insert
-        db.with_conn(|conn| insert_managed_repo(conn, &repo)).unwrap();
-        let exists = db.with_conn(|conn| managed_repo_exists(conn, &persona_id, "/home/user/project")).unwrap();
+        db.with_conn(|conn| insert_managed_repo(conn, &repo))
+            .unwrap();
+        let exists = db
+            .with_conn(|conn| managed_repo_exists(conn, &persona_id, "/home/user/project"))
+            .unwrap();
         assert!(exists);
 
         // Different path should not exist
-        let exists = db.with_conn(|conn| managed_repo_exists(conn, &persona_id, "/home/user/other")).unwrap();
+        let exists = db
+            .with_conn(|conn| managed_repo_exists(conn, &persona_id, "/home/user/other"))
+            .unwrap();
         assert!(!exists);
     }
 
@@ -266,12 +304,16 @@ mod tests {
         let (db, persona_id) = setup_db_with_persona();
 
         let repo1 = make_managed_repo(&persona_id, "/home/user/project", "/mirrors/project1");
-        db.with_conn(|conn| insert_managed_repo(conn, &repo1)).unwrap();
+        db.with_conn(|conn| insert_managed_repo(conn, &repo1))
+            .unwrap();
 
         // Same persona_id + workspace_path, different id and mirror
         let repo2 = make_managed_repo(&persona_id, "/home/user/project", "/mirrors/project2");
         let result = db.with_conn(|conn| insert_managed_repo(conn, &repo2));
-        assert!(result.is_err(), "UNIQUE(persona_id, workspace_path) should prevent duplicate");
+        assert!(
+            result.is_err(),
+            "UNIQUE(persona_id, workspace_path) should prevent duplicate"
+        );
     }
 
     #[test]
@@ -294,14 +336,17 @@ mod tests {
             created_at: now,
             updated_at: now,
         };
-        db.with_conn(|conn| insert_persona(conn, &persona2)).unwrap();
+        db.with_conn(|conn| insert_persona(conn, &persona2))
+            .unwrap();
 
         // Same workspace_path but different persona_id should succeed
         let repo1 = make_managed_repo(&persona_id, "/home/user/project", "/mirrors/p1/project");
         let repo2 = make_managed_repo(&persona2_id, "/home/user/project", "/mirrors/p2/project");
 
-        db.with_conn(|conn| insert_managed_repo(conn, &repo1)).unwrap();
-        db.with_conn(|conn| insert_managed_repo(conn, &repo2)).unwrap();
+        db.with_conn(|conn| insert_managed_repo(conn, &repo1))
+            .unwrap();
+        db.with_conn(|conn| insert_managed_repo(conn, &repo2))
+            .unwrap();
 
         let all = db.with_conn(|conn| list_managed_repos(conn)).unwrap();
         assert_eq!(all.len(), 2);
@@ -314,7 +359,8 @@ mod tests {
         let (db, persona_id) = setup_db_with_persona();
 
         let repo = make_managed_repo(&persona_id, "/home/user/project", "/mirrors/project");
-        db.with_conn(|conn| insert_managed_repo(conn, &repo)).unwrap();
+        db.with_conn(|conn| insert_managed_repo(conn, &repo))
+            .unwrap();
 
         // Delete persona via raw SQL (simulating what the app does)
         db.with_conn(|conn| {
@@ -329,7 +375,10 @@ mod tests {
 
         // Managed repo should be gone
         let repos = db.with_conn(|conn| list_managed_repos(conn)).unwrap();
-        assert!(repos.is_empty(), "Managed repos should be cascade-deleted when persona is deleted");
+        assert!(
+            repos.is_empty(),
+            "Managed repos should be cascade-deleted when persona is deleted"
+        );
     }
 
     #[test]
@@ -337,7 +386,8 @@ mod tests {
         let (db, persona_id) = setup_db_with_persona();
 
         let repo = make_managed_repo(&persona_id, "/home/user/project", "/mirrors/project");
-        db.with_conn(|conn| insert_managed_repo(conn, &repo)).unwrap();
+        db.with_conn(|conn| insert_managed_repo(conn, &repo))
+            .unwrap();
 
         // Insert credential for the repo
         let cred = RepoCredential {
@@ -348,7 +398,8 @@ mod tests {
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
-        db.with_conn(|conn| insert_repo_credential(conn, &cred)).unwrap();
+        db.with_conn(|conn| insert_repo_credential(conn, &cred))
+            .unwrap();
 
         // Delete persona
         db.with_conn(|conn| {
@@ -366,8 +417,13 @@ mod tests {
         assert!(repos.is_empty());
 
         // Verify credential is gone by trying to get it
-        let cred_result = db.with_conn(|conn| get_repo_credential_by_repo(conn, &repo.id)).unwrap();
-        assert!(cred_result.is_none(), "Repo credentials should be cascade-deleted when persona is deleted");
+        let cred_result = db
+            .with_conn(|conn| get_repo_credential_by_repo(conn, &repo.id))
+            .unwrap();
+        assert!(
+            cred_result.is_none(),
+            "Repo credentials should be cascade-deleted when persona is deleted"
+        );
     }
 
     // --- Repo credential CRUD tests ---
@@ -376,7 +432,8 @@ mod tests {
     fn test_insert_and_get_repo_credential() {
         let (db, persona_id) = setup_db_with_persona();
         let repo = make_managed_repo(&persona_id, "/home/user/project", "/mirrors/project");
-        db.with_conn(|conn| insert_managed_repo(conn, &repo)).unwrap();
+        db.with_conn(|conn| insert_managed_repo(conn, &repo))
+            .unwrap();
 
         let cred = RepoCredential {
             id: uuid::Uuid::new_v4().to_string(),
@@ -386,14 +443,20 @@ mod tests {
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
-        db.with_conn(|conn| insert_repo_credential(conn, &cred)).unwrap();
+        db.with_conn(|conn| insert_repo_credential(conn, &cred))
+            .unwrap();
 
-        let fetched = db.with_conn(|conn| get_repo_credential_by_repo(conn, &repo.id)).unwrap();
+        let fetched = db
+            .with_conn(|conn| get_repo_credential_by_repo(conn, &repo.id))
+            .unwrap();
         assert!(fetched.is_some());
         let fetched = fetched.unwrap();
         assert_eq!(fetched.id, cred.id);
         assert_eq!(fetched.repo_id.0, repo.id.0);
-        assert_eq!(fetched.keyring_service_name, format!("beachead-repo-sync-{}", repo.id.0));
+        assert_eq!(
+            fetched.keyring_service_name,
+            format!("beachead-repo-sync-{}", repo.id.0)
+        );
         assert_eq!(fetched.credential_type, CredentialType::Token);
     }
 
@@ -401,9 +464,12 @@ mod tests {
     fn test_get_repo_credential_none_when_missing() {
         let (db, persona_id) = setup_db_with_persona();
         let repo = make_managed_repo(&persona_id, "/home/user/project", "/mirrors/project");
-        db.with_conn(|conn| insert_managed_repo(conn, &repo)).unwrap();
+        db.with_conn(|conn| insert_managed_repo(conn, &repo))
+            .unwrap();
 
-        let result = db.with_conn(|conn| get_repo_credential_by_repo(conn, &repo.id)).unwrap();
+        let result = db
+            .with_conn(|conn| get_repo_credential_by_repo(conn, &repo.id))
+            .unwrap();
         assert!(result.is_none());
     }
 
@@ -411,7 +477,8 @@ mod tests {
     fn test_delete_repo_credential() {
         let (db, persona_id) = setup_db_with_persona();
         let repo = make_managed_repo(&persona_id, "/home/user/project", "/mirrors/project");
-        db.with_conn(|conn| insert_managed_repo(conn, &repo)).unwrap();
+        db.with_conn(|conn| insert_managed_repo(conn, &repo))
+            .unwrap();
 
         let cred = RepoCredential {
             id: uuid::Uuid::new_v4().to_string(),
@@ -421,13 +488,17 @@ mod tests {
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
-        db.with_conn(|conn| insert_repo_credential(conn, &cred)).unwrap();
+        db.with_conn(|conn| insert_repo_credential(conn, &cred))
+            .unwrap();
 
         // Delete credential
-        db.with_conn(|conn| delete_repo_credential(conn, &repo.id)).unwrap();
+        db.with_conn(|conn| delete_repo_credential(conn, &repo.id))
+            .unwrap();
 
         // Verify gone
-        let result = db.with_conn(|conn| get_repo_credential_by_repo(conn, &repo.id)).unwrap();
+        let result = db
+            .with_conn(|conn| get_repo_credential_by_repo(conn, &repo.id))
+            .unwrap();
         assert!(result.is_none());
     }
 
@@ -435,7 +506,8 @@ mod tests {
     fn test_cascade_delete_credential_on_repo_delete() {
         let (db, persona_id) = setup_db_with_persona();
         let repo = make_managed_repo(&persona_id, "/home/user/project", "/mirrors/project");
-        db.with_conn(|conn| insert_managed_repo(conn, &repo)).unwrap();
+        db.with_conn(|conn| insert_managed_repo(conn, &repo))
+            .unwrap();
 
         let cred = RepoCredential {
             id: uuid::Uuid::new_v4().to_string(),
@@ -445,14 +517,21 @@ mod tests {
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
-        db.with_conn(|conn| insert_repo_credential(conn, &cred)).unwrap();
+        db.with_conn(|conn| insert_repo_credential(conn, &cred))
+            .unwrap();
 
         // Delete the repo (not the persona)
-        db.with_conn(|conn| delete_managed_repo(conn, &repo.id)).unwrap();
+        db.with_conn(|conn| delete_managed_repo(conn, &repo.id))
+            .unwrap();
 
         // Credential should be cascade-deleted
-        let result = db.with_conn(|conn| get_repo_credential_by_repo(conn, &repo.id)).unwrap();
-        assert!(result.is_none(), "Repo credentials should be cascade-deleted when repo is deleted");
+        let result = db
+            .with_conn(|conn| get_repo_credential_by_repo(conn, &repo.id))
+            .unwrap();
+        assert!(
+            result.is_none(),
+            "Repo credentials should be cascade-deleted when repo is deleted"
+        );
     }
 
     // --- Insert with nullable fields ---
@@ -479,9 +558,12 @@ mod tests {
             updated_at: now,
         };
 
-        db.with_conn(|conn| insert_managed_repo(conn, &repo)).unwrap();
+        db.with_conn(|conn| insert_managed_repo(conn, &repo))
+            .unwrap();
 
-        let fetched = db.with_conn(|conn| get_managed_repo(conn, &repo.id)).unwrap();
+        let fetched = db
+            .with_conn(|conn| get_managed_repo(conn, &repo.id))
+            .unwrap();
         assert_eq!(fetched.remote_url, None);
         assert_eq!(fetched.remote_provider, None);
         assert_eq!(fetched.branch_pattern, None);

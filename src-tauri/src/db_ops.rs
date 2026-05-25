@@ -13,8 +13,8 @@ use crate::types::{
 // --- Agent Type Operations ---
 
 pub fn insert_agent_type(conn: &Connection, agent: &AgentType) -> Result<(), OrchestratorError> {
-    let metadata_json =
-        serde_json::to_string(&agent.metadata).map_err(|e| OrchestratorError::Internal(e.to_string()))?;
+    let metadata_json = serde_json::to_string(&agent.metadata)
+        .map_err(|e| OrchestratorError::Internal(e.to_string()))?;
 
     conn.execute(
         "INSERT INTO agent_types (id, name, sbx_agent, kit_ref, is_builtin, metadata, created_at, updated_at)
@@ -752,10 +752,7 @@ pub fn list_sessions(conn: &Connection) -> Result<Vec<Session>, OrchestratorErro
 
 // --- Managed Repo Operations ---
 
-pub fn insert_managed_repo(
-    conn: &Connection,
-    repo: &ManagedRepo,
-) -> Result<(), OrchestratorError> {
+pub fn insert_managed_repo(conn: &Connection, repo: &ManagedRepo) -> Result<(), OrchestratorError> {
     conn.execute(
         "INSERT INTO managed_repos (id, persona_id, workspace_path, mirror_path, remote_url, remote_provider, branch_strategy, branch_pattern, attribution_mode, sync_mode, secret_scan_mode, check_interval_seconds, created_at, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
@@ -849,11 +846,19 @@ pub fn list_managed_repos(conn: &Connection) -> Result<Vec<ManagedRepo>, Orchest
                 mirror_path: row.get(3)?,
                 remote_url: row.get(4)?,
                 remote_provider: remote_provider_str.and_then(|s| s.parse().ok()),
-                branch_strategy: branch_strategy_str.parse().unwrap_or(crate::types::BranchStrategy::Direct),
+                branch_strategy: branch_strategy_str
+                    .parse()
+                    .unwrap_or(crate::types::BranchStrategy::Direct),
                 branch_pattern: row.get(7)?,
-                attribution_mode: attribution_mode_str.parse().unwrap_or(crate::types::AttributionMode::KeepAgent),
-                sync_mode: sync_mode_str.parse().unwrap_or(crate::types::SyncMode::Remote),
-                secret_scan_mode: secret_scan_mode_str.parse().unwrap_or(crate::types::SecretScanMode::Block),
+                attribution_mode: attribution_mode_str
+                    .parse()
+                    .unwrap_or(crate::types::AttributionMode::KeepAgent),
+                sync_mode: sync_mode_str
+                    .parse()
+                    .unwrap_or(crate::types::SyncMode::Remote),
+                secret_scan_mode: secret_scan_mode_str
+                    .parse()
+                    .unwrap_or(crate::types::SecretScanMode::Block),
                 check_interval_seconds: row.get(11)?,
                 created_at: DateTime::parse_from_rfc3339(&created_str)
                     .unwrap()
@@ -895,11 +900,19 @@ pub fn list_managed_repos_by_persona(
                 mirror_path: row.get(3)?,
                 remote_url: row.get(4)?,
                 remote_provider: remote_provider_str.and_then(|s| s.parse().ok()),
-                branch_strategy: branch_strategy_str.parse().unwrap_or(crate::types::BranchStrategy::Direct),
+                branch_strategy: branch_strategy_str
+                    .parse()
+                    .unwrap_or(crate::types::BranchStrategy::Direct),
                 branch_pattern: row.get(7)?,
-                attribution_mode: attribution_mode_str.parse().unwrap_or(crate::types::AttributionMode::KeepAgent),
-                sync_mode: sync_mode_str.parse().unwrap_or(crate::types::SyncMode::Remote),
-                secret_scan_mode: secret_scan_mode_str.parse().unwrap_or(crate::types::SecretScanMode::Block),
+                attribution_mode: attribution_mode_str
+                    .parse()
+                    .unwrap_or(crate::types::AttributionMode::KeepAgent),
+                sync_mode: sync_mode_str
+                    .parse()
+                    .unwrap_or(crate::types::SyncMode::Remote),
+                secret_scan_mode: secret_scan_mode_str
+                    .parse()
+                    .unwrap_or(crate::types::SecretScanMode::Block),
                 check_interval_seconds: row.get(11)?,
                 created_at: DateTime::parse_from_rfc3339(&created_str)
                     .unwrap()
@@ -969,10 +982,7 @@ pub fn update_managed_repo_mirror_path(
     Ok(())
 }
 
-pub fn delete_managed_repo(
-    conn: &Connection,
-    id: &ManagedRepoId,
-) -> Result<(), OrchestratorError> {
+pub fn delete_managed_repo(conn: &Connection, id: &ManagedRepoId) -> Result<(), OrchestratorError> {
     let rows = conn.execute("DELETE FROM managed_repos WHERE id = ?1", params![id.0])?;
     if rows == 0 {
         return Err(OrchestratorError::NotFound(format!(
@@ -1038,7 +1048,9 @@ pub fn get_repo_credential_by_repo(
                 id: row.get(0)?,
                 repo_id: ManagedRepoId(row.get(1)?),
                 keyring_service_name: row.get(2)?,
-                credential_type: credential_type_str.parse().unwrap_or(crate::types::CredentialType::Token),
+                credential_type: credential_type_str
+                    .parse()
+                    .unwrap_or(crate::types::CredentialType::Token),
                 created_at: DateTime::parse_from_rfc3339(&created_str)
                     .unwrap()
                     .with_timezone(&Utc),

@@ -30,7 +30,10 @@ pub enum GitError {
     NotFound(String),
 
     #[error("git command timed out after {timeout_secs}s: git {}", args.join(" "))]
-    Timeout { args: Vec<String>, timeout_secs: u64 },
+    Timeout {
+        args: Vec<String>,
+        timeout_secs: u64,
+    },
 
     #[error("git authentication failed: {stderr}")]
     AuthFailure { stderr: String },
@@ -99,7 +102,7 @@ impl GitCli {
             )
             .await?;
         let parts: Vec<&str> = output.stdout.trim().split('\t').collect();
-        let ahead = parts.get(0).and_then(|s| s.parse().ok()).unwrap_or(0);
+        let ahead = parts.first().and_then(|s| s.parse().ok()).unwrap_or(0);
         let behind = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
         Ok((ahead, behind))
     }
@@ -325,8 +328,7 @@ pub fn truncate_output(bytes: &[u8]) -> String {
 pub fn classify_git_error(stderr: &str, exit_code: i32, args: Vec<String>) -> GitError {
     let sanitized = sanitize_stderr(stderr);
 
-    if sanitized.contains("Authentication failed")
-        || sanitized.contains("could not read Username")
+    if sanitized.contains("Authentication failed") || sanitized.contains("could not read Username")
     {
         GitError::AuthFailure { stderr: sanitized }
     } else if sanitized.contains("CONFLICT") || sanitized.contains("Automatic merge failed") {
@@ -431,11 +433,7 @@ mod tests {
 
     #[test]
     fn test_classify_git_error_generic_non_zero() {
-        let err = classify_git_error(
-            "fatal: bad object HEAD",
-            128,
-            vec!["log".to_string()],
-        );
+        let err = classify_git_error("fatal: bad object HEAD", 128, vec!["log".to_string()]);
         match err {
             GitError::NonZeroExit {
                 exit_code,
@@ -555,7 +553,12 @@ mod tests {
             .output()
             .unwrap();
         std::process::Command::new("git")
-            .args(["remote", "add", "upstream", "https://example.com/upstream.git"])
+            .args([
+                "remote",
+                "add",
+                "upstream",
+                "https://example.com/upstream.git",
+            ])
             .current_dir(dir.path())
             .output()
             .unwrap();
@@ -615,7 +618,10 @@ mod tests {
         let git = GitCli::new("git".to_string());
         let branch = git.get_current_branch(dir.path()).await.unwrap();
         // Comparing a branch to itself should yield (0, 0)
-        let (ahead, behind) = git.ahead_behind(dir.path(), &branch, &branch).await.unwrap();
+        let (ahead, behind) = git
+            .ahead_behind(dir.path(), &branch, &branch)
+            .await
+            .unwrap();
         assert_eq!(ahead, 0);
         assert_eq!(behind, 0);
     }

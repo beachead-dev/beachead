@@ -17,7 +17,10 @@ pub fn router() -> Router<AppState> {
         .route("/api/policies", get(get_policies))
         .route("/api/policies/default", put(set_default_policy))
         .route("/api/policies/rules", axum::routing::post(add_rule))
-        .route("/api/policies/rules/{id}", axum::routing::delete(remove_rule))
+        .route(
+            "/api/policies/rules/{id}",
+            axum::routing::delete(remove_rule),
+        )
         .route("/api/policies/log", get(get_policy_log))
 }
 

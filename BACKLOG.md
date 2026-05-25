@@ -400,6 +400,32 @@ This is a Docker Sandboxes architectural behavior — the sandbox daemon proxies
 
 ## New Features
 
+### Shared Memory MCP Across Personas
+
+**Priority:** Medium  
+**Effort:** Medium  
+**Affected area:** `src-tauri/src/mcp_container_manager.rs`, `src-tauri/src/types.rs`, `src-tauri/src/routes/`, persona form UI
+
+**Description:** Allow a single memory MCP server instance to be shared across multiple personas. Currently each persona with memory enabled gets its own isolated MCP container and Docker volume (`beachead-memory-{persona_id}`). A shared memory instance would run one MCP container backed by a shared volume, with each persona getting its own bearer token for access control.
+
+**Already scaffolded (do not re-design, just implement):**
+- **DB schema** — Migration 3 in `db.rs` creates `shared_memory` table (id, name, description) and `persona_shared_memory` junction table (persona_id, shared_memory_id, bearer_token). The `mcp_containers` table has a nullable `shared_memory_id` column — when set, the container is a shared instance rather than per-persona.
+- **Export/import** — `McpContainerExport.shared_memory_id` and `SharedMemoryAssignmentExport` structs in `export_import_manager.rs` already read from `persona_shared_memory` for backup/restore.
+- **`McpContainer` struct** — `shared_memory_id: Option<String>` field already present.
+- **`SharedMemoryId` newtype** — was in `types.rs` alongside `PersonaId`, `McpContainerId`, etc. It was removed during CI clippy fixes (dead code, never constructed). Re-add it when implementing this feature.
+
+**Implementation:**
+- Re-add `SharedMemoryId` newtype to `types.rs` (same pattern as other ID types: `pub struct SharedMemoryId(pub String)`, `::new()`, `Display`)
+- Add `SharedMemoryManager` or extend `McpContainerManager` with: `create_shared_memory()`, `add_persona_to_shared_memory()`, `remove_persona_from_shared_memory()`, `delete_shared_memory()`
+- Volume naming: `beachead-shared-memory-{shared_memory_id}` (distinct from per-persona volumes)
+- Each persona in the shared group gets a unique bearer token in `persona_shared_memory`; the MCP container's bearer token validates against the set of issued tokens
+- Routes: CRUD for shared memory objects, endpoint to attach/detach personas
+- Frontend: shared memory section in persona settings — "Use shared memory" toggle, dropdown/selector of existing shared memory instances or "Create new", name/description input
+- `McpContainerManager::provision_for_persona()` already sets `shared_memory_id: None` — wire up the non-None path to reuse an existing shared container instead of provisioning a new one
+- Startup reconciliation: `reconcile_shared_memory_containers()` alongside existing per-persona reconciliation
+
+---
+
 ### Delete Memory Data Option When Disabling Memory
 
 **Priority:** Medium  

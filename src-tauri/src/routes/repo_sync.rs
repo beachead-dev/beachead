@@ -9,10 +9,10 @@ use axum::{
     routing::{get, post, put},
     Json, Router,
 };
+use chrono::Utc;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use chrono::Utc;
 use uuid::Uuid;
 
 use crate::db_ops;
@@ -142,7 +142,10 @@ pub fn router() -> Router<AppState> {
             "/api/repo-sync/repos/{id}/credentials",
             put(set_credentials).delete(delete_credentials),
         )
-        .route("/api/repo-sync/create-from-source", post(create_from_source))
+        .route(
+            "/api/repo-sync/create-from-source",
+            post(create_from_source),
+        )
 }
 
 // --- Status and Settings Endpoints ---
@@ -210,7 +213,7 @@ async fn list_repos(
     // Get all managed repos from DB
     let repos = state
         .db
-        .with_conn(|conn| db_ops::list_managed_repos(conn))?;
+        .with_conn(db_ops::list_managed_repos)?;
 
     // Get cached sync status from background checker
     let cached_status = mgr.get_cached_status();
@@ -221,10 +224,7 @@ async fn list_repos(
         // Look up persona name
         let persona_name = state
             .db
-            .with_conn(|conn| {
-                db_ops::get_persona(conn, &repo.persona_id)
-                    .map(|p| p.name)
-            })
+            .with_conn(|conn| db_ops::get_persona(conn, &repo.persona_id).map(|p| p.name))
             .unwrap_or_else(|_| "Unknown".to_string());
 
         // Get sync status from cache (default to zeros if not yet computed)
@@ -238,11 +238,10 @@ async fn list_repos(
             });
 
         // Check credential status
-        let credential_status =
-            match repo_credential_manager::credentials_configured(&repo.id.0) {
-                Ok(true) => "configured".to_string(),
-                _ => "not_configured".to_string(),
-            };
+        let credential_status = match repo_credential_manager::credentials_configured(&repo.id.0) {
+            Ok(true) => "configured".to_string(),
+            _ => "not_configured".to_string(),
+        };
 
         // Check if mirror directory exists on disk
         let mirror_exists = PathBuf::from(&repo.mirror_path).exists();
@@ -299,28 +298,20 @@ async fn enable_repo(
         mgr.enable(&req.persona_id, workspace_path).await?
     } else {
         // No remotes — use the agent-created flow (link to remote or keep local)
-        mgr.enable_agent_created(
-            &req.persona_id,
-            workspace_path,
-            req.remote_url.as_deref(),
-        )
-        .await?
+        mgr.enable_agent_created(&req.persona_id, workspace_path, req.remote_url.as_deref())
+            .await?
     };
 
     // Build the response
     let persona_name = state
         .db
-        .with_conn(|conn| {
-            db_ops::get_persona(conn, &repo.persona_id)
-                .map(|p| p.name)
-        })
+        .with_conn(|conn| db_ops::get_persona(conn, &repo.persona_id).map(|p| p.name))
         .unwrap_or_else(|_| "Unknown".to_string());
 
-    let credential_status =
-        match repo_credential_manager::credentials_configured(&repo.id.0) {
-            Ok(true) => "configured".to_string(),
-            _ => "not_configured".to_string(),
-        };
+    let credential_status = match repo_credential_manager::credentials_configured(&repo.id.0) {
+        Ok(true) => "configured".to_string(),
+        _ => "not_configured".to_string(),
+    };
 
     let mirror_exists = PathBuf::from(&repo.mirror_path).exists();
 
@@ -370,10 +361,7 @@ async fn update_repo(
     // Build the response
     let persona_name = state
         .db
-        .with_conn(|conn| {
-            db_ops::get_persona(conn, &repo.persona_id)
-                .map(|p| p.name)
-        })
+        .with_conn(|conn| db_ops::get_persona(conn, &repo.persona_id).map(|p| p.name))
         .unwrap_or_else(|_| "Unknown".to_string());
 
     let cached_status = mgr.get_cached_status();
@@ -386,11 +374,10 @@ async fn update_repo(
             remote_ahead: 0,
         });
 
-    let credential_status =
-        match repo_credential_manager::credentials_configured(&repo.id.0) {
-            Ok(true) => "configured".to_string(),
-            _ => "not_configured".to_string(),
-        };
+    let credential_status = match repo_credential_manager::credentials_configured(&repo.id.0) {
+        Ok(true) => "configured".to_string(),
+        _ => "not_configured".to_string(),
+    };
 
     let mirror_exists = PathBuf::from(&repo.mirror_path).exists();
 
@@ -493,7 +480,12 @@ async fn push_to_remote(
     let mgr = state.require_repo_sync_manager()?;
     let repo_id = ManagedRepoId(id);
     let result = mgr
-        .push_to_remote(&repo_id, &req.commit_shas, req.squash, req.squash_message.as_deref())
+        .push_to_remote(
+            &repo_id,
+            &req.commit_shas,
+            req.squash,
+            req.squash_message.as_deref(),
+        )
         .await?;
     Ok(Json(serde_json::json!({
         "branch": result.branch,
@@ -557,7 +549,6 @@ async fn list_commits(
     Ok(Json(commits))
 }
 
-
 // --- Credential Endpoints ---
 
 /// PUT /api/repo-sync/repos/{id}/credentials — store credentials in keyring.
@@ -591,9 +582,7 @@ async fn set_credentials(
     let repo_id = ManagedRepoId(id.clone());
     state
         .db
-        .with_conn(|conn| {
-            db_ops::get_managed_repo(conn, &repo_id)
-        })?;
+        .with_conn(|conn| db_ops::get_managed_repo(conn, &repo_id))?;
 
     // Store credentials in the OS keyring
     repo_credential_manager::store_credentials(&id, req.username, req.secret)?;
@@ -639,9 +628,9 @@ async fn delete_credentials(
     repo_credential_manager::delete_credentials(&id)?;
 
     // Delete from database
-    state.db.with_conn(|conn| {
-        db_ops::delete_repo_credential(conn, &repo_id)
-    })?;
+    state
+        .db
+        .with_conn(|conn| db_ops::delete_repo_credential(conn, &repo_id))?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -678,17 +667,13 @@ async fn create_from_source(
     // Build the response
     let persona_name = state
         .db
-        .with_conn(|conn| {
-            db_ops::get_persona(conn, &repo.persona_id)
-                .map(|p| p.name)
-        })
+        .with_conn(|conn| db_ops::get_persona(conn, &repo.persona_id).map(|p| p.name))
         .unwrap_or_else(|_| "Unknown".to_string());
 
-    let credential_status =
-        match repo_credential_manager::credentials_configured(&repo.id.0) {
-            Ok(true) => "configured".to_string(),
-            _ => "not_configured".to_string(),
-        };
+    let credential_status = match repo_credential_manager::credentials_configured(&repo.id.0) {
+        Ok(true) => "configured".to_string(),
+        _ => "not_configured".to_string(),
+    };
 
     let mirror_exists = PathBuf::from(&repo.mirror_path).exists();
 

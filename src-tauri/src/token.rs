@@ -74,7 +74,9 @@ mod tests {
     #[test]
     fn test_generate_bearer_token_is_valid_base64url() {
         let token = generate_bearer_token();
-        let decoded = URL_SAFE_NO_PAD.decode(&token).expect("should be valid base64url");
+        let decoded = URL_SAFE_NO_PAD
+            .decode(&token)
+            .expect("should be valid base64url");
         assert_eq!(decoded.len(), TOKEN_BYTE_LENGTH);
     }
 
@@ -135,7 +137,9 @@ mod tests {
         let db = Database::open_in_memory().expect("Failed to open in-memory database");
         let token = generate_unique_bearer_token(&db).unwrap();
         // Should be a valid base64url token
-        let decoded = URL_SAFE_NO_PAD.decode(&token).expect("should be valid base64url");
+        let decoded = URL_SAFE_NO_PAD
+            .decode(&token)
+            .expect("should be valid base64url");
         assert_eq!(decoded.len(), TOKEN_BYTE_LENGTH);
     }
 }

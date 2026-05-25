@@ -17,9 +17,6 @@ pub struct SessionId(pub String);
 pub struct McpContainerId(pub String);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct SharedMemoryId(pub String);
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ManagedRepoId(pub String);
 
 impl PersonaId {
@@ -41,12 +38,6 @@ impl SessionId {
 }
 
 impl McpContainerId {
-    pub fn new() -> Self {
-        Self(uuid::Uuid::new_v4().to_string())
-    }
-}
-
-impl SharedMemoryId {
     pub fn new() -> Self {
         Self(uuid::Uuid::new_v4().to_string())
     }
@@ -79,12 +70,6 @@ impl std::fmt::Display for SessionId {
 }
 
 impl std::fmt::Display for McpContainerId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl std::fmt::Display for SharedMemoryId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
     }

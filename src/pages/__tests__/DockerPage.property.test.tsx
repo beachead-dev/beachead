@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, act, within } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import fc from "fast-check";
 import { SandboxInfo, McpContainerResponse } from "../../lib/api";
 
@@ -120,8 +119,8 @@ describe("Feature: docker-management-tab, Property 1: Sandbox table rendering co
         expect(rows.length).toBe(sandboxes.length);
 
         for (let i = 0; i < sandboxes.length; i++) {
-          const sandbox = sandboxes[i];
-          const row = rows[i];
+          const sandbox = sandboxes[i]!;
+          const row = rows[i]!;
           const cells = within(row).getAllByRole("cell");
 
           // 5 cells: Name, Agent, Status, ID, Actions
@@ -129,26 +128,26 @@ describe("Feature: docker-management-tab, Property 1: Sandbox table rendering co
 
           // Name column: value or placeholder "\u2014"
           const expectedName = sandbox.name ?? "\u2014";
-          expect(cells[0].textContent).toBe(expectedName);
+          expect(cells[0]!.textContent).toBe(expectedName);
 
           // Agent column: value or placeholder "\u2014"
           const expectedAgent = sandbox.agent ?? "\u2014";
-          expect(cells[1].textContent).toBe(expectedAgent);
+          expect(cells[1]!.textContent).toBe(expectedAgent);
 
           // Status column: value or placeholder "\u2014"
           const expectedStatus = sandbox.status ?? "\u2014";
-          expect(cells[2].textContent).toBe(expectedStatus);
+          expect(cells[2]!.textContent).toBe(expectedStatus);
 
           // ID column: value or placeholder "\u2014"
           const expectedId = sandbox.id ?? "\u2014";
-          expect(cells[3].textContent).toBe(expectedId);
+          expect(cells[3]!.textContent).toBe(expectedId);
 
           // Actions column: Start, Stop, Remove buttons
-          const buttons = within(cells[4]).getAllByRole("button");
+          const buttons = within(cells[4]!).getAllByRole("button");
           expect(buttons.length).toBe(3);
-          expect(buttons[0]).toHaveTextContent("Start");
-          expect(buttons[1]).toHaveTextContent("Stop");
-          expect(buttons[2]).toHaveTextContent("Remove");
+          expect(buttons[0]!).toHaveTextContent("Start");
+          expect(buttons[1]!).toHaveTextContent("Stop");
+          expect(buttons[2]!).toHaveTextContent("Remove");
         }
 
         unmount();
@@ -358,47 +357,47 @@ describe("Feature: docker-management-tab, Property 4: Container table rendering 
         );
 
         for (let i = 0; i < sortedContainers.length; i++) {
-          const container = sortedContainers[i];
-          const row = rows[i];
+          const container = sortedContainers[i]!;
+          const row = rows[i]!;
           const cells = within(row).getAllByRole("cell");
 
           // 7 cells: Persona Name, Image, Port, Status, Volume Name, Created Date, Actions
           expect(cells.length).toBe(7);
 
           // Persona Name column: displays persona_name (not persona_id)
-          expect(cells[0].textContent).toContain(container.persona_name);
-          expect(cells[0].textContent).not.toContain(container.persona_id);
+          expect(cells[0]!.textContent).toContain(container.persona_name);
+          expect(cells[0]!.textContent).not.toContain(container.persona_id);
 
           // Image column
-          expect(cells[1].textContent).toBeDefined();
+          expect(cells[1]!.textContent).toBeDefined();
 
           // Port column
-          expect(cells[2].textContent).toBe(String(container.port));
+          expect(cells[2]!.textContent).toBe(String(container.port));
 
           // Status column
-          expect(cells[3].textContent).toBe(container.status);
+          expect(cells[3]!.textContent).toBe(container.status);
 
           // Volume Name column
-          expect(cells[4].textContent).toBe(container.volume_name);
+          expect(cells[4]!.textContent).toBe(container.volume_name);
 
           // Created Date column: should contain a formatted version of created_at
           // The component uses toLocaleString(), so we verify it's non-empty and
           // represents the same date
-          const cellDateText = cells[5].textContent ?? "";
+          const cellDateText = cells[5]!.textContent ?? "";
           expect(cellDateText.length).toBeGreaterThan(0);
 
           // Actions column: Start, Stop, Remove buttons
-          const buttons = within(cells[6]).getAllByRole("button");
+          const buttons = within(cells[6]!).getAllByRole("button");
           expect(buttons.length).toBe(3);
-          expect(buttons[0]).toHaveTextContent("Start");
-          expect(buttons[1]).toHaveTextContent("Stop");
-          expect(buttons[2]).toHaveTextContent("Remove");
+          expect(buttons[0]!).toHaveTextContent("Start");
+          expect(buttons[1]!).toHaveTextContent("Stop");
+          expect(buttons[2]!).toHaveTextContent("Remove");
         }
 
         // Verify sort order: each row's created_at should be >= the next row's
         for (let i = 0; i < sortedContainers.length - 1; i++) {
-          const currentDate = new Date(sortedContainers[i].created_at).getTime();
-          const nextDate = new Date(sortedContainers[i + 1].created_at).getTime();
+          const currentDate = new Date(sortedContainers[i]!.created_at).getTime();
+          const nextDate = new Date(sortedContainers[i + 1]!.created_at).getTime();
           expect(currentDate).toBeGreaterThanOrEqual(nextDate);
         }
 
@@ -458,14 +457,14 @@ describe("Feature: docker-management-tab, Property 6: Unmanaged container displa
       volume_name: safeStringArb,
       status: statusArb,
       live_status_confirmed: fc.boolean(),
-      created_at: fc.date({
-        min: new Date("2020-01-01T00:00:00Z"),
-        max: new Date("2030-12-31T23:59:59Z"),
-      }).map((d) => d.toISOString()),
-      updated_at: fc.date({
-        min: new Date("2020-01-01T00:00:00Z"),
-        max: new Date("2030-12-31T23:59:59Z"),
-      }).map((d) => d.toISOString()),
+      created_at: fc.integer({
+        min: 1577836800000, // 2020-01-01T00:00:00Z
+        max: 1924991999000, // 2030-12-31T23:59:59Z
+      }).map((ts) => new Date(ts).toISOString()),
+      updated_at: fc.integer({
+        min: 1577836800000, // 2020-01-01T00:00:00Z
+        max: 1924991999000, // 2030-12-31T23:59:59Z
+      }).map((ts) => new Date(ts).toISOString()),
     });
 
   // Non-empty arrays of unmanaged containers
@@ -511,8 +510,8 @@ describe("Feature: docker-management-tab, Property 6: Unmanaged container displa
         );
 
         for (let i = 0; i < sortedContainers.length; i++) {
-          const container = sortedContainers[i];
-          const row = rows[i];
+          const container = sortedContainers[i]!;
+          const row = rows[i]!;
 
           // Assert: "Unmanaged" badge is displayed in the row
           const badge = within(row).getByText("Unmanaged");
@@ -521,13 +520,13 @@ describe("Feature: docker-management-tab, Property 6: Unmanaged container displa
 
           // Get action buttons
           const cells = within(row).getAllByRole("cell");
-          const actionCell = cells[6]; // Actions column is the 7th cell
+          const actionCell = cells[6]!; // Actions column is the 7th cell
           const buttons = within(actionCell).getAllByRole("button");
           expect(buttons.length).toBe(3);
 
-          const startBtn = buttons[0];
-          const stopBtn = buttons[1];
-          const removeBtn = buttons[2];
+          const startBtn = buttons[0]!;
+          const stopBtn = buttons[1]!;
+          const removeBtn = buttons[2]!;
 
           expect(startBtn).toHaveTextContent("Start");
           expect(stopBtn).toHaveTextContent("Stop");

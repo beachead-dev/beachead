@@ -8,8 +8,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use bollard::container::{
-    Config, CreateContainerOptions, RemoveContainerOptions,
-    StartContainerOptions, StopContainerOptions,
+    Config, CreateContainerOptions, RemoveContainerOptions, StartContainerOptions,
+    StopContainerOptions,
 };
 use bollard::image::CreateImageOptions;
 use bollard::models::{HostConfig, PortBinding};
@@ -109,9 +109,13 @@ pub struct McpContainerManager {
 
 impl McpContainerManager {
     /// Create a new McpContainerManager using the local Docker socket.
-    pub fn new(db: Arc<Database>, port_allocator: Arc<PortAllocator>) -> Result<Self, OrchestratorError> {
-        let docker = Docker::connect_with_local_defaults()
-            .map_err(|e| OrchestratorError::DockerError(format!("Failed to connect to Docker: {}", e)))?;
+    pub fn new(
+        db: Arc<Database>,
+        port_allocator: Arc<PortAllocator>,
+    ) -> Result<Self, OrchestratorError> {
+        let docker = Docker::connect_with_local_defaults().map_err(|e| {
+            OrchestratorError::DockerError(format!("Failed to connect to Docker: {}", e))
+        })?;
 
         Ok(Self {
             docker,
@@ -124,11 +128,14 @@ impl McpContainerManager {
     pub async fn ensure_image_available(&self) -> Result<(), OrchestratorError> {
         match self.docker.inspect_image(MCP_IMAGE).await {
             Ok(_) => return Ok(()),
-            Err(bollard::errors::Error::DockerResponseServerError { status_code: 404, .. }) => {}
+            Err(bollard::errors::Error::DockerResponseServerError {
+                status_code: 404, ..
+            }) => {}
             Err(e) => {
-                return Err(OrchestratorError::DockerError(
-                    format!("Failed to inspect image '{}': {}", MCP_IMAGE, e),
-                ));
+                return Err(OrchestratorError::DockerError(format!(
+                    "Failed to inspect image '{}': {}",
+                    MCP_IMAGE, e
+                )));
             }
         }
 
@@ -143,9 +150,12 @@ impl McpContainerManager {
             )
             .try_collect::<Vec<_>>()
             .await
-            .map_err(|e| OrchestratorError::DockerError(
-                format!("Failed to pull MCP image '{}': {}", MCP_IMAGE, e),
-            ))?;
+            .map_err(|e| {
+                OrchestratorError::DockerError(format!(
+                    "Failed to pull MCP image '{}': {}",
+                    MCP_IMAGE, e
+                ))
+            })?;
 
         Ok(())
     }
@@ -158,7 +168,10 @@ impl McpContainerManager {
     /// - No container exists → creates and starts one
     ///
     /// Called by SessionManager at session start time.
-    pub async fn ensure_container_running(&self, persona_id: &PersonaId) -> Result<McpContainer, OrchestratorError> {
+    pub async fn ensure_container_running(
+        &self,
+        persona_id: &PersonaId,
+    ) -> Result<McpContainer, OrchestratorError> {
         let existing = self.find_by_persona_id(persona_id)?;
 
         match existing {
@@ -167,11 +180,8 @@ impl McpContainerManager {
                 if let Some(ref docker_id) = container.container_id {
                     match self.docker.inspect_container(docker_id, None).await {
                         Ok(info) => {
-                            let is_running = info
-                                .state
-                                .as_ref()
-                                .and_then(|s| s.running)
-                                .unwrap_or(false);
+                            let is_running =
+                                info.state.as_ref().and_then(|s| s.running).unwrap_or(false);
                             if is_running {
                                 return Ok(container);
                             }
@@ -191,8 +201,10 @@ impl McpContainerManager {
                 // Container exists in DB as "running" but Docker says otherwise — restart
                 self.restart_existing_container(container).await
             }
-            Some(container) if container.status == ContainerStatus::Stopped
-                || container.status == ContainerStatus::Created => {
+            Some(container)
+                if container.status == ContainerStatus::Stopped
+                    || container.status == ContainerStatus::Created =>
+            {
                 // Stopped or just created — start it
                 self.restart_existing_container(container).await
             }
@@ -215,10 +227,17 @@ impl McpContainerManager {
     }
 
     /// Restart an existing container that has a Docker container ID.
-    async fn restart_existing_container(&self, container: McpContainer) -> Result<McpContainer, OrchestratorError> {
+    async fn restart_existing_container(
+        &self,
+        container: McpContainer,
+    ) -> Result<McpContainer, OrchestratorError> {
         if let Some(ref docker_id) = container.container_id {
             // Try to start it (works for stopped containers)
-            match self.docker.start_container(docker_id, None::<StartContainerOptions<String>>).await {
+            match self
+                .docker
+                .start_container(docker_id, None::<StartContainerOptions<String>>)
+                .await
+            {
                 Ok(_) => {
                     self.update_status(&container.id, ContainerStatus::Running)?;
                     let mut updated = container;
@@ -239,16 +258,28 @@ impl McpContainerManager {
     }
 
     /// Remove an existing container record and create a fresh one.
-    async fn recreate_container(&self, container: McpContainer) -> Result<McpContainer, OrchestratorError> {
+    async fn recreate_container(
+        &self,
+        container: McpContainer,
+    ) -> Result<McpContainer, OrchestratorError> {
         let persona_id = container.persona_id.clone();
 
         // Clean up the old container from Docker (best-effort)
         if let Some(ref docker_id) = container.container_id {
-            let _ = self.docker.stop_container(docker_id, Some(StopContainerOptions { t: 5 })).await;
-            let _ = self.docker.remove_container(docker_id, Some(RemoveContainerOptions {
-                force: true,
-                ..Default::default()
-            })).await;
+            let _ = self
+                .docker
+                .stop_container(docker_id, Some(StopContainerOptions { t: 5 }))
+                .await;
+            let _ = self
+                .docker
+                .remove_container(
+                    docker_id,
+                    Some(RemoveContainerOptions {
+                        force: true,
+                        ..Default::default()
+                    }),
+                )
+                .await;
         }
 
         // Release the old port
@@ -273,7 +304,10 @@ impl McpContainerManager {
     /// Allocates a port, generates a bearer token, creates the Docker container
     /// with the appropriate volume mount and port binding, and persists the
     /// record in the `mcp_containers` table.
-    pub async fn create_container(&self, persona_id: PersonaId) -> Result<McpContainer, OrchestratorError> {
+    pub async fn create_container(
+        &self,
+        persona_id: PersonaId,
+    ) -> Result<McpContainer, OrchestratorError> {
         let mcp_id = McpContainerId::new();
         let bearer_token = token::generate_bearer_token();
         let volume_name = format!("beachead-memory-{}", persona_id.0);
@@ -306,8 +340,11 @@ impl McpContainerManager {
             Err(e) => {
                 // Clean up the mcp_containers row on failure
                 let _ = self.db.with_conn(|conn| {
-                    conn.execute("DELETE FROM mcp_containers WHERE id = ?1", params![mcp_id.0])
-                        .map_err(|e| OrchestratorError::Database(e.to_string()))?;
+                    conn.execute(
+                        "DELETE FROM mcp_containers WHERE id = ?1",
+                        params![mcp_id.0],
+                    )
+                    .map_err(|e| OrchestratorError::Database(e.to_string()))?;
                     Ok(())
                 });
                 return Err(e);
@@ -367,7 +404,9 @@ impl McpContainerManager {
             .docker
             .create_container(Some(options), config)
             .await
-            .map_err(|e| OrchestratorError::DockerError(format!("Failed to create container: {}", e)))?;
+            .map_err(|e| {
+                OrchestratorError::DockerError(format!("Failed to create container: {}", e))
+            })?;
 
         let docker_container_id = response.id;
 
@@ -385,7 +424,9 @@ impl McpContainerManager {
         self.docker
             .start_container(&docker_container_id, None::<StartContainerOptions<String>>)
             .await
-            .map_err(|e| OrchestratorError::DockerError(format!("Failed to start container: {}", e)))?;
+            .map_err(|e| {
+                OrchestratorError::DockerError(format!("Failed to start container: {}", e))
+            })?;
 
         // Update status to running
         self.update_status(&mcp_id, ContainerStatus::Running)?;
@@ -506,7 +547,10 @@ impl McpContainerManager {
     }
 
     /// Check the health of a specific container by hitting its /health endpoint.
-    pub async fn health_check(&self, container_id: &str) -> Result<HealthStatus, OrchestratorError> {
+    pub async fn health_check(
+        &self,
+        container_id: &str,
+    ) -> Result<HealthStatus, OrchestratorError> {
         // Find the container record by docker container_id
         let container = self.find_by_docker_id(container_id)?;
 
@@ -575,7 +619,9 @@ impl McpContainerManager {
                     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
 
                     // Re-check health
-                    if let Ok(HealthStatus::Healthy) = self.check_health_endpoint(container.port).await {
+                    if let Ok(HealthStatus::Healthy) =
+                        self.check_health_endpoint(container.port).await
+                    {
                         restarted = true;
                         self.update_status(&container.id, ContainerStatus::Running)?;
                         break;
@@ -728,7 +774,10 @@ impl McpContainerManager {
     }
 
     /// Find a container by its Docker container ID.
-    fn find_by_docker_id(&self, docker_id: &str) -> Result<Option<McpContainer>, OrchestratorError> {
+    fn find_by_docker_id(
+        &self,
+        docker_id: &str,
+    ) -> Result<Option<McpContainer>, OrchestratorError> {
         self.db.with_conn(|conn| {
             let mut stmt = conn
                 .prepare(
@@ -763,7 +812,10 @@ impl McpContainerManager {
     ///
     /// Returns the container record if it exists and has status "running".
     /// Used by SessionManager to get connection details at session start.
-    pub fn find_running_container(&self, persona_id: &PersonaId) -> Result<Option<McpContainer>, OrchestratorError> {
+    pub fn find_running_container(
+        &self,
+        persona_id: &PersonaId,
+    ) -> Result<Option<McpContainer>, OrchestratorError> {
         let container = self.find_by_persona_id(persona_id)?;
         match container {
             Some(c) if c.status == ContainerStatus::Running => Ok(Some(c)),
@@ -772,7 +824,10 @@ impl McpContainerManager {
     }
 
     /// Find a container by persona ID.
-    fn find_by_persona_id(&self, persona_id: &PersonaId) -> Result<Option<McpContainer>, OrchestratorError> {
+    fn find_by_persona_id(
+        &self,
+        persona_id: &PersonaId,
+    ) -> Result<Option<McpContainer>, OrchestratorError> {
         self.db.with_conn(|conn| {
             let mut stmt = conn
                 .prepare(

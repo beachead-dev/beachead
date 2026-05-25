@@ -126,10 +126,7 @@ impl SystemManager {
             .output()
             .await
             .map_err(|e| {
-                OrchestratorError::DockerError(format!(
-                    "Failed to execute docker --version: {}",
-                    e
-                ))
+                OrchestratorError::DockerError(format!("Failed to execute docker --version: {}", e))
             })?;
 
         if !output.status.success() {
@@ -159,10 +156,7 @@ impl SystemManager {
             .output()
             .await
             .map_err(|e| {
-                OrchestratorError::Internal(format!(
-                    "Failed to execute git --version: {}",
-                    e
-                ))
+                OrchestratorError::Internal(format!("Failed to execute git --version: {}", e))
             })?;
 
         if !output.status.success() {
@@ -175,7 +169,6 @@ impl SystemManager {
         Ok(version_str)
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -215,18 +208,34 @@ mod tests {
                 } else {
                     Just(None).boxed()
                 };
-                (Just(sbx_avail), sbx_version_strat, Just(docker_avail), docker_version_strat, Just(git_avail), git_version_strat)
+                (
+                    Just(sbx_avail),
+                    sbx_version_strat,
+                    Just(docker_avail),
+                    docker_version_strat,
+                    Just(git_avail),
+                    git_version_strat,
+                )
             })
-            .prop_map(|(sbx_available, sbx_version, docker_available, docker_version, git_available, git_version)| {
-                DependencyStatus {
+            .prop_map(
+                |(
                     sbx_available,
                     sbx_version,
                     docker_available,
                     docker_version,
                     git_available,
                     git_version,
-                }
-            })
+                )| {
+                    DependencyStatus {
+                        sbx_available,
+                        sbx_version,
+                        docker_available,
+                        docker_version,
+                        git_available,
+                        git_version,
+                    }
+                },
+            )
     }
 
     proptest! {

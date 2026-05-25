@@ -91,7 +91,6 @@ impl TemplateManager {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

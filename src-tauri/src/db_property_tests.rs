@@ -421,29 +421,37 @@ mod tests {
     ) -> impl Strategy<Value = Vec<DbOperation>> {
         let secrets = secret_values.clone();
         prop::collection::vec(
-            (0u8..4, arb_name(), arb_name(), arb_workspace_path(), arb_url())
-                .prop_map(move |(op_type, name1, name2, ws, url)| {
-                    match op_type % 4 {
-                        0 => DbOperation::InsertAgent {
-                            name: name1,
-                            description: name2,
-                            required_secrets: secrets.iter().take(2).map(|_| "anthropic".to_string()).collect(),
-                        },
-                        1 => DbOperation::InsertPersona {
-                            name: name1,
-                            workspace: ws,
-                            cli_args: vec!["--verbose".to_string(), "--model".to_string()],
-                        },
-                        2 => DbOperation::InsertSession {
-                            sandbox_id: Some(format!("sbx-{}", name1)),
-                            error_message: Some(format!("Failed to connect to {}", name2)),
-                        },
-                        _ => DbOperation::InsertMcpServer {
-                            name: name1,
-                            url: url,
-                            description: Some(name2),
-                        },
-                    }
+            (
+                0u8..4,
+                arb_name(),
+                arb_name(),
+                arb_workspace_path(),
+                arb_url(),
+            )
+                .prop_map(move |(op_type, name1, name2, ws, url)| match op_type % 4 {
+                    0 => DbOperation::InsertAgent {
+                        name: name1,
+                        description: name2,
+                        required_secrets: secrets
+                            .iter()
+                            .take(2)
+                            .map(|_| "anthropic".to_string())
+                            .collect(),
+                    },
+                    1 => DbOperation::InsertPersona {
+                        name: name1,
+                        workspace: ws,
+                        cli_args: vec!["--verbose".to_string(), "--model".to_string()],
+                    },
+                    2 => DbOperation::InsertSession {
+                        sandbox_id: Some(format!("sbx-{}", name1)),
+                        error_message: Some(format!("Failed to connect to {}", name2)),
+                    },
+                    _ => DbOperation::InsertMcpServer {
+                        name: name1,
+                        url,
+                        description: Some(name2),
+                    },
                 }),
             1..6,
         )
@@ -455,7 +463,9 @@ mod tests {
 
         // Get all table names
         let mut stmt = conn
-            .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+            .prepare(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'",
+            )
             .unwrap();
         let tables: Vec<String> = stmt
             .query_map([], |row| row.get(0))

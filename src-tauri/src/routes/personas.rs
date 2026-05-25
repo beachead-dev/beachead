@@ -7,10 +7,7 @@ use axum::{
 
 use crate::error::OrchestratorError;
 use crate::server::AppState;
-use crate::types::{
-    CreatePersonaRequest, Persona, PersonaId, UpdatePersonaRequest,
-    UpdateResult,
-};
+use crate::types::{CreatePersonaRequest, Persona, PersonaId, UpdatePersonaRequest, UpdateResult};
 
 /// Build the persona routes sub-router.
 pub fn router() -> Router<AppState> {
@@ -103,10 +100,7 @@ async fn update_persona(
         } else if !new_memory_enabled && memory_was_enabled {
             // Memory just disabled — remove container
             if let Err(e) = mgr.remove_container(persona_id.clone()).await {
-                eprintln!(
-                    "Warning: failed to remove MCP container for persona: {}",
-                    e
-                );
+                eprintln!("Warning: failed to remove MCP container for persona: {}", e);
             }
         }
     }
@@ -128,7 +122,10 @@ async fn delete_persona(
     if existing.memory_enabled {
         if let Some(ref mgr) = state.mcp_container_manager {
             if let Err(e) = mgr.remove_container(persona_id).await {
-                eprintln!("Warning: failed to remove MCP container on persona delete: {}", e);
+                eprintln!(
+                    "Warning: failed to remove MCP container on persona delete: {}",
+                    e
+                );
             }
         }
     }

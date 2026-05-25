@@ -38,8 +38,9 @@ mod tests {
         ));
         let persona_manager = Arc::new(crate::persona_manager::PersonaManager::new(db.clone()));
         let agent_manager = Arc::new(crate::agent_manager::AgentManager::new(db.clone(), None));
-        let export_import_manager =
-            Arc::new(crate::export_import_manager::ExportImportManager::new(db.clone()));
+        let export_import_manager = Arc::new(
+            crate::export_import_manager::ExportImportManager::new(db.clone()),
+        );
 
         AppState {
             persona_manager,
@@ -149,8 +150,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
 
         let body = response.into_body().collect().await.unwrap().to_bytes();
-        let containers: Vec<McpContainerListResponse> =
-            serde_json::from_slice(&body).unwrap();
+        let containers: Vec<McpContainerListResponse> = serde_json::from_slice(&body).unwrap();
 
         assert_eq!(containers.len(), 2);
 
@@ -161,7 +161,10 @@ mod tests {
         assert!(names.contains(&"Bob Builder"));
 
         // Verify persona_id is also present
-        let alice = containers.iter().find(|c| c.persona_name == "Alice Agent").unwrap();
+        let alice = containers
+            .iter()
+            .find(|c| c.persona_name == "Alice Agent")
+            .unwrap();
         assert_eq!(alice.persona_id, "persona-1");
         assert_eq!(alice.port, 9100);
     }
@@ -194,8 +197,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
 
         let body = response.into_body().collect().await.unwrap().to_bytes();
-        let containers: Vec<McpContainerListResponse> =
-            serde_json::from_slice(&body).unwrap();
+        let containers: Vec<McpContainerListResponse> = serde_json::from_slice(&body).unwrap();
 
         assert_eq!(containers.len(), 1);
         let c = &containers[0];
@@ -230,8 +232,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
 
         let body = response.into_body().collect().await.unwrap().to_bytes();
-        let containers: Vec<McpContainerListResponse> =
-            serde_json::from_slice(&body).unwrap();
+        let containers: Vec<McpContainerListResponse> = serde_json::from_slice(&body).unwrap();
 
         assert_eq!(containers.len(), 1);
         assert_eq!(containers[0].persona_name, "Managed Persona");
@@ -247,8 +248,7 @@ mod tests {
         assert_eq!(response2.status(), StatusCode::OK);
 
         let body2 = response2.into_body().collect().await.unwrap().to_bytes();
-        let containers2: Vec<McpContainerListResponse> =
-            serde_json::from_slice(&body2).unwrap();
+        let containers2: Vec<McpContainerListResponse> = serde_json::from_slice(&body2).unwrap();
 
         // Must include at least the DB-tracked container
         assert!(
@@ -623,7 +623,10 @@ mod tests {
                 .map_err(|e| OrchestratorError::Database(e.to_string()))
             })
             .unwrap();
-        assert_eq!(count, 0, "Container record should be deleted even on Docker failure");
+        assert_eq!(
+            count, 0,
+            "Container record should be deleted even on Docker failure"
+        );
 
         // Verify port was released despite Docker failure
         let port_count: i64 = state
@@ -637,7 +640,10 @@ mod tests {
                 .map_err(|e| OrchestratorError::Database(e.to_string()))
             })
             .unwrap();
-        assert_eq!(port_count, 0, "Port should be released even on Docker failure");
+        assert_eq!(
+            port_count, 0,
+            "Port should be released even on Docker failure"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -685,7 +691,14 @@ mod tests {
         // the persona might have been deleted)
         // Actually, let's insert a persona first then delete it to test the LEFT JOIN
         seed_persona(&state.db, "persona-orphan", "Orphan Persona");
-        seed_container(&state.db, "mc-orphan", "persona-orphan", None, 9100, "stopped");
+        seed_container(
+            &state.db,
+            "mc-orphan",
+            "persona-orphan",
+            None,
+            9100,
+            "stopped",
+        );
 
         // Delete the persona (mcp_containers FK doesn't cascade)
         state
@@ -712,8 +725,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
 
         let body = response.into_body().collect().await.unwrap().to_bytes();
-        let containers: Vec<McpContainerListResponse> =
-            serde_json::from_slice(&body).unwrap();
+        let containers: Vec<McpContainerListResponse> = serde_json::from_slice(&body).unwrap();
 
         assert_eq!(containers.len(), 1);
         // COALESCE(p.name, '') returns empty string when persona is missing

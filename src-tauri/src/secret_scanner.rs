@@ -313,12 +313,8 @@ mod tests {
     fn test_gitlab_token_pattern() {
         let scanner = SecretScanner::new();
         let gl_pattern = &scanner.patterns[5];
-        assert!(gl_pattern
-            .regex
-            .is_match("glpat-xxxxxxxxxxxxxxxxxxxx"));
-        assert!(gl_pattern
-            .regex
-            .is_match("glpat-Ab3_Cd5-Ef7_Gh9-Ij1_Kl"));
+        assert!(gl_pattern.regex.is_match("glpat-xxxxxxxxxxxxxxxxxxxx"));
+        assert!(gl_pattern.regex.is_match("glpat-Ab3_Cd5-Ef7_Gh9-Ij1_Kl"));
         assert!(!gl_pattern.regex.is_match("glpat-short")); // Too short (< 20 chars after prefix)
     }
 
@@ -349,9 +345,7 @@ mod tests {
     async fn test_scan_commits_empty_shas() {
         let scanner = SecretScanner::new();
         let git = GitCli::new("git".to_string());
-        let result = scanner
-            .scan_commits(Path::new("/tmp"), &[], &git)
-            .await;
+        let result = scanner.scan_commits(Path::new("/tmp"), &[], &git).await;
         assert_eq!(result, Ok(vec![]));
     }
 }

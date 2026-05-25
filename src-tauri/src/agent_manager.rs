@@ -142,7 +142,7 @@ impl AgentManager {
 
     /// List all agent types (built-in and custom).
     pub fn list(&self) -> Result<Vec<AgentType>, OrchestratorError> {
-        self.db.with_conn(|conn| db_ops::list_agent_types(conn))
+        self.db.with_conn(db_ops::list_agent_types)
     }
 
     /// Update a custom agent type.
@@ -528,12 +528,30 @@ mod tests {
 
         // OpenCode: multi-provider
         let opencode = agents.iter().find(|a| a.name == "OpenCode").unwrap();
-        assert!(opencode.metadata.required_secrets.contains(&"openai".to_string()));
-        assert!(opencode.metadata.required_secrets.contains(&"anthropic".to_string()));
-        assert!(opencode.metadata.required_secrets.contains(&"google".to_string()));
-        assert!(opencode.metadata.required_secrets.contains(&"xai".to_string()));
-        assert!(opencode.metadata.required_secrets.contains(&"groq".to_string()));
-        assert!(opencode.metadata.required_secrets.contains(&"aws".to_string()));
+        assert!(opencode
+            .metadata
+            .required_secrets
+            .contains(&"openai".to_string()));
+        assert!(opencode
+            .metadata
+            .required_secrets
+            .contains(&"anthropic".to_string()));
+        assert!(opencode
+            .metadata
+            .required_secrets
+            .contains(&"google".to_string()));
+        assert!(opencode
+            .metadata
+            .required_secrets
+            .contains(&"xai".to_string()));
+        assert!(opencode
+            .metadata
+            .required_secrets
+            .contains(&"groq".to_string()));
+        assert!(opencode
+            .metadata
+            .required_secrets
+            .contains(&"aws".to_string()));
     }
 
     #[tokio::test]
@@ -794,10 +812,7 @@ mod tests {
             metadata: None,
         };
         let agent = mgr.create(req).await.unwrap();
-        assert_eq!(
-            agent.kit_ref,
-            Some("/nonexistent/path/to/kit".to_string())
-        );
+        assert_eq!(agent.kit_ref, Some("/nonexistent/path/to/kit".to_string()));
     }
 
     #[tokio::test]

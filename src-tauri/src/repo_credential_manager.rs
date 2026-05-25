@@ -58,17 +58,15 @@ pub fn store_credentials(
     let secret_entry = Entry::new(&secret_key, KEYRING_USER)
         .map_err(|e| OrchestratorError::Internal(format!("keyring access failed: {}", e)))?;
 
-    username_entry
-        .set_password(&username)
-        .map_err(|e| OrchestratorError::Internal(format!("failed to store username in keyring: {}", e)))?;
+    username_entry.set_password(&username).map_err(|e| {
+        OrchestratorError::Internal(format!("failed to store username in keyring: {}", e))
+    })?;
 
-    secret_entry
-        .set_password(&secret)
-        .map_err(|e| {
-            // Best-effort cleanup: remove the username entry if secret storage fails
-            let _ = username_entry.delete_credential();
-            OrchestratorError::Internal(format!("failed to store secret in keyring: {}", e))
-        })?;
+    secret_entry.set_password(&secret).map_err(|e| {
+        // Best-effort cleanup: remove the username entry if secret storage fails
+        let _ = username_entry.delete_credential();
+        OrchestratorError::Internal(format!("failed to store secret in keyring: {}", e))
+    })?;
 
     // Zeroize credential values from memory
     username.zeroize();
@@ -179,13 +177,14 @@ pub fn credentials_configured(repo_id: &str) -> Result<bool, OrchestratorError> 
 /// or if the askpass binary does not exist at the expected location.
 pub fn resolve_askpass_path() -> Result<String, OrchestratorError> {
     let current_exe = std::env::current_exe().map_err(|e| {
-        OrchestratorError::Internal(format!("failed to determine current executable path: {}", e))
+        OrchestratorError::Internal(format!(
+            "failed to determine current executable path: {}",
+            e
+        ))
     })?;
 
     let exe_dir = current_exe.parent().ok_or_else(|| {
-        OrchestratorError::Internal(
-            "current executable has no parent directory".to_string(),
-        )
+        OrchestratorError::Internal("current executable has no parent directory".to_string())
     })?;
 
     let askpass_path = exe_dir.join("beachead-askpass");
@@ -221,13 +220,14 @@ pub fn build_credential_env(repo_id: &str) -> Result<CredentialEnv, Orchestrator
 /// without checking existence.
 pub fn askpass_binary_path() -> Result<PathBuf, OrchestratorError> {
     let current_exe = std::env::current_exe().map_err(|e| {
-        OrchestratorError::Internal(format!("failed to determine current executable path: {}", e))
+        OrchestratorError::Internal(format!(
+            "failed to determine current executable path: {}",
+            e
+        ))
     })?;
 
     let exe_dir = current_exe.parent().ok_or_else(|| {
-        OrchestratorError::Internal(
-            "current executable has no parent directory".to_string(),
-        )
+        OrchestratorError::Internal("current executable has no parent directory".to_string())
     })?;
 
     let askpass_path = exe_dir.join("beachead-askpass");
@@ -251,10 +251,7 @@ mod tests {
 
     #[test]
     fn test_service_name_format() {
-        assert_eq!(
-            service_name("abc-123"),
-            "beachead-repo-sync-abc-123"
-        );
+        assert_eq!(service_name("abc-123"), "beachead-repo-sync-abc-123");
     }
 
     #[test]
@@ -322,20 +319,19 @@ mod tests {
 
     #[test]
     fn test_is_no_entry_error_platform_failure() {
-        let err = keyring::Error::PlatformFailure(
-            Box::new(std::io::Error::new(std::io::ErrorKind::Other, "test")),
-        );
+        let err = keyring::Error::PlatformFailure(Box::new(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "test",
+        )));
         assert!(!is_no_entry_error(&err));
     }
 
     #[test]
     fn test_is_no_entry_error_no_storage_access() {
-        let err = keyring::Error::NoStorageAccess(
-            Box::new(std::io::Error::new(
-                std::io::ErrorKind::PermissionDenied,
-                "keyring locked",
-            )),
-        );
+        let err = keyring::Error::NoStorageAccess(Box::new(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "keyring locked",
+        )));
         assert!(!is_no_entry_error(&err));
     }
 
@@ -353,10 +349,7 @@ mod tests {
 
     #[test]
     fn test_is_no_entry_error_invalid() {
-        let err = keyring::Error::Invalid(
-            "service".to_string(),
-            "contains null byte".to_string(),
-        );
+        let err = keyring::Error::Invalid("service".to_string(), "contains null byte".to_string());
         assert!(!is_no_entry_error(&err));
     }
 
@@ -367,7 +360,11 @@ mod tests {
         let result = askpass_binary_path();
         assert!(result.is_ok());
         let path = result.unwrap();
-        assert!(path.file_name().unwrap().to_string_lossy().contains("beachead-askpass"));
+        assert!(path
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .contains("beachead-askpass"));
     }
 
     #[test]
@@ -381,7 +378,11 @@ mod tests {
     #[test]
     fn test_askpass_binary_path_is_absolute() {
         let path = askpass_binary_path().unwrap();
-        assert!(path.is_absolute(), "askpass path should be absolute: {:?}", path);
+        assert!(
+            path.is_absolute(),
+            "askpass path should be absolute: {:?}",
+            path
+        );
     }
 
     #[cfg(target_os = "windows")]
@@ -471,7 +472,7 @@ mod tests {
             "username for 'https://gitlab.com': ",
             "User: ",
             "Login: ",
-            "",  // empty prompt defaults to username
+            "", // empty prompt defaults to username
         ];
         for prompt in username_prompts {
             let is_password = prompt.to_lowercase().contains("password");
@@ -500,12 +501,7 @@ mod tests {
     #[test]
     fn test_prompt_parsing_case_insensitive() {
         // The binary uses to_lowercase().contains("password") — case insensitive
-        let mixed_case_prompts = vec![
-            "Password",
-            "PASSWORD",
-            "pAsSwOrD",
-            "Enter PASSWORD here",
-        ];
+        let mixed_case_prompts = vec!["Password", "PASSWORD", "pAsSwOrD", "Enter PASSWORD here"];
         for prompt in mixed_case_prompts {
             let is_password = prompt.to_lowercase().contains("password");
             assert!(is_password, "Case-insensitive check failed for: {}", prompt);

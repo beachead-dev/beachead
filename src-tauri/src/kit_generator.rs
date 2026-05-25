@@ -66,14 +66,25 @@ impl KitGenerator {
     }
 
     /// Build the spec.yaml content for a persona's mixin kit.
-    fn build_spec_yaml(&self, persona: &Persona, mcp_config: Option<&McpConfig>, mcp_config_path: Option<&str>) -> String {
+    fn build_spec_yaml(
+        &self,
+        persona: &Persona,
+        mcp_config: Option<&McpConfig>,
+        mcp_config_path: Option<&str>,
+    ) -> String {
         let mut yaml = String::new();
 
         // Kit manifest name must be lowercase alphanumeric with hyphens, 1-64 chars
         let sanitized_name: String = format!("persona-{}", persona.name)
             .to_lowercase()
             .chars()
-            .map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '-' })
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '-' {
+                    c
+                } else {
+                    '-'
+                }
+            })
             .collect::<String>()
             .replace("--", "-")
             .trim_matches('-')
@@ -109,9 +120,7 @@ impl KitGenerator {
         if persona.memory_enabled {
             yaml.push_str("\nmemory: |\n");
             yaml.push_str("  ## Memory Instructions\n");
-            yaml.push_str(
-                "  You have access to a long-term memory system via MCP tools.\n",
-            );
+            yaml.push_str("  You have access to a long-term memory system via MCP tools.\n");
             yaml.push_str(
                 "  Use memory_store to save important context, decisions, and learnings.\n",
             );
@@ -133,11 +142,7 @@ impl KitGenerator {
 
     /// Build the MCP JSON configuration content.
     /// Returns None if there are no MCP servers to configure.
-    fn build_mcp_json(
-        &self,
-        persona: &Persona,
-        mcp_config: Option<&McpConfig>,
-    ) -> Option<String> {
+    fn build_mcp_json(&self, persona: &Persona, mcp_config: Option<&McpConfig>) -> Option<String> {
         let has_memory = mcp_config.is_some();
         let has_additional = !persona.mcp_servers.is_empty();
 
@@ -173,12 +178,12 @@ impl KitGenerator {
                 "Authorization".to_string(),
                 serde_json::Value::String(format!("Bearer {}", config.bearer_token)),
             );
-            memory_server.insert(
-                "headers".to_string(),
-                serde_json::Value::Object(headers),
-            );
+            memory_server.insert("headers".to_string(), serde_json::Value::Object(headers));
 
-            servers.insert("memory".to_string(), serde_json::Value::Object(memory_server));
+            servers.insert(
+                "memory".to_string(),
+                serde_json::Value::Object(memory_server),
+            );
         }
 
         // Additional MCP servers
@@ -197,7 +202,10 @@ impl KitGenerator {
                 server_entry.insert("headers".to_string(), auth.clone());
             }
 
-            servers.insert(mcp_server.name.clone(), serde_json::Value::Object(server_entry));
+            servers.insert(
+                mcp_server.name.clone(),
+                serde_json::Value::Object(server_entry),
+            );
         }
 
         let mcp_json = serde_json::json!({
@@ -215,7 +223,11 @@ mod tests {
     use chrono::Utc;
     use tempfile::TempDir;
 
-    fn make_persona(name: &str, memory_enabled: bool, mcp_servers: Vec<PersonaMcpServer>) -> Persona {
+    fn make_persona(
+        name: &str,
+        memory_enabled: bool,
+        mcp_servers: Vec<PersonaMcpServer>,
+    ) -> Persona {
         Persona {
             id: PersonaId("test-id".to_string()),
             name: name.to_string(),
@@ -279,7 +291,9 @@ mod tests {
             port: 9100,
         };
 
-        let kit_path = generator.generate(&persona, Some(&mcp_config), None).unwrap();
+        let kit_path = generator
+            .generate(&persona, Some(&mcp_config), None)
+            .unwrap();
         let content = fs::read_to_string(kit_path.join("spec.yaml")).unwrap();
 
         // Should have initFiles with MCP config
@@ -348,9 +362,11 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let generator = KitGenerator::new(tmp.path().to_path_buf());
 
-        let mcp_servers = vec![
-            make_mcp_server("custom-tool", "http://localhost:7070/api", None),
-        ];
+        let mcp_servers = vec![make_mcp_server(
+            "custom-tool",
+            "http://localhost:7070/api",
+            None,
+        )];
 
         let persona = make_persona("full-config", true, mcp_servers);
         let mcp_config = McpConfig {
@@ -359,7 +375,9 @@ mod tests {
             port: 9200,
         };
 
-        let kit_path = generator.generate(&persona, Some(&mcp_config), None).unwrap();
+        let kit_path = generator
+            .generate(&persona, Some(&mcp_config), None)
+            .unwrap();
         let content = fs::read_to_string(kit_path.join("spec.yaml")).unwrap();
 
         // Both memory and custom-tool should be in mcpServers
@@ -428,8 +446,8 @@ mod tests {
 
     mod prop_tests {
         use super::*;
-        use proptest::prelude::*;
         use proptest::collection::vec as prop_vec;
+        use proptest::prelude::*;
         use std::collections::HashSet;
 
         /// **Validates: Requirements 3.1, 10.4, 10.5, 18.1–18.7**
@@ -476,9 +494,7 @@ mod tests {
                 "[a-zA-Z]{5,15}".prop_map(|token| {
                     Some(serde_json::json!({"Authorization": format!("Bearer {}", token)}))
                 }),
-                "[a-zA-Z0-9]{8,20}".prop_map(|key| {
-                    Some(serde_json::json!({"X-Api-Key": key}))
-                }),
+                "[a-zA-Z0-9]{8,20}".prop_map(|key| { Some(serde_json::json!({"X-Api-Key": key})) }),
             ]
         }
 

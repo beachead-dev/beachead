@@ -12,6 +12,7 @@ vi.mock("../lib/api", () => ({
   fetchFromRemote: vi.fn(),
   pushToRemote: vi.fn(),
   pushToAgent: vi.fn(),
+  getMirrorsDir: vi.fn().mockResolvedValue({ path: "/home/user/.local/share/beachead/mirrors" }),
 }));
 
 // Mock child components that have their own complex behavior

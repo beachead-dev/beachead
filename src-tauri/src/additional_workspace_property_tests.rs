@@ -1023,9 +1023,8 @@ mod tests {
 
     /// Generate a random additional workspace arg with a path and read_only flag
     fn arb_additional_workspace_arg() -> impl Strategy<Value = AdditionalWorkspaceArg> {
-        (arb_workspace_path(), any::<bool>()).prop_map(|(path, read_only)| {
-            AdditionalWorkspaceArg { path, read_only }
-        })
+        (arb_workspace_path(), any::<bool>())
+            .prop_map(|(path, read_only)| AdditionalWorkspaceArg { path, read_only })
     }
 
     proptest! {
@@ -1137,5 +1136,4 @@ mod tests {
             );
         }
     }
-
 }

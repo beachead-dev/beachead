@@ -16,7 +16,10 @@ use crate::types::{SecretStatus, SetSecretRequest};
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/secrets", get(list_secrets))
-        .route("/api/secrets/{service}", post(set_secret).delete(remove_secret))
+        .route(
+            "/api/secrets/{service}",
+            post(set_secret).delete(remove_secret),
+        )
         .route("/api/secrets/{service}/oauth", post(set_secret_oauth))
 }
 

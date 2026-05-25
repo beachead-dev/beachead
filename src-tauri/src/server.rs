@@ -47,42 +47,59 @@ impl AppState {
     /// Helper to get credential_manager or return an error.
     pub fn require_credential_manager(&self) -> Result<&Arc<CredentialManager>, OrchestratorError> {
         self.credential_manager.as_ref().ok_or_else(|| {
-            OrchestratorError::SbxError("sbx CLI is not available. Install Docker Sandboxes to use this feature.".to_string())
+            OrchestratorError::SbxError(
+                "sbx CLI is not available. Install Docker Sandboxes to use this feature."
+                    .to_string(),
+            )
         })
     }
 
     /// Helper to get session_manager or return an error.
     pub fn require_session_manager(&self) -> Result<&Arc<SessionManager>, OrchestratorError> {
         self.session_manager.as_ref().ok_or_else(|| {
-            OrchestratorError::SbxError("sbx CLI is not available. Install Docker Sandboxes to use this feature.".to_string())
+            OrchestratorError::SbxError(
+                "sbx CLI is not available. Install Docker Sandboxes to use this feature."
+                    .to_string(),
+            )
         })
     }
 
     /// Helper to get policy_manager or return an error.
     pub fn require_policy_manager(&self) -> Result<&Arc<PolicyManager>, OrchestratorError> {
         self.policy_manager.as_ref().ok_or_else(|| {
-            OrchestratorError::SbxError("sbx CLI is not available. Install Docker Sandboxes to use this feature.".to_string())
+            OrchestratorError::SbxError(
+                "sbx CLI is not available. Install Docker Sandboxes to use this feature."
+                    .to_string(),
+            )
         })
     }
 
     /// Helper to get template_manager or return an error.
     pub fn require_template_manager(&self) -> Result<&Arc<TemplateManager>, OrchestratorError> {
         self.template_manager.as_ref().ok_or_else(|| {
-            OrchestratorError::SbxError("sbx CLI is not available. Install Docker Sandboxes to use this feature.".to_string())
+            OrchestratorError::SbxError(
+                "sbx CLI is not available. Install Docker Sandboxes to use this feature."
+                    .to_string(),
+            )
         })
     }
 
     /// Helper to get system_manager or return an error.
     pub fn require_system_manager(&self) -> Result<&Arc<SystemManager>, OrchestratorError> {
         self.system_manager.as_ref().ok_or_else(|| {
-            OrchestratorError::SbxError("sbx CLI is not available. Install Docker Sandboxes to use this feature.".to_string())
+            OrchestratorError::SbxError(
+                "sbx CLI is not available. Install Docker Sandboxes to use this feature."
+                    .to_string(),
+            )
         })
     }
 
     /// Helper to get repo_sync_manager or return an error.
     pub fn require_repo_sync_manager(&self) -> Result<&Arc<RepoSyncManager>, OrchestratorError> {
         self.repo_sync_manager.as_ref().ok_or_else(|| {
-            OrchestratorError::Internal("git CLI is not available. Install git to use Repo Sync.".to_string())
+            OrchestratorError::Internal(
+                "git CLI is not available. Install git to use Repo Sync.".to_string(),
+            )
         })
     }
 }
@@ -109,9 +126,7 @@ fn dirs_home() -> PathBuf {
 }
 
 /// Start the Axum HTTP/WebSocket server bound to localhost only.
-pub async fn start_server(
-    _app_handle: tauri::AppHandle,
-) -> Result<(), OrchestratorError> {
+pub async fn start_server(_app_handle: tauri::AppHandle) -> Result<(), OrchestratorError> {
     let data_path = dirs_data_path();
     std::fs::create_dir_all(&data_path).ok();
 
@@ -136,10 +151,18 @@ pub async fn start_server(
     let kit_generator = Arc::new(KitGenerator::new(kit_base_dir));
 
     // sbx-dependent managers (None if sbx not available)
-    let credential_manager = sbx.as_ref().map(|s| Arc::new(CredentialManager::new(s.clone())));
-    let policy_manager = sbx.as_ref().map(|s| Arc::new(PolicyManager::new(s.clone())));
-    let template_manager = sbx.as_ref().map(|s| Arc::new(TemplateManager::new(s.clone())));
-    let system_manager = sbx.as_ref().map(|s| Arc::new(SystemManager::new(s.clone())));
+    let credential_manager = sbx
+        .as_ref()
+        .map(|s| Arc::new(CredentialManager::new(s.clone())));
+    let policy_manager = sbx
+        .as_ref()
+        .map(|s| Arc::new(PolicyManager::new(s.clone())));
+    let template_manager = sbx
+        .as_ref()
+        .map(|s| Arc::new(TemplateManager::new(s.clone())));
+    let system_manager = sbx
+        .as_ref()
+        .map(|s| Arc::new(SystemManager::new(s.clone())));
 
     // Seed built-in agents
     if let Err(e) = agent_manager.seed_builtin_agents() {
@@ -173,7 +196,10 @@ pub async fn start_server(
             Some(mgr)
         }
         Err(e) => {
-            eprintln!("MCP Container Manager unavailable (Docker not accessible): {}", e);
+            eprintln!(
+                "MCP Container Manager unavailable (Docker not accessible): {}",
+                e
+            );
             None
         }
     };

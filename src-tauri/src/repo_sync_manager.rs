@@ -267,9 +267,7 @@ impl RepoSyncManager {
             .git
             .get_remote_url(workspace_path, primary_remote)
             .await
-            .map_err(|e| {
-                OrchestratorError::Internal(format!("Failed to get remote URL: {}", e))
-            })?;
+            .map_err(|e| OrchestratorError::Internal(format!("Failed to get remote URL: {}", e)))?;
 
         // 4. Compute mirror path: <mirrors_dir>/<persona_name>/<project_folder_name>/
         let project_name = workspace_path
@@ -279,7 +277,12 @@ impl RepoSyncManager {
             })?
             .to_string_lossy()
             .to_string();
-        let mirror_path = self.mirrors_dir.read().unwrap().join(&persona_name).join(&project_name);
+        let mirror_path = self
+            .mirrors_dir
+            .read()
+            .unwrap()
+            .join(&persona_name)
+            .join(&project_name);
 
         // 5. Check if mirror path already exists → error
         if mirror_path.exists() {
@@ -328,7 +331,12 @@ impl RepoSyncManager {
         if let Some(ref url) = remote_url {
             let _ = self
                 .git
-                .exec(&mirror_path, &["remote", "set-url", "origin", url], None, false)
+                .exec(
+                    &mirror_path,
+                    &["remote", "set-url", "origin", url],
+                    None,
+                    false,
+                )
                 .await;
         }
 
@@ -377,9 +385,8 @@ impl RepoSyncManager {
             updated_at: now,
         };
 
-        self.db.with_conn(|conn| {
-            db_ops::insert_managed_repo(conn, &repo)
-        })?;
+        self.db
+            .with_conn(|conn| db_ops::insert_managed_repo(conn, &repo))?;
 
         Ok(repo)
     }
@@ -420,13 +427,16 @@ impl RepoSyncManager {
         let project_name = workspace_path
             .file_name()
             .ok_or_else(|| {
-                OrchestratorError::Validation(
-                    "Workspace path has no folder name".to_string(),
-                )
+                OrchestratorError::Validation("Workspace path has no folder name".to_string())
             })?
             .to_string_lossy()
             .to_string();
-        let mirror_path = self.mirrors_dir.read().unwrap().join(&persona_name).join(&project_name);
+        let mirror_path = self
+            .mirrors_dir
+            .read()
+            .unwrap()
+            .join(&persona_name)
+            .join(&project_name);
 
         // 4. Check if mirror path already exists → error
         if mirror_path.exists() {
@@ -481,12 +491,7 @@ impl RepoSyncManager {
             // Add the user-provided remote URL as origin
             let add_result = self
                 .git
-                .exec(
-                    &mirror_path,
-                    &["remote", "add", "origin", url],
-                    None,
-                    false,
-                )
+                .exec(&mirror_path, &["remote", "add", "origin", url], None, false)
                 .await;
             if let Err(e) = add_result {
                 // Clean up on failure
@@ -505,7 +510,11 @@ impl RepoSyncManager {
         }
 
         // 7. Strip all remotes from workspace
-        let remote_names = self.git.list_remote_names(workspace_path).await.unwrap_or_default();
+        let remote_names = self
+            .git
+            .list_remote_names(workspace_path)
+            .await
+            .unwrap_or_default();
         for name in &remote_names {
             let _ = self
                 .git
@@ -538,9 +547,8 @@ impl RepoSyncManager {
             updated_at: now,
         };
 
-        self.db.with_conn(|conn| {
-            db_ops::insert_managed_repo(conn, &repo)
-        })?;
+        self.db
+            .with_conn(|conn| db_ops::insert_managed_repo(conn, &repo))?;
 
         Ok(repo)
     }
@@ -569,9 +577,9 @@ impl RepoSyncManager {
         credentials: Option<(&str, &str)>,
     ) -> Result<ManagedRepo, OrchestratorError> {
         // 1. Look up persona
-        let persona = self.db.with_conn(|conn| {
-            db_ops::get_persona(conn, persona_id)
-        })?;
+        let persona = self
+            .db
+            .with_conn(|conn| db_ops::get_persona(conn, persona_id))?;
 
         // 2. Determine if source is a URL or local path
         let is_url = source.starts_with("https://") || source.starts_with("git@");
@@ -597,7 +605,10 @@ impl RepoSyncManager {
         let project_name = if is_url {
             // Extract repo name from URL: https://github.com/user/repo.git → repo
             let url_path = source.rsplit('/').next().unwrap_or("repo");
-            url_path.strip_suffix(".git").unwrap_or(url_path).to_string()
+            url_path
+                .strip_suffix(".git")
+                .unwrap_or(url_path)
+                .to_string()
         } else {
             source_path
                 .file_name()
@@ -606,7 +617,12 @@ impl RepoSyncManager {
         };
 
         // 4. Compute mirror path
-        let mirror_path = self.mirrors_dir.read().unwrap().join(&persona.name).join(&project_name);
+        let mirror_path = self
+            .mirrors_dir
+            .read()
+            .unwrap()
+            .join(&persona.name)
+            .join(&project_name);
         if mirror_path.exists() {
             return Err(OrchestratorError::Validation(
                 "Mirror directory already exists for this project name".to_string(),
@@ -626,9 +642,7 @@ impl RepoSyncManager {
         let mirror_str = mirror_path.to_string_lossy().to_string();
 
         // 5. Clone source → mirror
-        if is_url && credentials.is_some() {
-            // Store credentials temporarily for the clone operation
-            let (username, secret) = credentials.unwrap();
+        if let Some((username, secret)) = credentials.filter(|_| is_url) {
             let temp_repo_id = format!("temp-clone-{}", uuid::Uuid::new_v4());
             repo_credential_manager::store_credentials(
                 &temp_repo_id,
@@ -661,13 +675,11 @@ impl RepoSyncManager {
                     .env("GIT_ASKPASS", &cred_env.askpass_path)
                     .env("BEACHEAD_KEYRING_SERVICE", &cred_env.service_name);
 
-                let output = tokio::time::timeout(
-                    std::time::Duration::from_secs(120),
-                    cmd.output(),
-                )
-                .await
-                .map_err(|_| OrchestratorError::Internal("Clone timed out".to_string()))?
-                .map_err(|e| OrchestratorError::Internal(format!("Clone failed: {}", e)))?;
+                let output =
+                    tokio::time::timeout(std::time::Duration::from_secs(120), cmd.output())
+                        .await
+                        .map_err(|_| OrchestratorError::Internal("Clone timed out".to_string()))?
+                        .map_err(|e| OrchestratorError::Internal(format!("Clone failed: {}", e)))?;
 
                 if !output.status.success() {
                     let _ = std::fs::remove_dir_all(&mirror_path);
@@ -711,9 +723,7 @@ impl RepoSyncManager {
             .await
             .unwrap_or(None);
 
-        let remote_provider = remote_url
-            .as_deref()
-            .and_then(Self::detect_remote_provider);
+        let _remote_provider = remote_url.as_deref().and_then(Self::detect_remote_provider);
 
         // 7. Create workspace clone from mirror (stripped of remotes)
         let workspace_path = persona.workspace_path.join(&project_name);
@@ -745,7 +755,11 @@ impl RepoSyncManager {
         }
 
         // 8. Strip all remotes from workspace
-        let ws_remotes = self.git.list_remote_names(&workspace_path).await.unwrap_or_default();
+        let ws_remotes = self
+            .git
+            .list_remote_names(&workspace_path)
+            .await
+            .unwrap_or_default();
         for name in &ws_remotes {
             let _ = self
                 .git
@@ -761,7 +775,12 @@ impl RepoSyncManager {
             if let Ok(Some(source_remote)) = self.git.get_remote_url(source_path, "origin").await {
                 let _ = self
                     .git
-                    .exec(&mirror_path, &["remote", "set-url", "origin", &source_remote], None, false)
+                    .exec(
+                        &mirror_path,
+                        &["remote", "set-url", "origin", &source_remote],
+                        None,
+                        false,
+                    )
                     .await;
             }
         }
@@ -805,9 +824,8 @@ impl RepoSyncManager {
             updated_at: now,
         };
 
-        self.db.with_conn(|conn| {
-            db_ops::insert_managed_repo(conn, &repo)
-        })?;
+        self.db
+            .with_conn(|conn| db_ops::insert_managed_repo(conn, &repo))?;
 
         // 12. If credentials were provided and we have a remote, store them permanently
         if let Some((username, secret)) = credentials {
@@ -845,9 +863,7 @@ impl RepoSyncManager {
                     .filter(|line| !line.is_empty() && !line.contains("->"))
                     .map(|line| {
                         // Strip "origin/" prefix if present
-                        line.strip_prefix("origin/")
-                            .unwrap_or(line)
-                            .to_string()
+                        line.strip_prefix("origin/").unwrap_or(line).to_string()
                     })
                     .collect();
                 Ok(branches)
@@ -868,10 +884,13 @@ impl RepoSyncManager {
     /// - `Ok(SyncResult { commits })` with the number of new commits pulled.
     /// - `Err(OrchestratorError::Validation(...))` if a merge conflict occurs,
     ///   including the conflicting file paths.
-    pub async fn pull_from_agent(&self, repo_id: &ManagedRepoId) -> Result<SyncResult, OrchestratorError> {
-        let repo = self.db.with_conn(|conn| {
-            db_ops::get_managed_repo(conn, repo_id)
-        })?;
+    pub async fn pull_from_agent(
+        &self,
+        repo_id: &ManagedRepoId,
+    ) -> Result<SyncResult, OrchestratorError> {
+        let repo = self
+            .db
+            .with_conn(|conn| db_ops::get_managed_repo(conn, repo_id))?;
 
         let mirror = Path::new(&repo.mirror_path);
         let workspace = Path::new(&repo.workspace_path);
@@ -892,7 +911,9 @@ impl RepoSyncManager {
         self.git
             .exec(mirror, &["fetch", workspace_str], None, false)
             .await
-            .map_err(|e| OrchestratorError::Internal(format!("Failed to fetch from workspace: {}", e)))?;
+            .map_err(|e| {
+                OrchestratorError::Internal(format!("Failed to fetch from workspace: {}", e))
+            })?;
 
         // Get current branch in mirror
         let branch = self.git.get_current_branch(mirror).await.map_err(|e| {
@@ -926,10 +947,7 @@ impl RepoSyncManager {
                     let file_list = if conflict_files.is_empty() {
                         e.to_string()
                     } else {
-                        format!(
-                            "Merge conflict in files: {}",
-                            conflict_files.join(", ")
-                        )
+                        format!("Merge conflict in files: {}", conflict_files.join(", "))
                     };
                     return Err(OrchestratorError::Validation(file_list));
                 }
@@ -940,18 +958,12 @@ impl RepoSyncManager {
                 let file_list = if conflict_files.is_empty() {
                     format!("Merge conflict: {}", stderr)
                 } else {
-                    format!(
-                        "Merge conflict in files: {}",
-                        conflict_files.join(", ")
-                    )
+                    format!("Merge conflict in files: {}", conflict_files.join(", "))
                 };
                 return Err(OrchestratorError::Validation(file_list));
             }
             Err(e) => {
-                return Err(OrchestratorError::Internal(format!(
-                    "Merge failed: {}",
-                    e
-                )));
+                return Err(OrchestratorError::Internal(format!("Merge failed: {}", e)));
             }
         }
 
@@ -987,10 +999,13 @@ impl RepoSyncManager {
     /// - `Ok(SyncResult { commits })` with the number of commits applied.
     /// - `Err(OrchestratorError::Validation(...))` if the workspace has uncommitted
     ///   changes or a merge conflict occurs (includes conflicting file paths).
-    pub async fn push_to_agent(&self, repo_id: &ManagedRepoId) -> Result<SyncResult, OrchestratorError> {
-        let repo = self.db.with_conn(|conn| {
-            db_ops::get_managed_repo(conn, repo_id)
-        })?;
+    pub async fn push_to_agent(
+        &self,
+        repo_id: &ManagedRepoId,
+    ) -> Result<SyncResult, OrchestratorError> {
+        let repo = self
+            .db
+            .with_conn(|conn| db_ops::get_managed_repo(conn, repo_id))?;
 
         let workspace = Path::new(&repo.workspace_path);
         let mirror = Path::new(&repo.mirror_path);
@@ -1036,7 +1051,12 @@ impl RepoSyncManager {
         // Execute git pull --no-rebase <mirror-path> <branch> in workspace (local, no network)
         let pull_result = self
             .git
-            .exec(workspace, &["pull", "--no-rebase", mirror_str, &branch], None, false)
+            .exec(
+                workspace,
+                &["pull", "--no-rebase", mirror_str, &branch],
+                None,
+                false,
+            )
             .await;
 
         match pull_result {
@@ -1046,10 +1066,7 @@ impl RepoSyncManager {
                 let file_list = if conflict_files.is_empty() {
                     "Merge conflict in workspace".to_string()
                 } else {
-                    format!(
-                        "Merge conflict in files: {}",
-                        conflict_files.join(", ")
-                    )
+                    format!("Merge conflict in files: {}", conflict_files.join(", "))
                 };
                 return Err(OrchestratorError::Validation(file_list));
             }
@@ -1058,10 +1075,8 @@ impl RepoSyncManager {
                 // not stderr, so classify_git_error won't catch it. Check for unmerged files.
                 let conflict_files = self.get_conflict_files(workspace).await;
                 if !conflict_files.is_empty() {
-                    let file_list = format!(
-                        "Merge conflict in files: {}",
-                        conflict_files.join(", ")
-                    );
+                    let file_list =
+                        format!("Merge conflict in files: {}", conflict_files.join(", "));
                     return Err(OrchestratorError::Validation(file_list));
                 }
                 // Also check stderr for conflict indicators
@@ -1076,10 +1091,7 @@ impl RepoSyncManager {
                 )));
             }
             Err(e) => {
-                return Err(OrchestratorError::Internal(format!(
-                    "Pull failed: {}",
-                    e
-                )));
+                return Err(OrchestratorError::Internal(format!("Pull failed: {}", e)));
             }
         }
 
@@ -1161,13 +1173,14 @@ impl RepoSyncManager {
         squash_message: Option<&str>,
     ) -> Result<PushResult, OrchestratorError> {
         // 1. Get the repo from DB
-        let repo = self.db.with_conn(|conn| db_ops::get_managed_repo(conn, repo_id))?;
+        let repo = self
+            .db
+            .with_conn(|conn| db_ops::get_managed_repo(conn, repo_id))?;
 
         let mirror = Path::new(&repo.mirror_path);
 
         // 2. Check credentials are configured (Requirement 8.9)
-        let cred_configured =
-            repo_credential_manager::credentials_configured(&repo_id.0)?;
+        let cred_configured = repo_credential_manager::credentials_configured(&repo_id.0)?;
         if !cred_configured {
             return Err(OrchestratorError::MissingCredentials(
                 "Credentials must be configured before pushing to remote".to_string(),
@@ -1216,14 +1229,9 @@ impl RepoSyncManager {
                     .unwrap_or("ai/<persona-name>/<date>");
                 self.resolve_branch_name(&repo, pattern).await?
             }
-            BranchStrategy::Direct => {
-                self.git.get_current_branch(mirror).await.map_err(|e| {
-                    OrchestratorError::Internal(format!(
-                        "Failed to get current branch: {}",
-                        e
-                    ))
-                })?
-            }
+            BranchStrategy::Direct => self.git.get_current_branch(mirror).await.map_err(|e| {
+                OrchestratorError::Internal(format!("Failed to get current branch: {}", e))
+            })?,
         };
 
         if branch.is_empty() {
@@ -1260,9 +1268,7 @@ impl RepoSyncManager {
         self.git
             .exec(mirror, &["push", "origin", &branch], Some(&cred_env), true)
             .await
-            .map_err(|e| {
-                OrchestratorError::Internal(format!("Push to remote failed: {}", e))
-            })?;
+            .map_err(|e| OrchestratorError::Internal(format!("Push to remote failed: {}", e)))?;
 
         // 7. Return PushResult (Requirement 8.5)
         Ok(PushResult {
@@ -1301,10 +1307,7 @@ impl RepoSyncManager {
             .exec(mirror, &["reset", "--soft", &parent_ref], None, false)
             .await
             .map_err(|e| {
-                OrchestratorError::Internal(format!(
-                    "Failed to soft reset for squash: {}",
-                    e
-                ))
+                OrchestratorError::Internal(format!("Failed to soft reset for squash: {}", e))
             })?;
 
         // Create a new commit with all the staged changes
@@ -1312,10 +1315,7 @@ impl RepoSyncManager {
             .exec(mirror, &["commit", "-m", message], None, false)
             .await
             .map_err(|e| {
-                OrchestratorError::Internal(format!(
-                    "Failed to create squash commit: {}",
-                    e
-                ))
+                OrchestratorError::Internal(format!("Failed to create squash commit: {}", e))
             })?;
 
         Ok(())
@@ -1341,9 +1341,9 @@ impl RepoSyncManager {
         repo_id: &ManagedRepoId,
     ) -> Result<SyncResult, OrchestratorError> {
         // 1. Get the repo from DB
-        let repo = self.db.with_conn(|conn| {
-            db_ops::get_managed_repo(conn, repo_id)
-        })?;
+        let repo = self
+            .db
+            .with_conn(|conn| db_ops::get_managed_repo(conn, repo_id))?;
 
         let mirror = Path::new(&repo.mirror_path);
 
@@ -1387,7 +1387,7 @@ impl RepoSyncManager {
     /// # Requirements: 4.1, 4.2, 4.3, 4.8, 4.9
     pub async fn scan_workspaces(&self) -> Result<Vec<DetectedRepo>, OrchestratorError> {
         // 1. List all personas from DB
-        let personas = self.db.with_conn(|conn| db_ops::list_personas(conn))?;
+        let personas = self.db.with_conn(db_ops::list_personas)?;
 
         let mut detected: Vec<DetectedRepo> = Vec::new();
 
@@ -1401,20 +1401,16 @@ impl RepoSyncManager {
 
             // 3. Filter out workspaces already tracked by Repo Sync
             let workspace_str = workspace_path.to_string_lossy().to_string();
-            let already_tracked = self.db.with_conn(|conn| {
-                db_ops::managed_repo_exists(conn, &persona.id, &workspace_str)
-            })?;
+            let already_tracked = self
+                .db
+                .with_conn(|conn| db_ops::managed_repo_exists(conn, &persona.id, &workspace_str))?;
 
             if already_tracked {
                 continue;
             }
 
             // 4. Check if the repo has remotes configured
-            let (has_remotes, remote_url) = match self
-                .git
-                .list_remote_names(workspace_path)
-                .await
-            {
+            let (has_remotes, remote_url) = match self.git.list_remote_names(workspace_path).await {
                 Ok(remotes) => {
                     if remotes.is_empty() {
                         (false, None)
@@ -1495,12 +1491,7 @@ impl RepoSyncManager {
             // Check if the remote tracking branch exists
             let check = self
                 .git
-                .exec(
-                    mirror,
-                    &["rev-parse", "--verify", &remote_ref],
-                    None,
-                    false,
-                )
+                .exec(mirror, &["rev-parse", "--verify", &remote_ref], None, false)
                 .await;
             if check.is_ok() {
                 format!("{}..HEAD", remote_ref)
@@ -1519,22 +1510,13 @@ impl RepoSyncManager {
         );
 
         let format_arg = format!("--format={}", format_str);
-        let args: Vec<&str> = vec![
-            "log",
-            &format_arg,
-            "--numstat",
-            "-n",
-            "500",
-            &range,
-        ];
+        let args: Vec<&str> = vec!["log", &format_arg, "--numstat", "-n", "500", &range];
 
         let output = self
             .git
             .exec(mirror, &args, None, false)
             .await
-            .map_err(|e| {
-                OrchestratorError::Internal(format!("Failed to list commits: {}", e))
-            })?;
+            .map_err(|e| OrchestratorError::Internal(format!("Failed to list commits: {}", e)))?;
 
         // Parse the output
         let commits = Self::parse_log_output(&output.stdout, separator);
@@ -1632,9 +1614,9 @@ impl RepoSyncManager {
 
         tokio::spawn(async move {
             loop {
-                let repos = db.with_conn(|conn| {
-                    db_ops::list_managed_repos(conn)
-                }).unwrap_or_default();
+                let repos = db
+                    .with_conn(db_ops::list_managed_repos)
+                    .unwrap_or_default();
 
                 for repo in &repos {
                     let repo_id = repo.id.0.clone();
@@ -1682,34 +1664,22 @@ impl RepoSyncManager {
 
                     // Check remote → mirror (network, uses credentials)
                     // Skip for LocalOnly repos (Requirement 16.6)
-                    if repo.sync_mode != SyncMode::LocalOnly {
-                        if mirror_path.join(".git").exists() {
+                    if repo.sync_mode != SyncMode::LocalOnly
+                        && mirror_path.join(".git").exists() {
                             // Only attempt remote check if credentials are configured
                             if let Ok(cred_env) =
                                 repo_credential_manager::build_credential_env(&repo_id)
                             {
                                 let fetch_result = git
-                                    .exec(
-                                        mirror_path,
-                                        &["fetch", "origin"],
-                                        Some(&cred_env),
-                                        true,
-                                    )
+                                    .exec(mirror_path, &["fetch", "origin"], Some(&cred_env), true)
                                     .await;
 
                                 if fetch_result.is_ok() {
-                                    if let Ok(branch) =
-                                        git.get_current_branch(mirror_path).await
-                                    {
+                                    if let Ok(branch) = git.get_current_branch(mirror_path).await {
                                         if !branch.is_empty() {
-                                            let remote_ref =
-                                                format!("origin/{}", branch);
+                                            let remote_ref = format!("origin/{}", branch);
                                             let behind = git
-                                                .ahead_behind(
-                                                    mirror_path,
-                                                    &branch,
-                                                    &remote_ref,
-                                                )
+                                                .ahead_behind(mirror_path, &branch, &remote_ref)
                                                 .await
                                                 .map(|(_, behind)| behind)
                                                 .unwrap_or(0);
@@ -1720,7 +1690,6 @@ impl RepoSyncManager {
                                 // Requirement 16.5: If check fails, log and retry next interval
                             }
                         }
-                    }
 
                     // Update cached sync status
                     cached_status.insert(repo_id.clone(), status);
@@ -1774,7 +1743,9 @@ impl RepoSyncManager {
         req: &UpdateRepoRequest,
     ) -> Result<ManagedRepo, OrchestratorError> {
         // 1. Get existing repo from DB
-        let mut repo = self.db.with_conn(|conn| db_ops::get_managed_repo(conn, id))?;
+        let mut repo = self
+            .db
+            .with_conn(|conn| db_ops::get_managed_repo(conn, id))?;
 
         // 2. Validate remote URL format if provided (Requirement 12.2)
         if let Some(ref url) = req.remote_url {
@@ -1800,8 +1771,7 @@ impl RepoSyncManager {
             let cred_configured = repo_credential_manager::credentials_configured(&id.0)?;
             if !cred_configured {
                 return Err(OrchestratorError::Validation(
-                    "Cannot change sync mode to Remote: credentials are not configured"
-                        .to_string(),
+                    "Cannot change sync mode to Remote: credentials are not configured".to_string(),
                 ));
             }
         }
@@ -1916,7 +1886,9 @@ impl RepoSyncManager {
         delete_mirror: bool,
     ) -> Result<(), OrchestratorError> {
         // 1. Get repo from DB (validates it exists)
-        let repo = self.db.with_conn(|conn| db_ops::get_managed_repo(conn, id))?;
+        let repo = self
+            .db
+            .with_conn(|conn| db_ops::get_managed_repo(conn, id))?;
 
         // 2. Delete keyring credentials (best-effort)
         // Per implementation guidance #6: deletion/cleanup failures should be best-effort
@@ -2130,11 +2102,7 @@ mod tests {
             .unwrap();
 
         let git = Arc::new(GitCli::new("git".to_string()));
-        let manager = RepoSyncManager::new(
-            db,
-            git,
-            PathBuf::from("/tmp/mirrors"),
-        );
+        let manager = RepoSyncManager::new(db, git, PathBuf::from("/tmp/mirrors"));
 
         let repo = ManagedRepo {
             id: crate::types::ManagedRepoId("r1".to_string()),
@@ -2204,11 +2172,7 @@ mod tests {
             .unwrap();
 
         let git = Arc::new(GitCli::new("git".to_string()));
-        let manager = RepoSyncManager::new(
-            db,
-            git,
-            PathBuf::from("/tmp/mirrors"),
-        );
+        let manager = RepoSyncManager::new(db, git, PathBuf::from("/tmp/mirrors"));
 
         let repo = ManagedRepo {
             id: crate::types::ManagedRepoId("r1".to_string()),
@@ -2259,7 +2223,11 @@ mod tests {
         // Create a working clone, push branches that will conflict
         let work_dir = tempfile::tempdir().unwrap();
         std::process::Command::new("git")
-            .args(["clone", bare_dir.path().to_str().unwrap(), work_dir.path().to_str().unwrap()])
+            .args([
+                "clone",
+                bare_dir.path().to_str().unwrap(),
+                work_dir.path().to_str().unwrap(),
+            ])
             .output()
             .unwrap();
         std::process::Command::new("git")
@@ -2319,7 +2287,11 @@ mod tests {
         // Clone the bare repo to create the mirror (so it has origin tracking)
         let mirror_dir = tempfile::tempdir().unwrap();
         std::process::Command::new("git")
-            .args(["clone", bare_dir.path().to_str().unwrap(), mirror_dir.path().to_str().unwrap()])
+            .args([
+                "clone",
+                bare_dir.path().to_str().unwrap(),
+                mirror_dir.path().to_str().unwrap(),
+            ])
             .output()
             .unwrap();
         // Fetch all remote branches
@@ -2466,14 +2438,14 @@ mod tests {
         let manager = RepoSyncManager::new(db, git.clone(), mirrors_dir.path().to_path_buf());
 
         let result = manager
-            .enable_agent_created(
-                &PersonaId("p1".to_string()),
-                workspace.path(),
-                None,
-            )
+            .enable_agent_created(&PersonaId("p1".to_string()), workspace.path(), None)
             .await;
 
-        assert!(result.is_ok(), "enable_agent_created failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "enable_agent_created failed: {:?}",
+            result.err()
+        );
         let repo = result.unwrap();
 
         // Verify sync_mode is LocalOnly
@@ -2491,7 +2463,10 @@ mod tests {
 
         // Verify mirror has no remotes (origin removed)
         let mirror_remotes = git.list_remote_names(mirror_path).await.unwrap();
-        assert!(mirror_remotes.is_empty(), "Mirror should have no remotes for local-only");
+        assert!(
+            mirror_remotes.is_empty(),
+            "Mirror should have no remotes for local-only"
+        );
     }
 
     #[tokio::test]
@@ -2511,7 +2486,11 @@ mod tests {
             )
             .await;
 
-        assert!(result.is_ok(), "enable_agent_created failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "enable_agent_created failed: {:?}",
+            result.err()
+        );
         let repo = result.unwrap();
 
         // Verify sync_mode is Remote
@@ -2547,7 +2526,10 @@ mod tests {
         assert!(result.is_err());
         // Verify no mirror was created
         let mirror_path = mirrors_dir.path().join("my-agent");
-        assert!(!mirror_path.exists(), "No mirror should be created on invalid URL");
+        assert!(
+            !mirror_path.exists(),
+            "No mirror should be created on invalid URL"
+        );
     }
 
     #[tokio::test]
@@ -2564,16 +2546,16 @@ mod tests {
         std::fs::create_dir_all(&mirror_path).unwrap();
 
         let result = manager
-            .enable_agent_created(
-                &PersonaId("p1".to_string()),
-                workspace.path(),
-                None,
-            )
+            .enable_agent_created(&PersonaId("p1".to_string()), workspace.path(), None)
             .await;
 
         assert!(result.is_err());
         let err_msg = format!("{:?}", result.err().unwrap());
-        assert!(err_msg.contains("already exists"), "Error should mention mirror already exists: {}", err_msg);
+        assert!(
+            err_msg.contains("already exists"),
+            "Error should mention mirror already exists: {}",
+            err_msg
+        );
     }
 
     #[tokio::test]
@@ -2592,18 +2574,17 @@ mod tests {
         let manager = RepoSyncManager::new(db, git.clone(), mirrors_dir.path().to_path_buf());
 
         let result = manager
-            .enable_agent_created(
-                &PersonaId("p1".to_string()),
-                workspace.path(),
-                None,
-            )
+            .enable_agent_created(&PersonaId("p1".to_string()), workspace.path(), None)
             .await;
 
         assert!(result.is_ok());
 
         // Verify workspace remotes were stripped
         let remotes = git.list_remote_names(workspace.path()).await.unwrap();
-        assert!(remotes.is_empty(), "All workspace remotes should be stripped");
+        assert!(
+            remotes.is_empty(),
+            "All workspace remotes should be stripped"
+        );
     }
 
     #[tokio::test]
@@ -2612,7 +2593,8 @@ mod tests {
         let mirrors_dir = tempfile::tempdir().unwrap();
         let db = setup_db_with_persona("p1", "my-agent");
         let git = Arc::new(GitCli::new("git".to_string()));
-        let manager = RepoSyncManager::new(db.clone(), git.clone(), mirrors_dir.path().to_path_buf());
+        let manager =
+            RepoSyncManager::new(db.clone(), git.clone(), mirrors_dir.path().to_path_buf());
 
         let result = manager
             .enable_agent_created(
@@ -2624,13 +2606,16 @@ mod tests {
             .unwrap();
 
         // Verify the record was stored in DB
-        let stored = db.with_conn(|conn| {
-            db_ops::get_managed_repo(conn, &result.id)
-        }).unwrap();
+        let stored = db
+            .with_conn(|conn| db_ops::get_managed_repo(conn, &result.id))
+            .unwrap();
 
         assert_eq!(stored.persona_id.0, "p1");
         assert_eq!(stored.sync_mode, SyncMode::Remote);
-        assert_eq!(stored.remote_url.as_deref(), Some("git@github.com:user/repo.git"));
+        assert_eq!(
+            stored.remote_url.as_deref(),
+            Some("git@github.com:user/repo.git")
+        );
         assert_eq!(stored.branch_strategy, BranchStrategy::Direct);
         assert_eq!(stored.attribution_mode, AttributionMode::KeepAgent);
         assert_eq!(stored.secret_scan_mode, SecretScanMode::Block);
@@ -2644,7 +2629,12 @@ mod tests {
         let workspace = create_test_workspace();
         // Add a remote to the workspace
         std::process::Command::new("git")
-            .args(["remote", "add", "origin", "https://github.com/user/repo.git"])
+            .args([
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/user/repo.git",
+            ])
             .current_dir(workspace.path())
             .output()
             .unwrap();
@@ -2674,12 +2664,22 @@ mod tests {
     async fn test_enable_strips_remotes_from_workspace() {
         let workspace = create_test_workspace();
         std::process::Command::new("git")
-            .args(["remote", "add", "origin", "https://github.com/user/repo.git"])
+            .args([
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/user/repo.git",
+            ])
             .current_dir(workspace.path())
             .output()
             .unwrap();
         std::process::Command::new("git")
-            .args(["remote", "add", "upstream", "https://github.com/org/repo.git"])
+            .args([
+                "remote",
+                "add",
+                "upstream",
+                "https://github.com/org/repo.git",
+            ])
             .current_dir(workspace.path())
             .output()
             .unwrap();
@@ -2697,19 +2697,32 @@ mod tests {
 
         // Verify all remotes stripped from workspace
         let remotes = git.list_remote_names(workspace.path()).await.unwrap();
-        assert!(remotes.is_empty(), "Workspace should have no remotes after enable");
+        assert!(
+            remotes.is_empty(),
+            "Workspace should have no remotes after enable"
+        );
     }
 
     #[tokio::test]
     async fn test_enable_preserves_remotes_in_mirror() {
         let workspace = create_test_workspace();
         std::process::Command::new("git")
-            .args(["remote", "add", "origin", "https://github.com/user/repo.git"])
+            .args([
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/user/repo.git",
+            ])
             .current_dir(workspace.path())
             .output()
             .unwrap();
         std::process::Command::new("git")
-            .args(["remote", "add", "upstream", "https://github.com/org/repo.git"])
+            .args([
+                "remote",
+                "add",
+                "upstream",
+                "https://github.com/org/repo.git",
+            ])
             .current_dir(workspace.path())
             .output()
             .unwrap();
@@ -2727,11 +2740,17 @@ mod tests {
         // Verify mirror has origin pointing to the real remote URL
         let mirror_path = Path::new(&repo.mirror_path);
         let origin_url = git.get_remote_url(mirror_path, "origin").await.unwrap();
-        assert_eq!(origin_url.as_deref(), Some("https://github.com/user/repo.git"));
+        assert_eq!(
+            origin_url.as_deref(),
+            Some("https://github.com/user/repo.git")
+        );
 
         // Verify mirror also has the upstream remote
         let upstream_url = git.get_remote_url(mirror_path, "upstream").await.unwrap();
-        assert_eq!(upstream_url.as_deref(), Some("https://github.com/org/repo.git"));
+        assert_eq!(
+            upstream_url.as_deref(),
+            Some("https://github.com/org/repo.git")
+        );
     }
 
     #[tokio::test]
@@ -2739,12 +2758,22 @@ mod tests {
         let workspace = create_test_workspace();
         // Add remotes in non-origin-first order
         std::process::Command::new("git")
-            .args(["remote", "add", "upstream", "https://github.com/org/repo.git"])
+            .args([
+                "remote",
+                "add",
+                "upstream",
+                "https://github.com/org/repo.git",
+            ])
             .current_dir(workspace.path())
             .output()
             .unwrap();
         std::process::Command::new("git")
-            .args(["remote", "add", "origin", "https://github.com/user/repo.git"])
+            .args([
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/user/repo.git",
+            ])
             .current_dir(workspace.path())
             .output()
             .unwrap();
@@ -2760,7 +2789,10 @@ mod tests {
             .unwrap();
 
         // The primary remote_url stored should be origin's URL
-        assert_eq!(repo.remote_url.as_deref(), Some("https://github.com/user/repo.git"));
+        assert_eq!(
+            repo.remote_url.as_deref(),
+            Some("https://github.com/user/repo.git")
+        );
     }
 
     #[tokio::test]
@@ -2768,7 +2800,12 @@ mod tests {
         let workspace = create_test_workspace();
         // Add a remote that's not named "origin"
         std::process::Command::new("git")
-            .args(["remote", "add", "upstream", "https://github.com/org/repo.git"])
+            .args([
+                "remote",
+                "add",
+                "upstream",
+                "https://github.com/org/repo.git",
+            ])
             .current_dir(workspace.path())
             .output()
             .unwrap();
@@ -2784,14 +2821,22 @@ mod tests {
             .unwrap();
 
         // Should use the first (and only) remote's URL
-        assert_eq!(repo.remote_url.as_deref(), Some("https://github.com/org/repo.git"));
+        assert_eq!(
+            repo.remote_url.as_deref(),
+            Some("https://github.com/org/repo.git")
+        );
     }
 
     #[tokio::test]
     async fn test_enable_rejects_if_mirror_exists() {
         let workspace = create_test_workspace();
         std::process::Command::new("git")
-            .args(["remote", "add", "origin", "https://github.com/user/repo.git"])
+            .args([
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/user/repo.git",
+            ])
             .current_dir(workspace.path())
             .output()
             .unwrap();
@@ -2812,11 +2857,18 @@ mod tests {
 
         assert!(result.is_err());
         let err_msg = format!("{:?}", result.err().unwrap());
-        assert!(err_msg.contains("already exists"), "Error should mention mirror already exists: {}", err_msg);
+        assert!(
+            err_msg.contains("already exists"),
+            "Error should mention mirror already exists: {}",
+            err_msg
+        );
 
         // Verify workspace remotes were NOT stripped (rollback behavior)
         let remotes = git.list_remote_names(workspace.path()).await.unwrap();
-        assert!(remotes.contains(&"origin".to_string()), "Workspace remotes should be preserved on error");
+        assert!(
+            remotes.contains(&"origin".to_string()),
+            "Workspace remotes should be preserved on error"
+        );
     }
 
     #[tokio::test]
@@ -2835,14 +2887,23 @@ mod tests {
 
         assert!(result.is_err());
         let err_msg = format!("{:?}", result.err().unwrap());
-        assert!(err_msg.contains("no remotes"), "Error should mention no remotes: {}", err_msg);
+        assert!(
+            err_msg.contains("no remotes"),
+            "Error should mention no remotes: {}",
+            err_msg
+        );
     }
 
     #[tokio::test]
     async fn test_enable_stores_correct_defaults() {
         let workspace = create_test_workspace();
         std::process::Command::new("git")
-            .args(["remote", "add", "origin", "https://github.com/user/repo.git"])
+            .args([
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/user/repo.git",
+            ])
             .current_dir(workspace.path())
             .output()
             .unwrap();
@@ -2850,7 +2911,8 @@ mod tests {
         let mirrors_dir = tempfile::tempdir().unwrap();
         let db = setup_db_with_persona("p1", "my-agent");
         let git = Arc::new(GitCli::new("git".to_string()));
-        let manager = RepoSyncManager::new(db.clone(), git.clone(), mirrors_dir.path().to_path_buf());
+        let manager =
+            RepoSyncManager::new(db.clone(), git.clone(), mirrors_dir.path().to_path_buf());
 
         let repo = manager
             .enable(&PersonaId("p1".to_string()), workspace.path())
@@ -2863,21 +2925,32 @@ mod tests {
         assert_eq!(repo.sync_mode, SyncMode::Remote);
         assert_eq!(repo.secret_scan_mode, SecretScanMode::Block);
         assert_eq!(repo.check_interval_seconds, 300);
-        assert_eq!(repo.branch_pattern.as_deref(), Some("ai/<persona-name>/<date>"));
+        assert_eq!(
+            repo.branch_pattern.as_deref(),
+            Some("ai/<persona-name>/<date>")
+        );
 
         // Verify DB record was stored
-        let stored = db.with_conn(|conn| {
-            db_ops::get_managed_repo(conn, &repo.id)
-        }).unwrap();
+        let stored = db
+            .with_conn(|conn| db_ops::get_managed_repo(conn, &repo.id))
+            .unwrap();
         assert_eq!(stored.persona_id.0, "p1");
-        assert_eq!(stored.workspace_path, workspace.path().to_string_lossy().to_string());
+        assert_eq!(
+            stored.workspace_path,
+            workspace.path().to_string_lossy().to_string()
+        );
     }
 
     #[tokio::test]
     async fn test_enable_detects_github_provider() {
         let workspace = create_test_workspace();
         std::process::Command::new("git")
-            .args(["remote", "add", "origin", "https://github.com/user/repo.git"])
+            .args([
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/user/repo.git",
+            ])
             .current_dir(workspace.path())
             .output()
             .unwrap();
@@ -3021,7 +3094,8 @@ mod tests {
             created_at: now,
             updated_at: now,
         };
-        db.with_conn(|conn| db_ops::insert_managed_repo(conn, &repo)).unwrap();
+        db.with_conn(|conn| db_ops::insert_managed_repo(conn, &repo))
+            .unwrap();
 
         let git = Arc::new(GitCli::new("git".to_string()));
         let manager = RepoSyncManager::new(db, git, PathBuf::from("/tmp/mirrors"));
@@ -3075,7 +3149,11 @@ mod tests {
         let (manager, repo_id, workspace_dir, mirror_dir) = setup_pull_test().await;
 
         // Add a commit to workspace on a different file
-        std::fs::write(workspace_dir.path().join("workspace_file.txt"), "from workspace").unwrap();
+        std::fs::write(
+            workspace_dir.path().join("workspace_file.txt"),
+            "from workspace",
+        )
+        .unwrap();
         std::process::Command::new("git")
             .args(["add", "."])
             .current_dir(workspace_dir.path())
@@ -3140,7 +3218,9 @@ mod tests {
         let err = manager.pull_from_agent(&repo_id).await.unwrap_err();
         let err_msg = err.to_string();
         assert!(
-            err_msg.contains("README.md") || err_msg.contains("conflict") || err_msg.contains("Merge"),
+            err_msg.contains("README.md")
+                || err_msg.contains("conflict")
+                || err_msg.contains("Merge"),
             "Expected conflict error mentioning file, got: {}",
             err_msg
         );
@@ -3264,7 +3344,8 @@ mod tests {
             created_at: now,
             updated_at: now,
         };
-        db.with_conn(|conn| db_ops::insert_managed_repo(conn, &repo)).unwrap();
+        db.with_conn(|conn| db_ops::insert_managed_repo(conn, &repo))
+            .unwrap();
 
         let git = Arc::new(GitCli::new("git".to_string()));
         let manager = RepoSyncManager::new(db, git, PathBuf::from("/tmp/mirrors"));
@@ -3368,7 +3449,9 @@ mod tests {
         let err = manager.push_to_agent(&repo_id).await.unwrap_err();
         let err_msg = err.to_string();
         assert!(
-            err_msg.contains("README.md") || err_msg.contains("conflict") || err_msg.contains("Merge"),
+            err_msg.contains("README.md")
+                || err_msg.contains("conflict")
+                || err_msg.contains("Merge"),
             "Expected conflict error mentioning file, got: {}",
             err_msg
         );
@@ -3462,7 +3545,8 @@ mod tests {
             created_at: now,
             updated_at: now,
         };
-        db.with_conn(|conn| db_ops::insert_managed_repo(conn, &repo)).unwrap();
+        db.with_conn(|conn| db_ops::insert_managed_repo(conn, &repo))
+            .unwrap();
 
         let git = Arc::new(GitCli::new("git".to_string()));
         let manager = RepoSyncManager::new(db, git, PathBuf::from("/tmp/mirrors"));
@@ -3561,7 +3645,12 @@ mod tests {
 
         // Squash the commits
         let result = _manager
-            .squash_commits(mirror_dir.path(), &shas, "Squashed: file1 + file2", "master")
+            .squash_commits(
+                mirror_dir.path(),
+                &shas,
+                "Squashed: file1 + file2",
+                "master",
+            )
             .await;
         assert!(result.is_ok(), "squash_commits failed: {:?}", result.err());
 
@@ -3576,7 +3665,11 @@ mod tests {
             .parse()
             .unwrap();
         // Should be 2: initial + squashed
-        assert_eq!(count, 2, "Expected 2 commits (initial + squashed), got {}", count);
+        assert_eq!(
+            count, 2,
+            "Expected 2 commits (initial + squashed), got {}",
+            count
+        );
 
         // Verify the squash commit message
         let msg_output = std::process::Command::new("git")
@@ -3584,7 +3677,9 @@ mod tests {
             .current_dir(mirror_dir.path())
             .output()
             .unwrap();
-        let msg = String::from_utf8_lossy(&msg_output.stdout).trim().to_string();
+        let msg = String::from_utf8_lossy(&msg_output.stdout)
+            .trim()
+            .to_string();
         assert_eq!(msg, "Squashed: file1 + file2");
 
         // Verify both files still exist
@@ -3645,7 +3740,11 @@ mod tests {
         // Create a working repo, commit, and push to the bare repo
         let work_dir = tempfile::tempdir().unwrap();
         std::process::Command::new("git")
-            .args(["clone", bare_dir.path().to_str().unwrap(), work_dir.path().to_str().unwrap()])
+            .args([
+                "clone",
+                bare_dir.path().to_str().unwrap(),
+                work_dir.path().to_str().unwrap(),
+            ])
             .output()
             .unwrap();
         std::process::Command::new("git")
@@ -3678,7 +3777,11 @@ mod tests {
         // Clone the bare repo to create the mirror
         let mirror_dir = tempfile::tempdir().unwrap();
         std::process::Command::new("git")
-            .args(["clone", bare_dir.path().to_str().unwrap(), mirror_dir.path().to_str().unwrap()])
+            .args([
+                "clone",
+                bare_dir.path().to_str().unwrap(),
+                mirror_dir.path().to_str().unwrap(),
+            ])
             .output()
             .unwrap();
         std::process::Command::new("git")
@@ -3711,7 +3814,8 @@ mod tests {
             created_at: now,
             updated_at: now,
         };
-        db.with_conn(|conn| db_ops::insert_managed_repo(conn, &repo)).unwrap();
+        db.with_conn(|conn| db_ops::insert_managed_repo(conn, &repo))
+            .unwrap();
 
         let git = Arc::new(GitCli::new("git".to_string()));
         let manager = RepoSyncManager::new(db, git, PathBuf::from("/tmp/mirrors"));
@@ -3754,7 +3858,11 @@ mod tests {
         // Push new commits to the bare remote (simulating upstream changes)
         let work_dir = tempfile::tempdir().unwrap();
         std::process::Command::new("git")
-            .args(["clone", bare_dir.path().to_str().unwrap(), work_dir.path().to_str().unwrap()])
+            .args([
+                "clone",
+                bare_dir.path().to_str().unwrap(),
+                work_dir.path().to_str().unwrap(),
+            ])
             .output()
             .unwrap();
         std::process::Command::new("git")
@@ -3868,7 +3976,10 @@ mod tests {
         let manager = RepoSyncManager::new(db, git, mirrors_dir.path().to_path_buf());
 
         let detected = manager.scan_workspaces().await.unwrap();
-        assert!(detected.is_empty(), "Already-tracked repos should be filtered out");
+        assert!(
+            detected.is_empty(),
+            "Already-tracked repos should be filtered out"
+        );
     }
 
     #[tokio::test]
@@ -3903,7 +4014,12 @@ mod tests {
         let workspace = create_test_workspace();
         // Add a remote
         std::process::Command::new("git")
-            .args(["remote", "add", "origin", "https://github.com/user/repo.git"])
+            .args([
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/user/repo.git",
+            ])
             .current_dir(workspace.path())
             .output()
             .unwrap();
@@ -3928,7 +4044,10 @@ mod tests {
         let detected = manager.scan_workspaces().await.unwrap();
         assert_eq!(detected.len(), 1);
         assert!(detected[0].has_remotes);
-        assert_eq!(detected[0].remote_url.as_deref(), Some("https://github.com/user/repo.git"));
+        assert_eq!(
+            detected[0].remote_url.as_deref(),
+            Some("https://github.com/user/repo.git")
+        );
     }
 
     // --- Tests for list_commits ---
@@ -4014,7 +4133,8 @@ mod tests {
             created_at: now,
             updated_at: now,
         };
-        db.with_conn(|conn| db_ops::insert_managed_repo(conn, &repo)).unwrap();
+        db.with_conn(|conn| db_ops::insert_managed_repo(conn, &repo))
+            .unwrap();
 
         let git = Arc::new(GitCli::new("git".to_string()));
         let manager = RepoSyncManager::new(db, git, PathBuf::from("/tmp/mirrors"));
@@ -4022,7 +4142,12 @@ mod tests {
         let commits = manager.list_commits(&repo_id).await.unwrap();
 
         // Should have 2 unpushed commits
-        assert_eq!(commits.len(), 2, "Expected 2 unpushed commits, got {}", commits.len());
+        assert_eq!(
+            commits.len(),
+            2,
+            "Expected 2 unpushed commits, got {}",
+            commits.len()
+        );
 
         // Newest first
         assert_eq!(commits[0].message, "Add file2");
@@ -4097,7 +4222,8 @@ mod tests {
             created_at: now,
             updated_at: now,
         };
-        db.with_conn(|conn| db_ops::insert_managed_repo(conn, &repo)).unwrap();
+        db.with_conn(|conn| db_ops::insert_managed_repo(conn, &repo))
+            .unwrap();
 
         let git = Arc::new(GitCli::new("git".to_string()));
         let manager = RepoSyncManager::new(db, git, PathBuf::from("/tmp/mirrors"));
@@ -4195,7 +4321,10 @@ mod tests {
             },
         );
 
-        assert!(manager.has_pending(), "Should be pending when workspace_ahead > 0");
+        assert!(
+            manager.has_pending(),
+            "Should be pending when workspace_ahead > 0"
+        );
     }
 
     #[test]
@@ -4213,7 +4342,10 @@ mod tests {
             },
         );
 
-        assert!(manager.has_pending(), "Should be pending when remote_ahead > 0");
+        assert!(
+            manager.has_pending(),
+            "Should be pending when remote_ahead > 0"
+        );
     }
 
     #[test]
@@ -4239,7 +4371,10 @@ mod tests {
             },
         );
 
-        assert!(!manager.has_pending(), "Should not be pending when all zeros");
+        assert!(
+            !manager.has_pending(),
+            "Should not be pending when all zeros"
+        );
     }
 
     #[test]
@@ -4359,7 +4494,8 @@ mod tests {
         let mirrors_dir = tempfile::tempdir().unwrap();
         let db = setup_db_with_persona("p1", "my-agent");
         let git = Arc::new(GitCli::new("git".to_string()));
-        let manager = RepoSyncManager::new(db.clone(), git.clone(), mirrors_dir.path().to_path_buf());
+        let manager =
+            RepoSyncManager::new(db.clone(), git.clone(), mirrors_dir.path().to_path_buf());
 
         let repo = manager
             .enable_agent_created(&PersonaId("p1".to_string()), workspace.path(), None)
@@ -4396,7 +4532,8 @@ mod tests {
         let mirrors_dir = tempfile::tempdir().unwrap();
         let db = setup_db_with_persona("p1", "my-agent");
         let git = Arc::new(GitCli::new("git".to_string()));
-        let manager = RepoSyncManager::new(db.clone(), git.clone(), mirrors_dir.path().to_path_buf());
+        let manager =
+            RepoSyncManager::new(db.clone(), git.clone(), mirrors_dir.path().to_path_buf());
 
         let repo = manager
             .enable_agent_created(&PersonaId("p1".to_string()), workspace.path(), None)
@@ -4424,7 +4561,8 @@ mod tests {
         let mirrors_dir = tempfile::tempdir().unwrap();
         let db = setup_db_with_persona("p1", "my-agent");
         let git = Arc::new(GitCli::new("git".to_string()));
-        let manager = RepoSyncManager::new(db.clone(), git.clone(), mirrors_dir.path().to_path_buf());
+        let manager =
+            RepoSyncManager::new(db.clone(), git.clone(), mirrors_dir.path().to_path_buf());
 
         let repo = manager
             .enable_agent_created(&PersonaId("p1".to_string()), workspace.path(), None)
@@ -4452,7 +4590,8 @@ mod tests {
         let mirrors_dir = tempfile::tempdir().unwrap();
         let db = setup_db_with_persona("p1", "my-agent");
         let git = Arc::new(GitCli::new("git".to_string()));
-        let manager = RepoSyncManager::new(db.clone(), git.clone(), mirrors_dir.path().to_path_buf());
+        let manager =
+            RepoSyncManager::new(db.clone(), git.clone(), mirrors_dir.path().to_path_buf());
 
         let repo = manager
             .enable_agent_created(&PersonaId("p1".to_string()), workspace.path(), None)
@@ -4486,7 +4625,8 @@ mod tests {
         let mirrors_dir = tempfile::tempdir().unwrap();
         let db = setup_db_with_persona("p1", "my-agent");
         let git = Arc::new(GitCli::new("git".to_string()));
-        let manager = RepoSyncManager::new(db.clone(), git.clone(), mirrors_dir.path().to_path_buf());
+        let manager =
+            RepoSyncManager::new(db.clone(), git.clone(), mirrors_dir.path().to_path_buf());
 
         let repo = manager
             .enable_agent_created(&PersonaId("p1".to_string()), workspace.path(), None)
@@ -4517,7 +4657,8 @@ mod tests {
         let mirrors_dir = tempfile::tempdir().unwrap();
         let db = setup_db_with_persona("p1", "my-agent");
         let git = Arc::new(GitCli::new("git".to_string()));
-        let manager = RepoSyncManager::new(db.clone(), git.clone(), mirrors_dir.path().to_path_buf());
+        let manager =
+            RepoSyncManager::new(db.clone(), git.clone(), mirrors_dir.path().to_path_buf());
 
         let req = UpdateRepoRequest {
             remote_url: None,
@@ -4544,7 +4685,8 @@ mod tests {
         let mirrors_dir = tempfile::tempdir().unwrap();
         let db = setup_db_with_persona("p1", "my-agent");
         let git = Arc::new(GitCli::new("git".to_string()));
-        let manager = RepoSyncManager::new(db.clone(), git.clone(), mirrors_dir.path().to_path_buf());
+        let manager =
+            RepoSyncManager::new(db.clone(), git.clone(), mirrors_dir.path().to_path_buf());
 
         let repo = manager
             .enable_agent_created(&PersonaId("p1".to_string()), workspace.path(), None)
@@ -4563,7 +4705,8 @@ mod tests {
         let mirrors_dir = tempfile::tempdir().unwrap();
         let db = setup_db_with_persona("p1", "my-agent");
         let git = Arc::new(GitCli::new("git".to_string()));
-        let manager = RepoSyncManager::new(db.clone(), git.clone(), mirrors_dir.path().to_path_buf());
+        let manager =
+            RepoSyncManager::new(db.clone(), git.clone(), mirrors_dir.path().to_path_buf());
 
         let repo = manager
             .enable_agent_created(&PersonaId("p1".to_string()), workspace.path(), None)
@@ -4584,7 +4727,8 @@ mod tests {
         let mirrors_dir = tempfile::tempdir().unwrap();
         let db = setup_db_with_persona("p1", "my-agent");
         let git = Arc::new(GitCli::new("git".to_string()));
-        let manager = RepoSyncManager::new(db.clone(), git.clone(), mirrors_dir.path().to_path_buf());
+        let manager =
+            RepoSyncManager::new(db.clone(), git.clone(), mirrors_dir.path().to_path_buf());
 
         let repo = manager
             .enable_agent_created(&PersonaId("p1".to_string()), workspace.path(), None)
@@ -4604,7 +4748,8 @@ mod tests {
         let mirrors_dir = tempfile::tempdir().unwrap();
         let db = setup_db_with_persona("p1", "my-agent");
         let git = Arc::new(GitCli::new("git".to_string()));
-        let manager = RepoSyncManager::new(db.clone(), git.clone(), mirrors_dir.path().to_path_buf());
+        let manager =
+            RepoSyncManager::new(db.clone(), git.clone(), mirrors_dir.path().to_path_buf());
 
         let result = manager
             .delete_repo(&ManagedRepoId("nonexistent".to_string()), false)
@@ -4682,7 +4827,9 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(repo.mirror_path.starts_with(mirrors_dir.path().to_str().unwrap()));
+        assert!(repo
+            .mirror_path
+            .starts_with(mirrors_dir.path().to_str().unwrap()));
 
         let new_dir = tempfile::tempdir().unwrap();
         let new_path = new_dir.path().join("new-mirrors");

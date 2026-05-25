@@ -65,8 +65,7 @@ mod tests {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755))
-                .unwrap();
+            std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
         (dir, script_path)
     }
@@ -185,8 +184,7 @@ exit 1
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755))
-                .unwrap();
+            std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
 
         let sbx = SbxCli::with_path(script_path);
@@ -278,7 +276,10 @@ exit 1
 
         let body: serde_json::Value = body_json(resp.into_body()).await;
         assert_eq!(body["error"]["code"], "NOT_FOUND");
-        assert!(body["error"]["message"].as_str().unwrap().contains("nonexistent-id"));
+        assert!(body["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("nonexistent-id"));
     }
 
     // ─── Test: start sandbox success ─────────────────────────────────────
@@ -370,7 +371,10 @@ exit 1
 
         let body: serde_json::Value = body_json(resp.into_body()).await;
         assert_eq!(body["error"]["code"], "NOT_FOUND");
-        assert!(body["error"]["message"].as_str().unwrap().contains("nonexistent-id"));
+        assert!(body["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("nonexistent-id"));
     }
 
     // ─── Test: remove sandbox success ────────────────────────────────────
@@ -634,11 +638,8 @@ exit 1
             .unwrap();
 
         // Use tokio::time::timeout to avoid the test itself hanging
-        let result = tokio::time::timeout(
-            std::time::Duration::from_secs(35),
-            app.oneshot(req),
-        )
-        .await;
+        let result =
+            tokio::time::timeout(std::time::Duration::from_secs(35), app.oneshot(req)).await;
 
         let resp = result.expect("Test itself timed out").unwrap();
         assert_eq!(resp.status(), StatusCode::GATEWAY_TIMEOUT);

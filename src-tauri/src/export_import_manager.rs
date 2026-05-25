@@ -23,7 +23,9 @@ use crate::db::Database;
 use crate::db_ops;
 use crate::error::OrchestratorError;
 use crate::sbx::PolicyRule;
-use crate::types::{AdditionalWorkspace, AgentType, ManagedRepo, ManagedRepoId, Persona, PersonaId};
+use crate::types::{
+    AdditionalWorkspace, AgentType, ManagedRepo, ManagedRepoId, Persona, PersonaId,
+};
 
 // --- Constants ---
 
@@ -163,8 +165,9 @@ impl ExportImportManager {
         let payload = self.build_export_payload()?;
 
         // Serialize to JSON
-        let plaintext = serde_json::to_vec(&payload)
-            .map_err(|e| OrchestratorError::Internal(format!("Failed to serialize export: {}", e)))?;
+        let plaintext = serde_json::to_vec(&payload).map_err(|e| {
+            OrchestratorError::Internal(format!("Failed to serialize export: {}", e))
+        })?;
 
         // Encrypt
         let encrypted = encrypt_data(&plaintext, password)?;
@@ -258,8 +261,7 @@ impl ExportImportManager {
         // Import personas with conflict resolution
         self.db.with_conn(|conn| {
             for persona in &payload.personas {
-                let name_exists =
-                    db_ops::persona_name_exists(conn, &persona.name, None)?;
+                let name_exists = db_ops::persona_name_exists(conn, &persona.name, None)?;
 
                 if name_exists {
                     // Check if there's a resolution for this persona
@@ -297,12 +299,14 @@ impl ExportImportManager {
                                 conn.execute(
                                     "DELETE FROM sessions WHERE persona_id = ?1",
                                     rusqlite::params![existing.id.0],
-                                ).map_err(|e| OrchestratorError::Database(e.to_string()))?;
+                                )
+                                .map_err(|e| OrchestratorError::Database(e.to_string()))?;
                                 // Delete the existing persona (MCP servers and additional_workspaces cascade)
                                 conn.execute(
                                     "DELETE FROM personas WHERE id = ?1",
                                     rusqlite::params![existing.id.0],
-                                ).map_err(|e| OrchestratorError::Database(e.to_string()))?;
+                                )
+                                .map_err(|e| OrchestratorError::Database(e.to_string()))?;
                             }
                             // Insert the imported persona with a new ID
                             let mut imported = persona.clone();
@@ -437,15 +441,15 @@ impl ExportImportManager {
                     status: row.get(5)?,
                 })
             })
-            .map_err(|e| OrchestratorError::Database(format!("Failed to read mcp_containers: {}", e)))?;
+            .map_err(|e| {
+                OrchestratorError::Database(format!("Failed to read mcp_containers: {}", e))
+            })?;
 
         let mut results = Vec::new();
         for row in rows {
-            results.push(
-                row.map_err(|e| {
-                    OrchestratorError::Database(format!("Failed to parse mcp_container row: {}", e))
-                })?,
-            );
+            results.push(row.map_err(|e| {
+                OrchestratorError::Database(format!("Failed to parse mcp_container row: {}", e))
+            })?);
         }
         Ok(results)
     }
@@ -457,10 +461,7 @@ impl ExportImportManager {
         let mut stmt = conn
             .prepare("SELECT persona_id, shared_memory_id FROM persona_shared_memory")
             .map_err(|e| {
-                OrchestratorError::Database(format!(
-                    "Failed to query persona_shared_memory: {}",
-                    e
-                ))
+                OrchestratorError::Database(format!("Failed to query persona_shared_memory: {}", e))
             })?;
 
         let rows = stmt
@@ -471,10 +472,7 @@ impl ExportImportManager {
                 })
             })
             .map_err(|e| {
-                OrchestratorError::Database(format!(
-                    "Failed to read persona_shared_memory: {}",
-                    e
-                ))
+                OrchestratorError::Database(format!("Failed to read persona_shared_memory: {}", e))
             })?;
 
         let mut results = Vec::new();
@@ -489,7 +487,10 @@ impl ExportImportManager {
         Ok(results)
     }
 
-    fn detect_conflicts(&self, payload: &ExportPayload) -> Result<Vec<Conflict>, OrchestratorError> {
+    fn detect_conflicts(
+        &self,
+        payload: &ExportPayload,
+    ) -> Result<Vec<Conflict>, OrchestratorError> {
         self.db.with_conn(|conn| {
             let mut conflicts = Vec::new();
             let existing_personas = db_ops::list_personas(conn)?;
@@ -635,9 +636,7 @@ fn derive_key(password: &str, salt: &[u8]) -> Result<[u8; KEY_LEN], Orchestrator
 
     argon2
         .hash_password_into(password.as_bytes(), salt, &mut key)
-        .map_err(|e| {
-            OrchestratorError::Internal(format!("Key derivation failed: {}", e))
-        })?;
+        .map_err(|e| OrchestratorError::Internal(format!("Key derivation failed: {}", e)))?;
 
     Ok(key)
 }
@@ -650,10 +649,7 @@ fn decrypt_and_deserialize(
     let plaintext = decrypt_data(data, password)?;
 
     let payload: ExportPayload = serde_json::from_slice(&plaintext).map_err(|e| {
-        OrchestratorError::DecryptionFailed(format!(
-            "Failed to deserialize decrypted data: {}",
-            e
-        ))
+        OrchestratorError::DecryptionFailed(format!("Failed to deserialize decrypted data: {}", e))
     })?;
 
     Ok(payload)

@@ -35,7 +35,7 @@ export function CreateMirrorModal({
     api.get<Persona[]>("/api/personas").then((list) => {
       setPersonas(list);
       if (list.length > 0 && !personaId) {
-        setPersonaId(list[0].id);
+        setPersonaId(list[0]!.id);
       }
     }).catch(() => {
       // Non-critical
