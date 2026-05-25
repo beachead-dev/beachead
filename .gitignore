@@ -29,6 +29,10 @@ __pycache__/
 # Logs
 *.log
 
+# Website build artifacts
+website/dist/
+website/.astro/
+
 # Claude Code
 CLAUDE.md
 CODE_REVIEW.md
