@@ -168,7 +168,7 @@ class VectorStore:
             scores, indices = self._index.search(normalized, k)
 
             results = []
-            for score, idx in zip(scores[0], indices[0]):
+            for score, idx in zip(scores[0], indices[0], strict=False):
                 if idx == -1:
                     continue
                 row = self._db.execute(
