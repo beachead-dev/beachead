@@ -108,15 +108,6 @@ export function AgentsPage() {
     }
   };
 
-  const handleOAuth = async (service: string) => {
-    try {
-      await api.post(`/api/secrets/${service}/oauth`);
-      await fetchData();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to initiate OAuth");
-    }
-  };
-
   const handleRemoveTemplate = async (tag: string) => {
     try {
       await api.del(`/api/templates/${encodeURIComponent(tag)}`);
