@@ -488,10 +488,7 @@ fn validate_mcp_url(url: &str) -> Result<(), OrchestratorError> {
     };
 
     // Host is the part before the first '/' or ':' or end of string
-    let host = after_scheme
-        .split(['/', ':'])
-        .next()
-        .unwrap_or("");
+    let host = after_scheme.split(['/', ':']).next().unwrap_or("");
 
     if host.is_empty() {
         return Err(OrchestratorError::Validation(format!(

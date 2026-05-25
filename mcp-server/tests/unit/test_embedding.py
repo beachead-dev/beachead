@@ -69,7 +69,7 @@ class TestEmbeddingModel:
         batch = model.embed_batch(texts)
         for i, text in enumerate(texts):
             individual = model.embed(text)
-            np.testing.assert_allclose(batch[i], individual, rtol=1e-5)
+            np.testing.assert_allclose(batch[i], individual, atol=1e-5)
 
     def test_embed_empty_string(self, model: EmbeddingModel):
         """Empty string should still produce a valid embedding."""

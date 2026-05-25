@@ -1614,9 +1614,7 @@ impl RepoSyncManager {
 
         tokio::spawn(async move {
             loop {
-                let repos = db
-                    .with_conn(db_ops::list_managed_repos)
-                    .unwrap_or_default();
+                let repos = db.with_conn(db_ops::list_managed_repos).unwrap_or_default();
 
                 for repo in &repos {
                     let repo_id = repo.id.0.clone();
@@ -1664,32 +1662,31 @@ impl RepoSyncManager {
 
                     // Check remote → mirror (network, uses credentials)
                     // Skip for LocalOnly repos (Requirement 16.6)
-                    if repo.sync_mode != SyncMode::LocalOnly
-                        && mirror_path.join(".git").exists() {
-                            // Only attempt remote check if credentials are configured
-                            if let Ok(cred_env) =
-                                repo_credential_manager::build_credential_env(&repo_id)
-                            {
-                                let fetch_result = git
-                                    .exec(mirror_path, &["fetch", "origin"], Some(&cred_env), true)
-                                    .await;
+                    if repo.sync_mode != SyncMode::LocalOnly && mirror_path.join(".git").exists() {
+                        // Only attempt remote check if credentials are configured
+                        if let Ok(cred_env) =
+                            repo_credential_manager::build_credential_env(&repo_id)
+                        {
+                            let fetch_result = git
+                                .exec(mirror_path, &["fetch", "origin"], Some(&cred_env), true)
+                                .await;
 
-                                if fetch_result.is_ok() {
-                                    if let Ok(branch) = git.get_current_branch(mirror_path).await {
-                                        if !branch.is_empty() {
-                                            let remote_ref = format!("origin/{}", branch);
-                                            let behind = git
-                                                .ahead_behind(mirror_path, &branch, &remote_ref)
-                                                .await
-                                                .map(|(_, behind)| behind)
-                                                .unwrap_or(0);
-                                            status.remote_ahead = behind;
-                                        }
+                            if fetch_result.is_ok() {
+                                if let Ok(branch) = git.get_current_branch(mirror_path).await {
+                                    if !branch.is_empty() {
+                                        let remote_ref = format!("origin/{}", branch);
+                                        let behind = git
+                                            .ahead_behind(mirror_path, &branch, &remote_ref)
+                                            .await
+                                            .map(|(_, behind)| behind)
+                                            .unwrap_or(0);
+                                        status.remote_ahead = behind;
                                     }
                                 }
-                                // Requirement 16.5: If check fails, log and retry next interval
                             }
+                            // Requirement 16.5: If check fails, log and retry next interval
                         }
+                    }
 
                     // Update cached sync status
                     cached_status.insert(repo_id.clone(), status);

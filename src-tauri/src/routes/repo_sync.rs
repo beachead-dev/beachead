@@ -211,9 +211,7 @@ async fn list_repos(
     let mgr = state.require_repo_sync_manager()?;
 
     // Get all managed repos from DB
-    let repos = state
-        .db
-        .with_conn(db_ops::list_managed_repos)?;
+    let repos = state.db.with_conn(db_ops::list_managed_repos)?;
 
     // Get cached sync status from background checker
     let cached_status = mgr.get_cached_status();
