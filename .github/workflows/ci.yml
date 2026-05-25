@@ -36,6 +36,8 @@ jobs:
             libayatana-appindicator3-dev librsvg2-dev libxdo-dev
       - run: cargo fmt --check
         working-directory: src-tauri
+      - name: Create dist dir for Tauri context macro
+        run: mkdir -p dist
       - run: cargo clippy -- -D warnings
         working-directory: src-tauri
       - run: cargo test
