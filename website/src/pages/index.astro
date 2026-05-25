@@ -1,0 +1,278 @@
+---
+import '../styles/global.css';
+
+const REPO = 'beachead-dev/beachead';
+const GITHUB_API = `https://api.github.com/repos/${REPO}/releases/latest`;
+
+interface ReleaseAsset {
+  name: string;
+  browser_download_url: string;
+  size: number;
+}
+
+interface Release {
+  tag_name: string;
+  assets: ReleaseAsset[];
+}
+
+interface DownloadAsset {
+  name: string;
+  url: string;
+  size: string;
+  sha256: string;
+}
+
+interface PlatformDownloads {
+  linux: DownloadAsset[];
+  macos: DownloadAsset[];
+  windows: DownloadAsset[];
+}
+
+let version = 'v0.1.0';
+let downloads: PlatformDownloads = { linux: [], macos: [], windows: [] };
+let checksumsText = '';
+
+try {
+  const headers: Record<string, string> = {
+    'Accept': 'application/vnd.github+json',
+  };
+  if (import.meta.env.GITHUB_TOKEN) {
+    headers['Authorization'] = `Bearer ${import.meta.env.GITHUB_TOKEN}`;
+  }
+
+  const res = await fetch(GITHUB_API, { headers });
+  if (res.ok) {
+    const release: Release = await res.json();
+    version = release.tag_name;
+
+    // Fetch checksums file if present
+    const checksumAsset = release.assets.find(a => a.name === 'checksums.txt');
+    if (checksumAsset) {
+      const cr = await fetch(checksumAsset.browser_download_url, { headers });
+      if (cr.ok) checksumsText = await cr.text();
+    }
+
+    const getChecksum = (filename: string): string => {
+      const line = checksumsText.split('\n').find(l => l.includes(filename));
+      if (!line) return '';
+      return line.split(/\s+/)[0] ?? '';
+    };
+
+    const formatSize = (bytes: number): string => {
+      const mb = bytes / (1024 * 1024);
+      return `${mb.toFixed(1)} MB`;
+    };
+
+    for (const asset of release.assets) {
+      if (asset.name === 'checksums.txt') continue;
+      const entry: DownloadAsset = {
+        name: asset.name,
+        url: asset.browser_download_url,
+        size: formatSize(asset.size),
+        sha256: getChecksum(asset.name),
+      };
+      const n = asset.name.toLowerCase();
+      if (n.endsWith('.appimage') || n.endsWith('.deb')) {
+        downloads.linux.push(entry);
+      } else if (n.endsWith('.dmg')) {
+        downloads.macos.push(entry);
+      } else if (n.endsWith('.exe') || n.endsWith('.msi')) {
+        downloads.windows.push(entry);
+      }
+    }
+  }
+} catch {
+  // Build continues with defaults if API is unreachable
+}
+
+const versionNum = version.replace(/^v/, '');
+---
+
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Beachead — Run AI agents in isolated Docker Sandbox microVMs from your desktop. Local-only, no accounts, credentials stay in your OS keychain." />
+  <title>Beachead — Secure AI Orchestrator</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+</head>
+<body>
+  <nav class="site-nav">
+    <div class="container">
+      <span class="nav-logo">Beachead</span>
+      <div class="nav-links">
+        <a href="#download">Download</a>
+        <a href="#requirements">Requirements</a>
+        <a href={`https://github.com/${REPO}`} target="_blank" rel="noopener">GitHub</a>
+      </div>
+    </div>
+  </nav>
+
+  <main>
+    <section class="hero">
+      <div class="container">
+        <h1>Beachead — <span>Secure AI Orchestrator</span></h1>
+        <p class="tagline">Run AI agents in isolated microVMs from your desktop. Local-only — no accounts, no cloud, credentials stay in your OS keychain.</p>
+        <div class="hero-actions">
+          <a href="#download" class="btn btn-primary">Download {version}</a>
+          <a href={`https://github.com/${REPO}`} class="btn btn-secondary" target="_blank" rel="noopener">View on GitHub →</a>
+        </div>
+      </div>
+    </section>
+
+    <section id="what-it-is">
+      <div class="container">
+        <h2>What It Is</h2>
+        <div class="features">
+          <div class="feature">
+            <h3>Sandboxed AI agents</h3>
+            <p>Each agent session runs inside a Docker Sandbox microVM with hypervisor-level isolation. Agents read and modify your project files, but cannot reach outside their declared network policy.</p>
+          </div>
+          <div class="feature">
+            <h3>Unified management</h3>
+            <p>Create personas for Claude Code, Codex, GitHub Copilot, Kiro, Cursor, Gemini, and custom agents. Configure workspaces, network policies, per-agent memory, and MCP server integrations from one UI.</p>
+          </div>
+          <div class="feature">
+            <h3>Credential security</h3>
+            <p>API keys and OAuth tokens are stored in your OS keychain via <code>sbx secret</code> — never written to disk or the application database. Beachead never sees your credentials in plaintext.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="download">
+      <div class="container">
+        <h2>Download</h2>
+        <div class="version-badge">Latest release: {version}</div>
+
+        <div class="signing-note">
+          <strong>Note:</strong> Binaries for v{versionNum} are not code-signed.
+          On <strong>macOS</strong>, right-click the .dmg and choose Open to bypass Gatekeeper.
+          On <strong>Windows</strong>, click "More info → Run anyway" if Defender SmartScreen appears.
+          Linux binaries have no signing requirement.
+        </div>
+
+        {downloads.linux.length === 0 && downloads.macos.length === 0 && downloads.windows.length === 0 ? (
+          <p style="color: var(--color-muted); margin-bottom: 1.5rem;">
+            No release assets found. Check the <a href={`https://github.com/${REPO}/releases`}>GitHub Releases page</a> for the latest downloads.
+          </p>
+        ) : (
+          <div class="platform-grid">
+            {downloads.linux.length > 0 && (
+              <div class="platform-card">
+                <h3>Linux</h3>
+                <div class="download-links">
+                  {downloads.linux.map(asset => (
+                    <div>
+                      <div class="download-link">
+                        <a href={asset.url}>{asset.name}</a>
+                        <span style="color: var(--color-muted); font-size: 0.8rem;">{asset.size}</span>
+                      </div>
+                      {asset.sha256 && <div class="checksum">SHA256: {asset.sha256}</div>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {downloads.macos.length > 0 && (
+              <div class="platform-card">
+                <h3>macOS</h3>
+                <div class="download-links">
+                  {downloads.macos.map(asset => (
+                    <div>
+                      <div class="download-link">
+                        <a href={asset.url}>{asset.name}</a>
+                        <span style="color: var(--color-muted); font-size: 0.8rem;">{asset.size}</span>
+                      </div>
+                      {asset.sha256 && <div class="checksum">SHA256: {asset.sha256}</div>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {downloads.windows.length > 0 && (
+              <div class="platform-card">
+                <h3>Windows</h3>
+                <div class="download-links">
+                  {downloads.windows.map(asset => (
+                    <div>
+                      <div class="download-link">
+                        <a href={asset.url}>{asset.name}</a>
+                        <span style="color: var(--color-muted); font-size: 0.8rem;">{asset.size}</span>
+                      </div>
+                      {asset.sha256 && <div class="checksum">SHA256: {asset.sha256}</div>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        <details>
+          <summary>Verify your download</summary>
+          <div class="verify-steps">
+            <div class="verify-step">
+              <h4>macOS / Linux</h4>
+              <pre><code>echo "&lt;sha256&gt;  &lt;filename&gt;" | sha256sum --check</code></pre>
+            </div>
+            <div class="verify-step">
+              <h4>Windows (PowerShell)</h4>
+              <pre><code>Get-FileHash &lt;filename&gt; | Format-List</code></pre>
+            </div>
+          </div>
+        </details>
+
+        <p class="source-link">Prefer to build yourself? <a href={`https://github.com/${REPO}#building-from-source`}>Build from source →</a></p>
+      </div>
+    </section>
+
+    <section id="requirements">
+      <div class="container">
+        <h2>Requirements</h2>
+        <table class="requirements-table">
+          <thead>
+            <tr>
+              <th>Dependency</th>
+              <th>Purpose</th>
+              <th>Install</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Docker Engine</strong></td>
+              <td>Container runtime for sandboxes and memory containers</td>
+              <td><a href="https://docs.docker.com/engine/install/" target="_blank" rel="noopener">docs.docker.com</a></td>
+            </tr>
+            <tr>
+              <td><strong>Docker Sandboxes (sbx)</strong></td>
+              <td>CLI for managing sandbox microVMs</td>
+              <td><a href="https://github.com/docker/sbx-releases/releases" target="_blank" rel="noopener">github.com/docker/sbx-releases</a></td>
+            </tr>
+            <tr>
+              <td>
+                <strong>Git</strong>
+                <span class="optional-badge">optional</span>
+              </td>
+              <td>Required for Repo Sync features</td>
+              <td><a href="https://git-scm.com/downloads" target="_blank" rel="noopener">git-scm.com</a></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <span>© 2026 Beachead</span>
+      <div class="footer-links">
+        <a href={`https://github.com/${REPO}`} target="_blank" rel="noopener">GitHub</a>
+        <a href={`https://github.com/${REPO}/blob/main/LICENSE`} target="_blank" rel="noopener">MIT License</a>
+        <a href={`https://github.com/${REPO}/blob/main/SECURITY.md`} target="_blank" rel="noopener">Security</a>
+      </div>
+    </div>
+  </footer>
+</body>
+</html>

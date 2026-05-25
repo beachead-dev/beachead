@@ -2,7 +2,7 @@
 //!
 //! Uses bollard to interact with the Docker Engine API for container lifecycle
 //! management. Each persona gets a dedicated container running the
-//! `beachead-memory-mcp:latest` image with its own volume and bearer token.
+//! `ghcr.io/beachead-dev/beachead-memory-mcp:latest` image with its own volume and bearer token.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -29,7 +29,7 @@ use crate::types::{McpContainerId, PersonaId};
 const CONTAINER_INTERNAL_PORT: u16 = 9100;
 
 /// Docker image used for memory MCP containers.
-const MCP_IMAGE: &str = "beachead-memory-mcp:latest";
+const MCP_IMAGE: &str = "ghcr.io/beachead-dev/beachead-memory-mcp:latest";
 
 /// Maximum restart attempts during health checks.
 const MAX_HEALTH_RETRIES: u32 = 3;

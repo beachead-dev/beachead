@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2021"
 description = "Secure AI Orchestrator - manages AI agents in Docker Sandbox microVMs"
 license = "MIT"
+authors = ["Beachead <hello@beachead.net>"]
+repository = "https://github.com/beachead-dev/beachead"
+keywords = ["tauri", "ai-agents", "docker", "mcp", "security"]
+categories = ["command-line-utilities", "development-tools"]
 default-run = "beachead"
 
 [[bin]]
