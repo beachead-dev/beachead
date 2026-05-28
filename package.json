@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "tauri": "WEBKIT_DISABLE_DMABUF_RENDERER=1 tauri"
+    "tauri": "cross-env WEBKIT_DISABLE_DMABUF_RENDERER=1 tauri"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.5.0",
@@ -33,6 +33,7 @@
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
     "@vitejs/plugin-react": "^4.4.0",
+    "cross-env": "^7.0.0",
     "fast-check": "^4.8.0",
     "jsdom": "^25.0.0",
     "msw": "^2.7.0",
