@@ -91,9 +91,9 @@ pre code {
 }
 
 .nav-logo {
-  font-weight: 700;
-  font-size: 1.1rem;
-  color: var(--color-text);
+  height: 28px;
+  width: auto;
+  display: block;
 }
 
 .nav-links {
@@ -118,16 +118,11 @@ pre code {
   text-align: center;
 }
 
-.hero h1 {
-  font-size: clamp(2rem, 5vw, 3rem);
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  margin-bottom: 1rem;
-  line-height: 1.2;
-}
-
-.hero h1 span {
-  color: var(--color-accent);
+.hero-logo {
+  height: clamp(80px, 12vw, 140px);
+  width: auto;
+  margin: 0 auto 1.5rem;
+  display: block;
 }
 
 .hero .tagline {
