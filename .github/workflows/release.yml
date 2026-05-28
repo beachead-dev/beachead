@@ -75,38 +75,6 @@ jobs:
           prerelease: ${{ contains(github.ref_name, '-') }}
           args: --target aarch64-apple-darwin
 
-  build-macos-x64:
-    runs-on: macos-13
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-apple-darwin
-      - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            src-tauri/target
-          key: ${{ runner.os }}-x64-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: 'npm'
-      - run: npm ci
-      - uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tagName: ${{ github.ref_name }}
-          releaseName: 'Beachead ${{ github.ref_name }}'
-          releaseDraft: true
-          prerelease: ${{ contains(github.ref_name, '-') }}
-          args: --target x86_64-apple-darwin
-
   build-windows:
     runs-on: windows-latest
     permissions:
@@ -137,7 +105,7 @@ jobs:
           prerelease: ${{ contains(github.ref_name, '-') }}
 
   generate-checksums:
-    needs: [build-linux, build-macos-arm, build-macos-x64, build-windows]
+    needs: [build-linux, build-macos-arm, build-windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
