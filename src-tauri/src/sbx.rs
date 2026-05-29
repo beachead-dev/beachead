@@ -1356,7 +1356,10 @@ fn parse_secret_ls_text(output: &str) -> Vec<SbxSecretStatus> {
         if parts.len() >= 3 {
             let service = parts[2].to_string();
             let configured = parts[3..].iter().any(|p| p.contains("configured"));
-            secrets.push(SbxSecretStatus { service, configured });
+            secrets.push(SbxSecretStatus {
+                service,
+                configured,
+            });
         }
     }
     secrets
@@ -1564,5 +1567,4 @@ local        all           my-rule       network   allow      active   example.c
         assert!(!secrets.iter().any(|s| s.service == "SCOPE"));
         assert!(!secrets.iter().any(|s| s.service == "(global)"));
     }
-
 }
