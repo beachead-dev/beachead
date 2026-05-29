@@ -1,10 +1,14 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { api } from "../lib/api";
 
 interface PolicyRule {
   id: string | null;
   action: string;
   target: string;
+  origin: string | null;
+  provenance: string | null;
+  rule_type: string | null;
+  status: string | null;
 }
 
 interface PolicyState {
@@ -22,6 +26,23 @@ interface PolicyLogEntry {
   reason: string | null;
 }
 
+type SortColumn = "provenance" | "origin" | "id" | "rule_type" | "action" | "status" | "target";
+
+// Initial column widths in px: Provenance, AppliesTo, Policy/Rule, Type, Decision, Status, Resources, Actions
+const DEFAULT_COL_WIDTHS = [96, 128, 220, 88, 88, 80, 220, 80];
+
+function getRuleVal(rule: PolicyRule, col: SortColumn): string {
+  switch (col) {
+    case "provenance": return rule.provenance || "";
+    case "origin":     return rule.origin || "";
+    case "id":         return rule.id || "";
+    case "rule_type":  return rule.rule_type || "";
+    case "action":     return rule.action;
+    case "status":     return rule.status || "";
+    case "target":     return rule.target;
+  }
+}
+
 export function PoliciesPage() {
   const [policyState, setPolicyState] = useState<PolicyState | null>(null);
   const [logEntries, setLogEntries] = useState<PolicyLogEntry[]>([]);
@@ -33,8 +54,41 @@ export function PoliciesPage() {
   const [sandboxFilter, setSandboxFilter] = useState("");
   const [view, setView] = useState<"rules" | "log">("rules");
   const [autoRefresh, setAutoRefresh] = useState(false);
-  const [sortColumn, setSortColumn] = useState<"id" | "action" | "target">("id");
+  const [sortColumn, setSortColumn] = useState<SortColumn>("id");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
+  const [colWidths, setColWidths] = useState<number[]>(DEFAULT_COL_WIDTHS);
+
+  // Stable refs so resize handlers don't need to be re-registered on every render
+  const colWidthsRef = useRef(colWidths);
+  useEffect(() => { colWidthsRef.current = colWidths; }, [colWidths]);
+
+  const dragRef = useRef<{ colIdx: number; startX: number; startWidth: number } | null>(null);
+
+  const startResize = useCallback((colIdx: number, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragRef.current = { colIdx, startX: e.clientX, startWidth: colWidthsRef.current[colIdx] ?? DEFAULT_COL_WIDTHS[colIdx] ?? 100 };
+  }, []);
+
+  useEffect(() => {
+    const onMouseMove = (e: MouseEvent) => {
+      if (!dragRef.current) return;
+      const { colIdx, startX, startWidth } = dragRef.current;
+      const newWidth = Math.max(50, startWidth + (e.clientX - startX));
+      setColWidths(prev => {
+        const next = [...prev];
+        next[colIdx] = newWidth;
+        return next;
+      });
+    };
+    const onMouseUp = () => { dragRef.current = null; };
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+    return () => {
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+    };
+  }, []);
 
   const fetchPolicies = useCallback(async () => {
     try {
@@ -104,7 +158,7 @@ export function PoliciesPage() {
     }
   };
 
-  const handleSort = (column: "id" | "action" | "target") => {
+  const handleSort = (column: SortColumn) => {
     if (sortColumn === column) {
       setSortDirection(sortDirection === "asc" ? "desc" : "asc");
     } else {
@@ -113,7 +167,7 @@ export function PoliciesPage() {
     }
   };
 
-  const sortIndicator = (column: "id" | "action" | "target") => {
+  const sortIndicator = (column: SortColumn) => {
     if (sortColumn !== column) return "";
     return sortDirection === "asc" ? " ▲" : " ▼";
   };
@@ -137,10 +191,6 @@ export function PoliciesPage() {
       </div>
 
       {error && <div className="alert alert-error" role="alert">{error}</div>}
-
-      <p className="section-description">
-        Network policies are <strong>global</strong> and apply to all sandboxes.
-      </p>
 
       <nav className="tab-nav" aria-label="Policy sections">
         <button className={`tab-btn ${view === "rules" ? "active" : ""}`} onClick={() => setView("rules")}>
@@ -227,12 +277,37 @@ export function PoliciesPage() {
               <p className="empty-state">No custom rules configured.</p>
             ) : (
               <table className="rules-table" aria-label="Policy rules">
+                <colgroup>
+                  {colWidths.map((w, i) => <col key={i} style={{ width: w }} />)}
+                </colgroup>
                 <thead>
                   <tr>
-                    <th onClick={() => handleSort("id")} style={{ cursor: "pointer" }}>Rule{sortIndicator("id")}</th>
-                    <th onClick={() => handleSort("action")} style={{ cursor: "pointer" }}>Action{sortIndicator("action")}</th>
-                    <th onClick={() => handleSort("target")} style={{ cursor: "pointer" }}>Target{sortIndicator("target")}</th>
-                    <th></th>
+                    {(["provenance", "origin", "id", "rule_type", "action", "status", "target"] as SortColumn[]).map((col, i) => {
+                      const labels: Record<SortColumn, string> = {
+                        provenance: "Provenance",
+                        origin: "Applies To",
+                        id: "Policy/Rule",
+                        rule_type: "Type",
+                        action: "Decision",
+                        status: "Status",
+                        target: "Resources",
+                      };
+                      return (
+                        <th key={col} style={{ position: "relative", userSelect: "none" }}>
+                          <span
+                            onClick={() => handleSort(col)}
+                            style={{ cursor: "pointer", display: "inline-block", width: "calc(100% - 8px)" }}
+                          >
+                            {labels[col]}{sortIndicator(col)}
+                          </span>
+                          <span
+                            className="col-resize-handle"
+                            onMouseDown={(e) => startResize(i, e)}
+                          />
+                        </th>
+                      );
+                    })}
+                    <th style={{ position: "relative" }}></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -247,15 +322,23 @@ export function PoliciesPage() {
                       );
                     })
                     .sort((a, b) => {
-                      const aVal = (sortColumn === "id" ? a.id || "" : a[sortColumn]).toLowerCase();
-                      const bVal = (sortColumn === "id" ? b.id || "" : b[sortColumn]).toLowerCase();
-                      const cmp = aVal.localeCompare(bVal);
+                      const cmp = getRuleVal(a, sortColumn).toLowerCase()
+                        .localeCompare(getRuleVal(b, sortColumn).toLowerCase());
                       return sortDirection === "asc" ? cmp : -cmp;
                     })
                     .map((rule, i) => (
                     <tr key={`${rule.id}-${i}`}>
+                      <td><span className="rule-provenance">{rule.provenance || "—"}</span></td>
+                      <td>
+                        {rule.origin && rule.origin !== "all"
+                          ? <code className="rule-scope">{rule.origin.startsWith("sandbox:") ? rule.origin.slice("sandbox:".length) : rule.origin}</code>
+                          : <span className="rule-scope-global">all</span>
+                        }
+                      </td>
                       <td><code className="rule-name">{rule.id || "—"}</code></td>
+                      <td><span className="rule-type">{rule.rule_type || "—"}</span></td>
                       <td><span className={`badge badge-${rule.action}`}>{rule.action}</span></td>
+                      <td><span className={`rule-status rule-status-${rule.status}`}>{rule.status || "—"}</span></td>
                       <td><code>{rule.target}</code></td>
                       <td>
                         {rule.id && !rule.id.startsWith("default-") && (

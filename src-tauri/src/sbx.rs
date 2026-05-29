@@ -85,9 +85,18 @@ pub struct PolicyRule {
     pub id: Option<String>,
     pub action: String,
     pub target: String,
-    /// Origin/scope: "local" for global rules, "sandbox:<name>" for per-sandbox rules.
+    /// APPLIES_TO: "all" for global rules or "sandbox:<name>" for per-sandbox rules.
     #[serde(default)]
     pub origin: Option<String>,
+    /// PROVENANCE: "local" for user-added rules, "kit" for kit-originated rules.
+    #[serde(default)]
+    pub provenance: Option<String>,
+    /// TYPE: rule type (e.g. "network").
+    #[serde(default)]
+    pub rule_type: Option<String>,
+    /// STATUS: "active" or "inactive".
+    #[serde(default)]
+    pub status: Option<String>,
 }
 
 /// Default policy mode.
@@ -1159,19 +1168,16 @@ fn parse_port_output(output: &str) -> Vec<PortMapping> {
 }
 
 /// Parse `sbx policy ls` text output into a PolicyState.
-/// Parse `sbx policy ls` text output into a PolicyState.
 ///
-/// The output format is a table:
-/// NAME                TYPE      ORIGIN   DECISION   STATUS   RESOURCES
-/// default-ai-services network   local    allow      active   **.chatgpt.com:443
-///                                                            api.anthropic.com:443
-///                                                            ...
+/// Output format as of sbx 0.31.0:
+/// PROVENANCE   APPLIES_TO       POLICY/RULE   TYPE      DECISION   STATUS   RESOURCES
+/// local        all              rule-name      network   allow      active   example.com:443
+///                                                                            other.com:443
 ///
-/// Each rule has a NAME, and RESOURCES can span multiple indented lines.
+/// APPLIES_TO is "all" for global rules or "sandbox:<name>" for per-sandbox rules.
+/// PROVENANCE is "local" for user-added rules or "kit" for kit-originated rules.
+/// RESOURCES can span multiple indented continuation lines.
 fn parse_policy_text(output: &str) -> PolicyState {
-    // Determine default policy from the rule names present
-    // If "default-*" rules exist, the policy is "balanced"
-    // If no rules exist, we can't determine — assume balanced
     let has_default_rules = output.contains("default-");
     let default_policy = if has_default_rules {
         "balanced".to_string()
@@ -1185,101 +1191,124 @@ fn parse_policy_text(output: &str) -> PolicyState {
     let mut current_name: Option<String> = None;
     let mut current_decision: Option<String> = None;
     let mut current_origin: Option<String> = None;
+    let mut current_provenance: Option<String> = None;
+    let mut current_rule_type: Option<String> = None;
+    let mut current_status: Option<String> = None;
     let mut current_resources: Vec<String> = Vec::new();
 
+    let flush = |name: &Option<String>,
+                 decision: &Option<String>,
+                 origin: &Option<String>,
+                 provenance: &Option<String>,
+                 rule_type: &Option<String>,
+                 status: &Option<String>,
+                 resources: &Vec<String>,
+                 rules: &mut Vec<PolicyRule>| {
+        if let (Some(n), Some(d)) = (name, decision) {
+            for resource in resources {
+                rules.push(PolicyRule {
+                    id: Some(n.clone()),
+                    action: d.clone(),
+                    target: resource.clone(),
+                    origin: origin.clone(),
+                    provenance: provenance.clone(),
+                    rule_type: rule_type.clone(),
+                    status: status.clone(),
+                });
+            }
+        }
+    };
+
     for line in output.lines() {
-        // Skip header line
-        if line.starts_with("NAME") || line.trim().is_empty() {
-            // If we have a pending rule, save it before processing empty line
-            if let (Some(name), Some(decision)) = (&current_name, &current_decision) {
-                if !current_resources.is_empty() {
-                    for resource in &current_resources {
-                        rules.push(PolicyRule {
-                            id: Some(name.clone()),
-                            action: decision.clone(),
-                            target: resource.clone(),
-                            origin: current_origin.clone(),
-                        });
-                    }
-                }
-            }
-            if line.starts_with("NAME") {
-                current_name = None;
-                current_decision = None;
-                current_origin = None;
-                current_resources = Vec::new();
-                continue;
-            }
-            if line.trim().is_empty() && current_name.is_some() {
-                // End of current rule's resources
-                current_name = None;
-                current_decision = None;
-                current_origin = None;
-                current_resources = Vec::new();
-            }
+        // Skip header line and blank/whitespace-only separator lines; flush any
+        // accumulated rule on section boundaries.
+        if line.starts_with("PROVENANCE") || (line.trim().is_empty() && current_name.is_some()) {
+            flush(
+                &current_name,
+                &current_decision,
+                &current_origin,
+                &current_provenance,
+                &current_rule_type,
+                &current_status,
+                &current_resources,
+                &mut rules,
+            );
+            current_name = None;
+            current_decision = None;
+            current_origin = None;
+            current_provenance = None;
+            current_rule_type = None;
+            current_status = None;
+            current_resources = Vec::new();
+            continue;
+        }
+        if line.trim().is_empty() {
             continue;
         }
 
-        // Check if this is a new rule line (starts with non-whitespace)
         let trimmed = line.trim_start();
         let leading_spaces = line.len() - trimmed.len();
 
-        if leading_spaces == 0 && !line.starts_with(' ') {
-            // New rule line — save previous if any
-            if let (Some(name), Some(decision)) = (&current_name, &current_decision) {
-                if !current_resources.is_empty() {
-                    for resource in &current_resources {
-                        rules.push(PolicyRule {
-                            id: Some(name.clone()),
-                            action: decision.clone(),
-                            target: resource.clone(),
-                            origin: current_origin.clone(),
-                        });
-                    }
-                }
-            }
+        if leading_spaces == 0 {
+            // New rule line — flush previous, parse new
+            // Columns: PROVENANCE APPLIES_TO POLICY/RULE TYPE DECISION STATUS RESOURCES...
+            flush(
+                &current_name,
+                &current_decision,
+                &current_origin,
+                &current_provenance,
+                &current_rule_type,
+                &current_status,
+                &current_resources,
+                &mut rules,
+            );
 
-            // Parse the new rule line columns
             let parts: Vec<&str> = line.split_whitespace().collect();
-            // Expected: NAME TYPE ORIGIN DECISION STATUS RESOURCE...
-            if parts.len() >= 6 {
-                current_name = Some(parts[0].to_string());
-                current_origin = Some(parts[2].to_string()); // ORIGIN column
-                current_decision = Some(parts[3].to_string()); // DECISION column
-                current_resources = vec![parts[5..].join(" ")];
-            } else if parts.len() >= 4 {
-                current_name = Some(parts[0].to_string());
-                current_origin = Some(parts.get(2).unwrap_or(&"local").to_string());
-                current_decision = Some(parts[3].to_string());
+            if parts.len() >= 7 {
+                current_provenance = Some(parts[0].to_string()); // PROVENANCE
+                current_origin = Some(parts[1].to_string()); // APPLIES_TO
+                current_name = Some(parts[2].to_string()); // POLICY/RULE
+                current_rule_type = Some(parts[3].to_string()); // TYPE
+                current_decision = Some(parts[4].to_string()); // DECISION
+                current_status = Some(parts[5].to_string()); // STATUS
+                current_resources = vec![parts[6..].join(" ")];
+            } else if parts.len() >= 6 {
+                current_provenance = Some(parts[0].to_string());
+                current_origin = Some(parts[1].to_string());
+                current_name = Some(parts[2].to_string());
+                current_rule_type = Some(parts[3].to_string());
+                current_decision = Some(parts[4].to_string());
+                current_status = Some(parts[5].to_string());
                 current_resources = Vec::new();
             } else {
                 current_name = None;
                 current_decision = None;
                 current_origin = None;
+                current_provenance = None;
+                current_rule_type = None;
+                current_status = None;
                 current_resources = Vec::new();
             }
         } else {
-            // Continuation line (indented) — additional resource for current rule
-            let resource = line.trim().to_string();
+            // Continuation line — additional resource for current rule
+            let resource = trimmed.to_string();
             if !resource.is_empty() {
                 current_resources.push(resource);
             }
         }
     }
 
-    // Don't forget the last rule
-    if let (Some(name), Some(decision)) = (&current_name, &current_decision) {
-        if !current_resources.is_empty() {
-            for resource in &current_resources {
-                rules.push(PolicyRule {
-                    id: Some(name.clone()),
-                    action: decision.clone(),
-                    target: resource.clone(),
-                    origin: current_origin.clone(),
-                });
-            }
-        }
-    }
+    // Flush final rule
+    flush(
+        &current_name,
+        &current_decision,
+        &current_origin,
+        &current_provenance,
+        &current_rule_type,
+        &current_status,
+        &current_resources,
+        &mut rules,
+    );
 
     PolicyState {
         default_policy,
@@ -1386,4 +1415,76 @@ pub fn extract_sandbox_name(output: &str) -> String {
         .find(|l| !l.is_empty())
         .unwrap_or("")
         .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_policy_text_sbx_031() {
+        let input = concat!(
+            "PROVENANCE   APPLIES_TO       POLICY/RULE                            TYPE      DECISION   STATUS   RESOURCES\n",
+            "local        sandbox:ktest    b656a698-8713-442d-920c-bf95fbe979d4   network   allow      active   localhost:9100\n",
+            "\n",
+            "local        all              default-ai-services                    network   allow      active   api.anthropic.com:443\n",
+            "                                                                                                   chatgpt.com:443\n",
+            "\n",
+            "kit          sandbox:ctest2   kit:ctest2                             network   allow      active   claude.com:443\n",
+        );
+        let state = parse_policy_text(input);
+        assert_eq!(state.default_policy, "balanced");
+        assert_eq!(state.rules.len(), 4);
+
+        // Per-sandbox rule
+        let sandbox_rule = state
+            .rules
+            .iter()
+            .find(|r| r.target == "localhost:9100")
+            .unwrap();
+        assert_eq!(
+            sandbox_rule.id.as_deref(),
+            Some("b656a698-8713-442d-920c-bf95fbe979d4")
+        );
+        assert_eq!(sandbox_rule.action, "allow");
+        assert_eq!(sandbox_rule.origin.as_deref(), Some("sandbox:ktest"));
+        assert_eq!(sandbox_rule.provenance.as_deref(), Some("local"));
+        assert_eq!(sandbox_rule.rule_type.as_deref(), Some("network"));
+        assert_eq!(sandbox_rule.status.as_deref(), Some("active"));
+
+        // Global rule — first resource
+        let ai_rule = state
+            .rules
+            .iter()
+            .find(|r| r.target == "api.anthropic.com:443")
+            .unwrap();
+        assert_eq!(ai_rule.id.as_deref(), Some("default-ai-services"));
+        assert_eq!(ai_rule.origin.as_deref(), Some("all"));
+        assert_eq!(ai_rule.provenance.as_deref(), Some("local"));
+        assert_eq!(ai_rule.rule_type.as_deref(), Some("network"));
+        assert_eq!(ai_rule.status.as_deref(), Some("active"));
+
+        // Kit rule
+        let kit_rule = state
+            .rules
+            .iter()
+            .find(|r| r.target == "claude.com:443")
+            .unwrap();
+        assert_eq!(kit_rule.id.as_deref(), Some("kit:ctest2"));
+        assert_eq!(kit_rule.origin.as_deref(), Some("sandbox:ctest2"));
+        assert_eq!(kit_rule.provenance.as_deref(), Some("kit"));
+        assert_eq!(kit_rule.rule_type.as_deref(), Some("network"));
+        assert_eq!(kit_rule.status.as_deref(), Some("active"));
+    }
+
+    #[test]
+    fn test_parse_policy_text_header_not_treated_as_rule() {
+        let input = "\
+PROVENANCE   APPLIES_TO   POLICY/RULE   TYPE      DECISION   STATUS   RESOURCES
+local        all           my-rule       network   allow      active   example.com:443
+";
+        let state = parse_policy_text(input);
+        assert_eq!(state.rules.len(), 1);
+        assert_eq!(state.rules[0].id.as_deref(), Some("my-rule"));
+    }
 }

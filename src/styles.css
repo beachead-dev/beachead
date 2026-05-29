@@ -599,6 +599,37 @@ body {
   color: #1565c0;
 }
 
+.rule-scope {
+  font-size: 0.8rem;
+}
+
+.rule-scope-global {
+  font-size: 0.8rem;
+  color: var(--color-text-secondary, #666);
+}
+
+.rule-provenance {
+  font-size: 0.8rem;
+  color: var(--color-text-secondary, #666);
+}
+
+.rule-type {
+  font-size: 0.8rem;
+  color: var(--color-text-secondary, #666);
+}
+
+.rule-status {
+  font-size: 0.8rem;
+}
+
+.rule-status-active {
+  color: #2e7d32;
+}
+
+.rule-status-inactive {
+  color: var(--color-text-secondary, #666);
+}
+
 .badge-allow {
   background: #e8f5e9;
   color: #2e7d32;
@@ -1105,7 +1136,6 @@ body {
 }
 
 .port-table,
-.rules-table,
 .log-table {
   width: 100%;
   border-collapse: collapse;
@@ -1113,7 +1143,6 @@ body {
 }
 
 .port-table th,
-.rules-table th,
 .log-table th {
   text-align: left;
   padding: 0.5rem;
@@ -1123,16 +1152,61 @@ body {
 }
 
 .port-table td,
-.rules-table td,
 .log-table td {
   padding: 0.5rem;
   border-bottom: 1px solid #f0f0f0;
+}
+
+.rules-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+  border: 1px solid #d0d0d0;
+}
+
+.rules-table th {
+  text-align: left;
+  padding: 0.4rem 0.5rem;
+  background: #f5f5f5;
+  border: 1px solid #d0d0d0;
+  font-weight: 600;
+  color: #555;
+  white-space: nowrap;
+}
+
+.rules-table td {
+  padding: 0.4rem 0.5rem;
+  border: 1px solid #e8e8e8;
+  vertical-align: middle;
 }
 
 /* Policy page */
 .default-policy {
   margin-bottom: 1rem;
 }
+
+/* Column widths are managed via colgroup inline styles; only cell-level overrides here */
+.rules-table td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rules-table td:nth-child(7) { white-space: normal; word-break: break-all; } /* Resources wraps */
+.rules-table td:last-child,
+.rules-table th:last-child { text-align: right; }
+
+/* Resize handle — sits at the right edge of each th */
+.col-resize-handle {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 5px;
+  cursor: col-resize;
+}
+
+.col-resize-handle:hover,
+.col-resize-handle:active {
+  background: var(--color-accent, #1a73e8);
+  opacity: 0.4;
+}
+
 
 .policy-mode-buttons {
   display: flex;
@@ -1391,16 +1465,28 @@ body {
   }
 
   :root:not([data-theme="light"]) .port-table th,
-  :root:not([data-theme="light"]) .rules-table th,
   :root:not([data-theme="light"]) .log-table th {
     color: #aaa;
     border-bottom-color: #2d3f6b;
   }
 
   :root:not([data-theme="light"]) .port-table td,
-  :root:not([data-theme="light"]) .rules-table td,
   :root:not([data-theme="light"]) .log-table td {
     border-bottom-color: #2d3f6b;
+  }
+
+  :root:not([data-theme="light"]) .rules-table {
+    border-color: #2d3f6b;
+  }
+
+  :root:not([data-theme="light"]) .rules-table th {
+    background: #1a1a2e;
+    color: #aaa;
+    border-color: #2d3f6b;
+  }
+
+  :root:not([data-theme="light"]) .rules-table td {
+    border-color: #2d3f6b;
   }
 
   :root:not([data-theme="light"]) .rule-search input {
@@ -1797,16 +1883,28 @@ body {
 }
 
 :root[data-theme="dark"] .port-table th,
-:root[data-theme="dark"] .rules-table th,
 :root[data-theme="dark"] .log-table th {
   color: #aaa;
   border-bottom-color: #2d3f6b;
 }
 
 :root[data-theme="dark"] .port-table td,
-:root[data-theme="dark"] .rules-table td,
 :root[data-theme="dark"] .log-table td {
   border-bottom-color: #2d3f6b;
+}
+
+:root[data-theme="dark"] .rules-table {
+  border-color: #2d3f6b;
+}
+
+:root[data-theme="dark"] .rules-table th {
+  background: #1a1a2e;
+  color: #aaa;
+  border-color: #2d3f6b;
+}
+
+:root[data-theme="dark"] .rules-table td {
+  border-color: #2d3f6b;
 }
 
 :root[data-theme="dark"] .rule-search input {
