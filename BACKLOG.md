@@ -110,6 +110,8 @@ Deferred improvements, bug fixes, and future features for implementation.
 
 **Solution:** Prefer `sbx policy ls --json` if available in future sbx versions. Current parser works but should be tested against new sbx releases.
 
+**sbx 0.31.0 note:** Policy list output now includes rule/policy names — verify `parse_policy_text` still parses correctly against 0.31.0 output before next release.
+
 ---
 
 ### Graceful Shutdown
@@ -120,6 +122,8 @@ Deferred improvements, bug fixes, and future features for implementation.
 **Problem:** When the app closes, sandboxes keep running but sessions aren't cleanly marked in the DB. The next startup has to run full recovery.
 
 **Solution:** Add a Tauri `on_exit` hook that marks all "running" sessions as "stopped" in the DB before shutdown. Don't stop the sandboxes (user may want to resume).
+
+**sbx 0.31.0 note:** `sbx logout` now stops the daemon and all running sandboxes. The Logout button in System Settings (`SystemManager::logout()`) should warn users before proceeding: "Logging out will stop the sbx daemon and all running sandboxes." This is a separate concern from app-close shutdown but shares the same session reconciliation path.
 
 ---
 
