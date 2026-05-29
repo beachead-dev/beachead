@@ -6,33 +6,6 @@ Deferred improvements, bug fixes, and future features for implementation.
 
 ## Bug Fixes
 
-### ~~Duplicate Primary Workspace Detection~~ ✅ FIXED
-
-**Fixed:** 2026-05-10  
-**Affected area:** `src-tauri/src/persona_manager.rs`, `src-tauri/src/db_ops.rs`
-
-**What was done:** Added `persona_with_workspace_path()` query to `db_ops.rs` that checks if another persona already uses a given primary workspace path. Added uniqueness validation in `PersonaManager::create()` and `PersonaManager::update()`. Returns a clear error: "Workspace path is already used by persona '<name>'. Each persona must have a unique primary workspace." The constraint applies only to the primary workspace — future additional/secondary workspaces can be shared across personas.
-
----
-
-### ~~"Documentation" Menu Text Overlaps Content in Help~~ ✅ FIXED
-
-**Fixed:** 2026-05-15  
-**Affected area:** `src/styles.css` (help page layout)
-
-**What was done:** Fixed the help page CSS layout. Changed `min-height: calc(100vh - 0px)` to `height: calc(100vh)` with `min-height: 0` and `overflow: hidden` on the container. Added `overflow-y: auto` to the sidebar to prevent content overflow. Added `min-height: 0` to `.help-content` (required for flex children with overflow). Added `position: relative; z-index: 1` to the sidebar title to ensure it stays above scrolling content.
-
----
-
-### ~~MCP Container Bearer Token Not Passed to Container~~ ✅ FIXED
-
-**Fixed:** 2026-05-10  
-**Affected area:** `src-tauri/src/mcp_container_manager.rs`
-
-**What was done:** Changed `"BEACHEAD_BEARER_TOKEN=".to_string()` to `format!("BEACHEAD_BEARER_TOKEN={}", bearer_token)`. Auth middleware now wired into server.py. Token passed via URL query parameter (`?token=<value>`) for MCP client compatibility. Docker image rebuilt and verified.
-
----
-
 ### OAuth Flow Non-Functional (Interactive Command in Non-Interactive Context)
 
 **Priority:** Medium  
@@ -63,15 +36,6 @@ Deferred improvements, bug fixes, and future features for implementation.
 3. Wire OAuth button to the interactive modal instead of the current fire-and-forget POST
 
 **Scope:** Medium feature. Seed upsert is quick. The interactive terminal modal is reusable for device flow (Kiro) and any future interactive sbx commands.
-
----
-
-### ~~Kit allowedDomains Persists in Global Policy~~ ✅ RESOLVED
-
-**Fixed:** 2026-05-17  
-**Affected area:** Kit generator, policy management, session manager
-
-**What was done:** The new sbx release introduced per-sandbox policy scoping. MCP port allow rules are now added with `sbx policy allow network <sandbox-name> localhost:<port>` instead of the global `-g` flag. Per-sandbox rules are automatically cleaned up when the sandbox is removed via `sbx rm`. The kit generator does NOT emit `network.allowedDomains` (was already removed earlier). The orchestrator no longer pollutes the global policy with per-session rules.
 
 ---
 
@@ -346,15 +310,6 @@ This is a Docker Sandboxes architectural behavior — the sandbox daemon proxies
 
 ---
 
-### ~~Resize Message Validation~~ ✅ FIXED
-
-**Fixed:** 2026-05-15  
-**Affected area:** `src-tauri/src/pty_bridge.rs`
-
-**What was done:** Added `clamp(1, 500)` for rows and `clamp(1, 1000)` for cols in both the `resize()` public method and the WebSocket resize message handler in `attach_ws()`. Extreme or zero values from malicious input are now safely bounded before reaching the PTY.
-
----
-
 ### Docker Sandboxes Daemon Restart Detection and Handling
 
 **Priority:** Medium  
@@ -441,15 +396,6 @@ This is a Docker Sandboxes architectural behavior — the sandbox daemon proxies
 
 ---
 
-### ~~Docker Management Tab~~ ✅ DONE
-
-**Completed:** 2026-05-12  
-**Affected area:** New `/docker` page + backend endpoints + sidebar navigation
-
-**What was done:** Full implementation of Docker Management Tab with two sub-tabs (Sandboxes and Containers). Sandboxes tab shows sandbox list from `sbx ls` with Name, Agent, Status, ID columns and Start/Stop/Remove actions. Containers tab shows all Docker containers (managed MCP containers by default, all containers with Show All toggle) with Persona Name, Image, Port, Status, Volume Name, Created Date columns and Start/Stop/Remove actions. Features: polling-based data freshness (10s interval), immediate refresh on actions and toggle changes, confirmation dialogs for destructive operations, volume deletion option for container removal, stale data indicator, managed/unmanaged filtering, proper button state derivation based on container status (running/stopped/exited/created). Backend: sandbox action endpoints with 30s timeout, container action endpoints via bollard, live Docker status enrichment, unmanaged container direct removal. 6 property-based tests, 35 unit tests, 16 backend integration tests.
-
----
-
 ### Steering Injection into Sandboxes
 
 **Priority:** Medium  
@@ -465,16 +411,16 @@ This is a Docker Sandboxes architectural behavior — the sandbox daemon proxies
 
 ---
 
-### Ghost Crab (OpenClaw in a Sandbox)
+### OpenClaw in a Sandbox
 
 **Priority:** Low (research/exploration)  
 **Affected area:** New feature — agent integration
 
-**Description:** Run OpenClaw (open-source AI agent framework) inside a Docker Sandbox, managed by Beachead. This would be a custom agent type that uses an Agent Kit to package OpenClaw with its dependencies and configuration.
+**Description:** Run OpenClaw (open-source AI agent framework) inside a Docker Sandbox, managed by Beachhead. This would be a custom agent type that uses an Agent Kit to package OpenClaw with its dependencies and configuration.
 
 **Implementation:**
 - Create an Agent Kit (`kind: agent`) that installs OpenClaw in the sandbox
-- Register as a custom agent type in Beachead
+- Register as a custom agent type in Beachhead
 - May need custom MCP server integration for OpenClaw's tool system
 - Investigate OpenClaw's auth requirements and workspace expectations
 - Consider whether OpenClaw needs its own credential flow or reuses existing provider keys
@@ -490,7 +436,7 @@ This is a Docker Sandboxes architectural behavior — the sandbox daemon proxies
 
 **Implementation options:**
 1. **Local webservice:** Run Whisper (or similar) locally, capture audio from browser via WebRTC, transcribe, inject into terminal stdin
-2. **Sandbox-based:** Run a transcription service in its own Docker Sandbox, expose via MCP or HTTP, Beachead captures audio and forwards
+2. **Sandbox-based:** Run a transcription service in its own Docker Sandbox, expose via MCP or HTTP, Beachhead captures audio and forwards
 3. **Cloud API:** Use OpenAI Whisper API or Google Speech-to-Text (requires network access, adds latency)
 
 **Considerations:**
@@ -499,7 +445,6 @@ This is a Docker Sandboxes architectural behavior — the sandbox daemon proxies
 - Model size vs accuracy tradeoffs for local inference
 - Privacy implications of cloud transcription
 - Integration point: inject as terminal input? As a separate chat panel? As MCP tool input?
-
 
 ---
 
@@ -527,12 +472,6 @@ This is a Docker Sandboxes architectural behavior — the sandbox daemon proxies
 
 ---
 
-### ~~Repo Sync — Isolated Git Remote Management~~ ✅ DONE
-
-**Completed:** 2026-05-14  
-
----
-
 ### Repo Sync — Configurable Check Interval UI
 
 **Priority:** Low  
@@ -544,9 +483,6 @@ This is a Docker Sandboxes architectural behavior — the sandbox daemon proxies
 - Add a numeric input field to `RepoSettingsPanel` for check interval (in seconds)
 - Include the value in the `UpdateRepoRequest` when saving settings
 - **Important:** Add backend validation in `update_repo()` to reject values outside the 30–3600 second range (Req 16.8). Currently the field is accepted without range checking.
-**Affected area:** New sidebar menu item, new pages, new backend module, DB schema additions, persona workspace config
-
-**What was done:** Full implementation of isolated git remote management with two-directory architecture (workspace = no remotes, mirror = has remotes + credentials). Git CLI wrapper with timeout, error classification, and credential injection. GIT_ASKPASS credential helper binary with OS keyring integration. Secret scanner for pre-push detection of .env files, private keys, and API tokens. Full sync operations: pull from agent, push to remote, fetch from remote, push to agent. Commit review with cherry-pick and squash support. Background sync status checker with sidebar notification badge. Per-repo configuration (branch strategy, attribution, secret scan mode). Frontend page with scan, enable, sync operations, and settings panel. Export/import support (repos exported, credentials excluded). Property-based tests for git CLI argument building, error classification, and secret scanner pattern matching.
 
 ---
 
@@ -633,14 +569,6 @@ This is a Docker Sandboxes architectural behavior — the sandbox daemon proxies
 
 ## Project Operations
 
-### ~~Licensing Model Decision~~ ✅ DONE
-
-**Completed:** 2026-05-11  
-**Decision:** MIT License with voluntary donation model (Buy Me a Coffee / GitHub Sponsors / similar). Maximum adoption, zero friction, community-friendly. LICENSE file added to repo root.
-
----
-
-
 ### Linter and Formatter Configuration
 
 **Priority:** Medium  
@@ -683,7 +611,6 @@ This is a Docker Sandboxes architectural behavior — the sandbox daemon proxies
 
 ---
 
-
 ## Completed
 
 ### Custom Application Icons and Title Graphics
@@ -708,3 +635,66 @@ This is a Docker Sandboxes architectural behavior — the sandbox daemon proxies
 **Affected area:** DB schema, persona manager, session manager, sbx CLI, export/import, frontend (PersonasPage + SessionsPage)
 
 **What was done:** Full implementation of multiple workspace mounts per persona. Added `additional_workspaces` table (migration v5) with FK cascade delete. Validation in PersonaManager: path canonicalization, null byte rejection, absolute path enforcement, existence check, sensitive directory warnings, duplicate detection, primary collision check, label validation (64 char max, no control chars). SbxCli passes additional paths as positional args with `:ro` suffix for read-only. SessionManager loads and passes workspaces at session start. ExportImportManager includes workspaces in backup/restore. Frontend: persona form with dynamic workspace list (directory picker, labels, read-only toggle, reorder), client-side duplicate detection, persona card shows all workspaces with labels/badges, Mounts tab in session panel. 12 property-based tests + 12 frontend tests.
+
+---
+
+### Docker Management Tab
+
+**Completed:** 2026-05-12  
+**Affected area:** New `/docker` page + backend endpoints + sidebar navigation
+
+**What was done:** Full implementation of Docker Management Tab with two sub-tabs (Sandboxes and Containers). Sandboxes tab shows sandbox list from `sbx ls` with Name, Agent, Status, ID columns and Start/Stop/Remove actions. Containers tab shows all Docker containers (managed MCP containers by default, all containers with Show All toggle) with Persona Name, Image, Port, Status, Volume Name, Created Date columns and Start/Stop/Remove actions. Features: polling-based data freshness (10s interval), immediate refresh on actions and toggle changes, confirmation dialogs for destructive operations, volume deletion option for container removal, stale data indicator, managed/unmanaged filtering, proper button state derivation based on container status (running/stopped/exited/created). Backend: sandbox action endpoints with 30s timeout, container action endpoints via bollard, live Docker status enrichment, unmanaged container direct removal. 6 property-based tests, 35 unit tests, 16 backend integration tests.
+
+---
+
+### Repo Sync — Isolated Git Remote Management
+
+**Completed:** 2026-05-14  
+**Affected area:** New sidebar menu item, new pages, new backend module, DB schema additions, persona workspace config
+
+**What was done:** Full implementation of isolated git remote management with two-directory architecture (workspace = no remotes, mirror = has remotes + credentials). Git CLI wrapper with timeout, error classification, and credential injection. GIT_ASKPASS credential helper binary with OS keyring integration. Secret scanner for pre-push detection of .env files, private keys, and API tokens. Full sync operations: pull from agent, push to remote, fetch from remote, push to agent. Commit review with cherry-pick and squash support. Background sync status checker with sidebar notification badge. Per-repo configuration (branch strategy, attribution, secret scan mode). Frontend page with scan, enable, sync operations, and settings panel. Export/import support (repos exported, credentials excluded). Property-based tests for git CLI argument building, error classification, and secret scanner pattern matching.
+
+---
+
+### "Documentation" Menu Text Overlaps Content in Help
+
+**Completed:** 2026-05-15  
+**Affected area:** `src/styles.css` (help page layout)
+
+**What was done:** Fixed the help page CSS layout. Changed `min-height: calc(100vh - 0px)` to `height: calc(100vh)` with `min-height: 0` and `overflow: hidden` on the container. Added `overflow-y: auto` to the sidebar to prevent content overflow. Added `min-height: 0` to `.help-content` (required for flex children with overflow). Added `position: relative; z-index: 1` to the sidebar title to ensure it stays above scrolling content.
+
+---
+
+### Resize Message Validation
+
+**Completed:** 2026-05-15  
+**Affected area:** `src-tauri/src/pty_bridge.rs`
+
+**What was done:** Added `clamp(1, 500)` for rows and `clamp(1, 1000)` for cols in both the `resize()` public method and the WebSocket resize message handler in `attach_ws()`. Extreme or zero values from malicious input are now safely bounded before reaching the PTY.
+
+---
+
+### Kit allowedDomains Persists in Global Policy
+
+**Completed:** 2026-05-17  
+**Affected area:** Kit generator, policy management, session manager
+
+**What was done:** The new sbx release introduced per-sandbox policy scoping. MCP port allow rules are now added with `sbx policy allow network <sandbox-name> localhost:<port>` instead of the global `-g` flag. Per-sandbox rules are automatically cleaned up when the sandbox is removed via `sbx rm`. The kit generator does NOT emit `network.allowedDomains` (was already removed earlier). The orchestrator no longer pollutes the global policy with per-session rules.
+
+---
+
+### MCP Container Bearer Token Not Passed to Container
+
+**Completed:** 2026-05-10  
+**Affected area:** `src-tauri/src/mcp_container_manager.rs`
+
+**What was done:** Changed `"BEACHEAD_BEARER_TOKEN=".to_string()` to `format!("BEACHEAD_BEARER_TOKEN={}", bearer_token)`. Auth middleware now wired into server.py. Token passed via URL query parameter (`?token=<value>`) for MCP client compatibility. Docker image rebuilt and verified.
+
+---
+
+### Duplicate Primary Workspace Detection
+
+**Completed:** 2026-05-10  
+**Affected area:** `src-tauri/src/persona_manager.rs`, `src-tauri/src/db_ops.rs`
+
+**What was done:** Added `persona_with_workspace_path()` query to `db_ops.rs` that checks if another persona already uses a given primary workspace path. Added uniqueness validation in `PersonaManager::create()` and `PersonaManager::update()`. Returns a clear error: "Workspace path is already used by persona '<name>'. Each persona must have a unique primary workspace." The constraint applies only to the primary workspace — future additional/secondary workspaces can be shared across personas.
