@@ -310,8 +310,8 @@ exit 1
     async fn test_remove_rule_success() {
         let script = r#"#!/bin/sh
 if [ "$1" = "policy" ] && [ "$2" = "ls" ]; then
-    printf 'NAME                                         TYPE      ORIGIN   DECISION   STATUS   RESOURCES\n'
-    printf 'local:rule-123                               network   local    allow      active   example.com:443\n'
+    printf 'PROVENANCE   APPLIES_TO   POLICY/RULE   TYPE      DECISION   STATUS   RESOURCES\n'
+    printf 'local        all          rule-123      network   allow      active   example.com:443\n'
     exit 0
 fi
 if [ "$1" = "policy" ] && [ "$2" = "rm" ] && [ "$3" = "network" ] && [ "$4" = "-g" ] && [ "$5" = "--id" ] && [ "$6" = "rule-123" ]; then
@@ -320,7 +320,7 @@ fi
 exit 1
 "#;
         let (mgr, _dir) = create_test_manager(script);
-        let result = mgr.remove_rule("local:rule-123").await;
+        let result = mgr.remove_rule("rule-123").await;
         assert!(result.is_ok());
     }
 
@@ -362,7 +362,8 @@ exit 1
     async fn test_remove_rule_strips_local_prefix() {
         let script = r#"#!/bin/sh
 if [ "$1" = "policy" ] && [ "$2" = "ls" ]; then
-    printf 'NAME                                         TYPE      ORIGIN   DECISION   STATUS   RESOURCES\nlocal:5fa4ef3f-009e-4ffb-8812-1ca77e211eff   network   local    allow      active   test.com:443\n'
+    printf 'PROVENANCE   APPLIES_TO   POLICY/RULE                            TYPE      DECISION   STATUS   RESOURCES\n'
+    printf 'local        all          local:5fa4ef3f-009e-4ffb-8812-1ca77e211eff   network   allow      active   test.com:443\n'
     exit 0
 fi
 if [ "$1" = "policy" ] && [ "$2" = "rm" ] && [ "$3" = "network" ] && [ "$4" = "-g" ] && [ "$5" = "--id" ] && [ "$6" = "5fa4ef3f-009e-4ffb-8812-1ca77e211eff" ]; then
