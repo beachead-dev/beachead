@@ -1,14 +1,19 @@
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
+use tokio::time::timeout;
 
 use crate::error::OrchestratorError;
 use crate::types::AdditionalWorkspaceArg;
 
 /// Commands that involve secrets — stderr from these is redacted before logging.
 const SECRET_COMMANDS: &[&str] = &["secret"];
+
+/// Default timeout for sbx CLI commands. Prevents hangs when the daemon is stopped.
+const SBX_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Result of executing an sbx CLI command.
 #[derive(Debug, Clone)]
@@ -265,9 +270,12 @@ impl SbxCli {
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
 
-        let output = cmd.output().await.map_err(|e| {
-            OrchestratorError::SbxError(format!("Failed to execute sbx {}: {}", subcommand, e))
-        })?;
+        let output = timeout(SBX_COMMAND_TIMEOUT, cmd.output())
+            .await
+            .map_err(|_| OrchestratorError::SbxError(format!("sbx {} timed out", subcommand)))?
+            .map_err(|e| {
+                OrchestratorError::SbxError(format!("Failed to execute sbx {}: {}", subcommand, e))
+            })?;
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -300,9 +308,12 @@ impl SbxCli {
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
 
-        let output = cmd.output().await.map_err(|e| {
-            OrchestratorError::SbxError(format!("Failed to execute sbx {}: {}", subcommand, e))
-        })?;
+        let output = timeout(SBX_COMMAND_TIMEOUT, cmd.output())
+            .await
+            .map_err(|_| OrchestratorError::SbxError(format!("sbx {} timed out", subcommand)))?
+            .map_err(|e| {
+                OrchestratorError::SbxError(format!("Failed to execute sbx {}: {}", subcommand, e))
+            })?;
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -338,9 +349,12 @@ impl SbxCli {
         cmd.stderr(Stdio::piped());
 
         let label = subcommands.join(" ");
-        let output = cmd.output().await.map_err(|e| {
-            OrchestratorError::SbxError(format!("Failed to execute sbx {}: {}", label, e))
-        })?;
+        let output = timeout(SBX_COMMAND_TIMEOUT, cmd.output())
+            .await
+            .map_err(|_| OrchestratorError::SbxError(format!("sbx {} timed out", label)))?
+            .map_err(|e| {
+                OrchestratorError::SbxError(format!("Failed to execute sbx {}: {}", label, e))
+            })?;
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -1066,7 +1080,8 @@ impl SbxCli {
 
     /// Sign out of Docker: `sbx logout`
     pub async fn logout(&self) -> Result<(), OrchestratorError> {
-        let output = self.exec_command("logout", &[]).await?;
+        // --yes skips the interactive confirmation prompt (stdin is piped, not a TTY)
+        let output = self.exec_command("logout", &["--yes"]).await?;
         if !output.success {
             return Err(OrchestratorError::SbxError(format!(
                 "sbx logout failed: {}",

@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { api } from "../lib/api";
 import { ExportImport } from "../components/ExportImport";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 
 interface SbxVersion {
   version: string;
@@ -33,6 +34,7 @@ export function SystemSettingsPage() {
   const [diagnosing, setDiagnosing] = useState(false);
   const [loggingIn, setLoggingIn] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
 
   const fetchData = useCallback(async () => {
     try {
@@ -70,10 +72,13 @@ export function SystemSettingsPage() {
   };
 
   const handleLogout = async () => {
+    setShowLogoutConfirm(false);
     setLoggingOut(true);
     try {
       await api.post("/api/system/logout");
-      await fetchData();
+      // Daemon is stopped after logout — sbx version will hang until it restarts.
+      // Set auth state directly; fetchData() runs again after the user logs back in.
+      setAuthStatus({ authenticated: false });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Logout failed");
     } finally {
@@ -141,7 +146,7 @@ export function SystemSettingsPage() {
               {loggingIn ? "Signing in..." : "Sign In"}
             </button>
           ) : (
-            <button className="btn" onClick={handleLogout} disabled={loggingOut} aria-label="Sign out of Docker">
+            <button className="btn" onClick={() => setShowLogoutConfirm(true)} disabled={loggingOut} aria-label="Sign out of Docker">
               {loggingOut ? "Signing out..." : "Sign Out"}
             </button>
           )}
@@ -190,6 +195,16 @@ export function SystemSettingsPage() {
       </section>
 
       <ExportImport />
+
+      <ConfirmDialog
+        open={showLogoutConfirm}
+        title="Sign Out"
+        message="Signing out will stop the sbx daemon and all running sandboxes. Any active agent sessions will be terminated."
+        confirmLabel="Sign Out"
+        cancelLabel="Cancel"
+        onConfirm={handleLogout}
+        onCancel={() => setShowLogoutConfirm(false)}
+      />
     </div>
   );
 }
