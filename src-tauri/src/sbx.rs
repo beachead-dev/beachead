@@ -1332,23 +1332,53 @@ fn parse_policy_text(output: &str) -> PolicyState {
 }
 
 /// Parse `sbx secret ls` text output into secret status entries.
+///
+/// Handles two formats:
+/// - Four-column: `SCOPE  TYPE  NAME  SECRET` (service name is column 2)
+/// - Two-column:  `SERVICE  STATUS`           (service name is column 0)
 fn parse_secret_ls_text(output: &str) -> Vec<SbxSecretStatus> {
     let mut secrets = Vec::new();
+    let mut new_format = false;
+
     for line in output.lines() {
         let line = line.trim();
-        if line.is_empty() || line.starts_with("SERVICE") || line.contains("---") {
+        if line.is_empty() || line.contains("---") {
             continue;
         }
-        // Expected format: "<service>  <status>" or "<service> configured/not configured"
+
         let parts: Vec<&str> = line.split_whitespace().collect();
-        if let Some(service) = parts.first() {
-            let configured = parts
-                .iter()
-                .any(|p| *p == "configured" || *p == "yes" || *p == "✓");
-            secrets.push(SbxSecretStatus {
-                service: service.to_string(),
-                configured,
-            });
+
+        // Detect and skip header lines.
+        if let Some(&first) = parts.first() {
+            if first == "SCOPE" {
+                new_format = true;
+                continue;
+            }
+            if first == "SERVICE" {
+                continue;
+            }
+        }
+
+        if new_format {
+            // Four-column format: SCOPE TYPE NAME SECRET
+            // e.g.: (global)   service   anthropic   (oauth configured)
+            if parts.len() >= 3 {
+                let service = parts[2].to_string();
+                // SECRET column may be "(oauth configured)", "(token configured)", etc.
+                let configured = parts[3..].iter().any(|p| p.contains("configured"));
+                secrets.push(SbxSecretStatus { service, configured });
+            }
+        } else {
+            // Legacy format: SERVICE STATUS
+            if let Some(&service) = parts.first() {
+                let configured = parts
+                    .iter()
+                    .any(|p| p.contains("configured") || *p == "yes" || *p == "✓");
+                secrets.push(SbxSecretStatus {
+                    service: service.to_string(),
+                    configured,
+                });
+            }
         }
     }
     secrets
@@ -1501,5 +1531,72 @@ local        all           my-rule       network   allow      active   example.c
         let state = parse_policy_text(input);
         assert_eq!(state.rules.len(), 1);
         assert_eq!(state.rules[0].id.as_deref(), Some("my-rule"));
+    }
+
+    #[test]
+    fn test_parse_secret_ls_text_four_column_oauth() {
+        // Four-column format (SCOPE TYPE NAME SECRET) with OAuth-configured secret
+        let input = concat!(
+            "SCOPE      TYPE      NAME        SECRET\n",
+            "(global)   service   anthropic   (oauth configured)\n",
+        );
+        let secrets = parse_secret_ls_text(input);
+        assert_eq!(secrets.len(), 1);
+        assert_eq!(secrets[0].service, "anthropic");
+        assert!(secrets[0].configured, "oauth configured should be true");
+    }
+
+    #[test]
+    fn test_parse_secret_ls_text_four_column_token() {
+        // Four-column format with a plain token-configured secret
+        let input = concat!(
+            "SCOPE      TYPE      NAME     SECRET\n",
+            "(global)   service   openai   configured\n",
+        );
+        let secrets = parse_secret_ls_text(input);
+        assert_eq!(secrets.len(), 1);
+        assert_eq!(secrets[0].service, "openai");
+        assert!(secrets[0].configured);
+    }
+
+    #[test]
+    fn test_parse_secret_ls_text_four_column_multiple() {
+        // Four-column format with multiple secrets
+        let input = concat!(
+            "SCOPE      TYPE      NAME        SECRET\n",
+            "(global)   service   anthropic   (oauth configured)\n",
+            "(global)   service   openai      configured\n",
+        );
+        let secrets = parse_secret_ls_text(input);
+        assert_eq!(secrets.len(), 2);
+        let anthropic = secrets.iter().find(|s| s.service == "anthropic").unwrap();
+        let openai = secrets.iter().find(|s| s.service == "openai").unwrap();
+        assert!(anthropic.configured);
+        assert!(openai.configured);
+    }
+
+    #[test]
+    fn test_parse_secret_ls_text_four_column_header_not_treated_as_secret() {
+        // SCOPE header must not produce a phantom "SCOPE" service entry
+        let input = concat!(
+            "SCOPE      TYPE      NAME        SECRET\n",
+            "(global)   service   anthropic   (oauth configured)\n",
+        );
+        let secrets = parse_secret_ls_text(input);
+        assert!(!secrets.iter().any(|s| s.service == "SCOPE"));
+        assert!(!secrets.iter().any(|s| s.service == "(global)"));
+    }
+
+    #[test]
+    fn test_parse_secret_ls_text_legacy_format() {
+        // Legacy two-column format: only configured secrets appear
+        let input = concat!(
+            "SERVICE    STATUS\n",
+            "openai     configured\n",
+        );
+        let secrets = parse_secret_ls_text(input);
+        assert_eq!(secrets.len(), 1);
+        assert_eq!(secrets[0].service, "openai");
+        assert!(secrets[0].configured);
     }
 }
