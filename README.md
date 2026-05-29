@@ -197,6 +197,10 @@ Beachead runs as a Tauri 2.0 desktop app with:
 
 All sandbox operations go through the official `sbx` CLI. No undocumented APIs are used.
 
+## Acknowledgments
+
+Development was aided by AI coding assistants.
+
 ## License
 
 MIT
