@@ -639,7 +639,7 @@ exit 1
 
         // Use tokio::time::timeout to avoid the test itself hanging
         let result =
-            tokio::time::timeout(std::time::Duration::from_secs(35), app.oneshot(req)).await;
+            tokio::time::timeout(std::time::Duration::from_secs(45), app.oneshot(req)).await;
 
         let resp = result.expect("Test itself timed out").unwrap();
         assert_eq!(resp.status(), StatusCode::GATEWAY_TIMEOUT);

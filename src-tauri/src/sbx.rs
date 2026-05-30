@@ -272,7 +272,7 @@ impl SbxCli {
 
         let output = timeout(SBX_COMMAND_TIMEOUT, cmd.output())
             .await
-            .map_err(|_| OrchestratorError::SbxError(format!("sbx {} timed out", subcommand)))?
+            .map_err(|_| OrchestratorError::SbxTimeout(format!("sbx {} timed out", subcommand)))?
             .map_err(|e| {
                 OrchestratorError::SbxError(format!("Failed to execute sbx {}: {}", subcommand, e))
             })?;
@@ -310,7 +310,7 @@ impl SbxCli {
 
         let output = timeout(SBX_COMMAND_TIMEOUT, cmd.output())
             .await
-            .map_err(|_| OrchestratorError::SbxError(format!("sbx {} timed out", subcommand)))?
+            .map_err(|_| OrchestratorError::SbxTimeout(format!("sbx {} timed out", subcommand)))?
             .map_err(|e| {
                 OrchestratorError::SbxError(format!("Failed to execute sbx {}: {}", subcommand, e))
             })?;
@@ -351,7 +351,7 @@ impl SbxCli {
         let label = subcommands.join(" ");
         let output = timeout(SBX_COMMAND_TIMEOUT, cmd.output())
             .await
-            .map_err(|_| OrchestratorError::SbxError(format!("sbx {} timed out", label)))?
+            .map_err(|_| OrchestratorError::SbxTimeout(format!("sbx {} timed out", label)))?
             .map_err(|e| {
                 OrchestratorError::SbxError(format!("Failed to execute sbx {}: {}", label, e))
             })?;

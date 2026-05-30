@@ -88,11 +88,19 @@ If either dependency is missing, the app will display setup instructions in the 
 
 ### 3. Configure Agent Credentials
 
-Before starting a session, ensure the agent's credentials are configured:
+Credential setup depends on the agent type:
 
+**API key agents** (Gemini, OpenCode, etc.) — set the key before starting a session:
 1. Navigate to **Agents** in the sidebar.
-2. Select the agent type your persona uses.
-3. In the **Credentials** section, set the required API key or initiate OAuth.
+2. Click the **Credentials** tab.
+3. Set the required API key for each service.
+
+**Interactive auth agents** (Claude Code, Copilot, Cursor, etc.) — these are marked with a **Sandbox Auth** badge and handle authentication themselves. Start a session and follow the prompt in the terminal on first run.
+
+**OAuth agents** (Codex) — authenticate via the terminal before starting a session:
+```bash
+sbx secret set -g openai --oauth
+```
 
 Credentials are stored securely in your OS keychain via `sbx secret` — they never touch the application database.
 
@@ -122,15 +130,15 @@ Each persona can have long-term memory enabled, backed by a local MCP server run
 
 **Requirements:** Docker Engine must be running for memory features. The memory MCP container starts automatically when Beachead launches.
 
-### 7. Export and Import Memory
+### 7. Export and Import Configuration
 
-You can export a persona's memory for backup or transfer, and import memory from a previous export.
+You can export your full Beachead configuration for backup or transfer to another machine.
 
-1. Navigate to the persona's detail view.
-2. Click **Export Memory** to download the memory data as a file.
-3. To restore or transfer memory, click **Import Memory** and select a previously exported file.
+1. Navigate to **Settings** in the sidebar.
+2. Click **Export** and set a password to encrypt the file.
+3. To restore, click **Import**, select the file, and enter the password.
 
-Exported memory files contain the persona's vector store and metadata. They can be imported into the same or a different Beachead installation.
+Exports include all personas, agent definitions, sessions, and MCP server configurations. Credentials are excluded — they are tied to the OS keychain and must be reconfigured on the destination machine.
 
 ## Key Concepts
 
