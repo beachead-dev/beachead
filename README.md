@@ -1,6 +1,6 @@
-# Beachead — Secure AI Orchestrator
+# Beachead — AI Sandbox Orchestrator
 
-Beachead is a local-only desktop application that manages AI agents running inside Docker Sandbox microVMs. It provides a unified interface for creating personas, launching sandboxed agent sessions, managing network policies, and attaching long-term memory to each persona.
+Beachead is a desktop application that manages AI agents running inside Docker Sandbox microVMs. It provides a unified interface for creating personas, launching sandboxed agent sessions, managing network policies, and attaching long-term memory to each persona.
 
 ## Prerequisites
 

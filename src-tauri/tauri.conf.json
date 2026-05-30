@@ -12,7 +12,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Beachead - Secure AI Orchestrator",
+        "title": "Beachead - AI Sandbox Orchestrator",
         "width": 1280,
         "height": 800,
         "minWidth": 900,
