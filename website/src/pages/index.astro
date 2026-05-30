@@ -93,7 +93,7 @@ const versionNum = version.replace(/^v/, '');
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="description" content="Beachead — Run AI agents in isolated Docker Sandbox microVMs from your desktop. Local-only, credentials stay in your OS keychain." />
+  <meta name="description" content="Beachead — Run AI agents in isolated Docker Sandbox microVMs from your desktop. Keep your CLI agent workflow while giving agents access only to the folders and repos you specify." />
   <title>Beachead — AI Sandbox Orchestrator</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
 </head>
@@ -113,7 +113,7 @@ const versionNum = version.replace(/^v/, '');
     <section class="hero">
       <div class="container">
         <img src="/logo-light.png" alt="Beachead" class="hero-logo" />
-        <p class="tagline">Run AI agents in isolated microVMs from your desktop. Local-only — no cloud, credentials stay in your OS keychain.</p>
+        <p class="tagline">Run CLI agents in isolated microVMs from your desktop. Keep your workflow — agents only access the folders and repos you specify.</p>
         <div class="hero-actions">
           <a href="#download" class="btn btn-primary">Download {version}</a>
           <a href={`https://github.com/${REPO}`} class="btn btn-secondary" target="_blank" rel="noopener">View on GitHub →</a>
@@ -132,6 +132,10 @@ const versionNum = version.replace(/^v/, '');
           <div class="feature">
             <h3>Unified management</h3>
             <p>Create personas for Claude Code, Codex, GitHub Copilot, Kiro, Cursor, Gemini, and custom agents. Configure workspaces, network policies, per-agent memory, and MCP server integrations from one UI.</p>
+          </div>
+          <div class="feature">
+            <h3>Native CLI feel</h3>
+            <p>Agents run in a real terminal environment — Claude Code, Codex, Copilot, and others behave exactly as they would on your local machine. The sandbox looks and feels like your workstation to the agent.</p>
           </div>
           <div class="feature">
             <h3>Credential security</h3>
