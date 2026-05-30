@@ -219,8 +219,8 @@ section h2 {
 }
 
 .platform-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  display: flex;
+  flex-direction: column;
   gap: 1rem;
   margin-bottom: 2rem;
 }

@@ -111,10 +111,22 @@ async fn health() -> &'static str {
 
 /// Get the application data directory path.
 fn dirs_data_path() -> PathBuf {
-    let base = std::env::var("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| dirs_home().join(".local").join("share"));
-    base.join("beachead")
+    // On Linux, respect XDG_DATA_HOME before falling back to dirs::data_dir().
+    // On macOS this gives ~/Library/Application Support/beachead.
+    // On Windows this gives %APPDATA%\beachead.
+    #[cfg(target_os = "linux")]
+    {
+        let base = std::env::var("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| dirs_home().join(".local").join("share"));
+        return base.join("beachead");
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        dirs::data_dir()
+            .unwrap_or_else(|| dirs_home().join(".local").join("share"))
+            .join("beachead")
+    }
 }
 
 /// Get the user's home directory.
