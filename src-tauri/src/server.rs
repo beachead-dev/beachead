@@ -119,7 +119,7 @@ fn dirs_data_path() -> PathBuf {
         let base = std::env::var("XDG_DATA_HOME")
             .map(PathBuf::from)
             .unwrap_or_else(|_| dirs_home().join(".local").join("share"));
-        return base.join("beachead");
+        base.join("beachead")
     }
     #[cfg(not(target_os = "linux"))]
     {
