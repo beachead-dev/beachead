@@ -164,12 +164,9 @@ const versionNum = version.replace(/^v/, '');
                 <h3>Linux</h3>
                 <div class="download-links">
                   {downloads.linux.map(asset => (
-                    <div>
-                      <div class="download-link">
-                        <a href={asset.url}>{asset.name}</a>
-                        <span style="color: var(--color-muted); font-size: 0.8rem;">{asset.size}</span>
-                      </div>
-                      {asset.sha256 && <div class="checksum">SHA256: {asset.sha256}</div>}
+                    <div class="download-link">
+                      <a href={asset.url}>{asset.name}</a>
+                      <span class="download-meta">{asset.size}{asset.sha256 && <> &middot; SHA256: {asset.sha256}</>}</span>
                     </div>
                   ))}
                 </div>
@@ -180,12 +177,9 @@ const versionNum = version.replace(/^v/, '');
                 <h3>macOS</h3>
                 <div class="download-links">
                   {downloads.macos.map(asset => (
-                    <div>
-                      <div class="download-link">
-                        <a href={asset.url}>{asset.name}</a>
-                        <span style="color: var(--color-muted); font-size: 0.8rem;">{asset.size}</span>
-                      </div>
-                      {asset.sha256 && <div class="checksum">SHA256: {asset.sha256}</div>}
+                    <div class="download-link">
+                      <a href={asset.url}>{asset.name}</a>
+                      <span class="download-meta">{asset.size}{asset.sha256 && <> &middot; SHA256: {asset.sha256}</>}</span>
                     </div>
                   ))}
                 </div>
@@ -196,12 +190,9 @@ const versionNum = version.replace(/^v/, '');
                 <h3>Windows</h3>
                 <div class="download-links">
                   {downloads.windows.map(asset => (
-                    <div>
-                      <div class="download-link">
-                        <a href={asset.url}>{asset.name}</a>
-                        <span style="color: var(--color-muted); font-size: 0.8rem;">{asset.size}</span>
-                      </div>
-                      {asset.sha256 && <div class="checksum">SHA256: {asset.sha256}</div>}
+                    <div class="download-link">
+                      <a href={asset.url}>{asset.name}</a>
+                      <span class="download-meta">{asset.size}{asset.sha256 && <> &middot; SHA256: {asset.sha256}</>}</span>
                     </div>
                   ))}
                 </div>
