@@ -101,16 +101,12 @@ Deferred improvements, bug fixes, and future features for implementation.
 
 ---
 
-### sbx policy ls Text Parser Fragility
+### ~~sbx policy ls Text Parser Fragility~~ ✅ ADDRESSED
 
-**Priority:** Low  
+**Updated:** 2026-05-17  
 **Affected area:** `src-tauri/src/sbx.rs` (`parse_policy_text`)
 
-**Problem:** The policy list parser depends on column alignment in `sbx policy ls` text output. Column widths could change between sbx versions.
-
-**Solution:** Prefer `sbx policy ls --json` if available in future sbx versions. Current parser works but should be tested against new sbx releases.
-
-**sbx 0.31.0 note:** Policy list output now includes rule/policy names — verify `parse_policy_text` still parses correctly against 0.31.0 output before next release.
+**What was done:** Parser completely rewritten for the new sbx column format (PROVENANCE, APPLIES_TO, POLICY/RULE, TYPE, DECISION, STATUS, RESOURCES). Handles continuation lines, per-sandbox scoping, and kit-originated rules. The underlying fragility (text parsing vs JSON) remains — will switch to `sbx policy ls --json` when Docker adds it.
 
 ---
 
@@ -254,14 +250,10 @@ Deferred improvements, bug fixes, and future features for implementation.
 
 ---
 
-### Templates View Lacks Descriptive Information
+### ~~Templates View Lacks Descriptive Information~~ ✅ PARTIALLY DONE
 
-**Priority:** Medium  
-**Affected area:** `src/pages/AgentsPage.tsx` (templates section)
-
-**Problem:** The templates list under Agents shows template names but provides no context about what each template is, what it contains, or when to use it. Users can see templates exist but can't understand their purpose without external knowledge.
-
-**Solution:** Add descriptive information to each template entry — at minimum show the source sandbox/agent, creation date, and size. Ideally add a description field (either from `sbx template` metadata if available, or user-editable). Consider a detail/expand view that shows template contents or configuration summary.
+**Updated:** 2026-05-17  
+**What was done:** Templates now show size and creation date. Source sandbox/agent info is not available from `sbx template ls` output. Remaining work (richer metadata, description field) merged into "Move Templates Tab to Docker Page" backlog item.
 
 ---
 
