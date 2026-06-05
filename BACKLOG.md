@@ -101,15 +101,6 @@ Deferred improvements, bug fixes, and future features for implementation.
 
 ---
 
-### ~~sbx policy ls Text Parser Fragility~~ ✅ ADDRESSED
-
-**Updated:** 2026-05-17  
-**Affected area:** `src-tauri/src/sbx.rs` (`parse_policy_text`)
-
-**What was done:** Parser completely rewritten for the new sbx column format (PROVENANCE, APPLIES_TO, POLICY/RULE, TYPE, DECISION, STATUS, RESOURCES). Handles continuation lines, per-sandbox scoping, and kit-originated rules. The underlying fragility (text parsing vs JSON) remains — will switch to `sbx policy ls --json` when Docker adds it.
-
----
-
 ### Graceful Shutdown
 
 **Priority:** Medium  
@@ -247,13 +238,6 @@ Deferred improvements, bug fixes, and future features for implementation.
 **Problem:** No way to see session duration/uptime or which persona a session belongs to without context.
 
 **Solution:** Add a tooltip or expandable detail row showing persona name, created time, duration, and sandbox status.
-
----
-
-### ~~Templates View Lacks Descriptive Information~~ ✅ PARTIALLY DONE
-
-**Updated:** 2026-05-17  
-**What was done:** Templates now show size and creation date. Source sandbox/agent info is not available from `sbx template ls` output. Remaining work (richer metadata, description field) merged into "Move Templates Tab to Docker Page" backlog item.
 
 ---
 
@@ -673,6 +657,24 @@ This is a Docker Sandboxes architectural behavior — the sandbox daemon proxies
 **Affected area:** Kit generator, policy management, session manager
 
 **What was done:** The new sbx release introduced per-sandbox policy scoping. MCP port allow rules are now added with `sbx policy allow network <sandbox-name> localhost:<port>` instead of the global `-g` flag. Per-sandbox rules are automatically cleaned up when the sandbox is removed via `sbx rm`. The kit generator does NOT emit `network.allowedDomains` (was already removed earlier). The orchestrator no longer pollutes the global policy with per-session rules.
+
+---
+
+### sbx policy ls Text Parser Updated for 0.31.0
+
+**Completed:** 2026-05-17  
+**Affected area:** `src-tauri/src/sbx.rs` (`parse_policy_text`)
+
+**What was done:** Parser completely rewritten for the new sbx column format (PROVENANCE, APPLIES_TO, POLICY/RULE, TYPE, DECISION, STATUS, RESOURCES). Handles continuation lines, per-sandbox scoping, and kit-originated rules. The underlying fragility (text parsing vs JSON) remains — will switch to `sbx policy ls --json` when Docker adds it.
+
+---
+
+### Templates View — Size and Date Added
+
+**Completed:** 2026-05-17  
+**Affected area:** `src/pages/AgentsPage.tsx`
+
+**What was done:** Templates now show size and creation date. Source sandbox/agent info is not available from `sbx template ls` output. Remaining work (richer metadata, cleanup button) moved to "Move Templates Tab to Docker Page" backlog item.
 
 ---
 
