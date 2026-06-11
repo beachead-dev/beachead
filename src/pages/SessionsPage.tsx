@@ -61,6 +61,7 @@ export function SessionsPage() {
   const [selectedPersonaId, setSelectedPersonaId] = useState("");
   const [sessionName, setSessionName] = useState("");
   const [launching, setLaunching] = useState(false);
+  const [launchStatus, setLaunchStatus] = useState("");
   const initialLoadDone = useRef(false);
   // Track all sessions that have ever been opened as tabs — keeps their panels mounted
   const [mountedSessionIds, setMountedSessionIds] = useState<Set<string>>(new Set());
@@ -137,6 +138,13 @@ export function SessionsPage() {
   const handleLaunch = async () => {
     if (!selectedPersonaId) return;
     setLaunching(true);
+    setLaunchStatus("Creating sandbox...");
+
+    // After 5 seconds, show a message about image pulls
+    const slowTimer = setTimeout(() => {
+      setLaunchStatus("Pulling sandbox image (first launch may take a minute)...");
+    }, 5000);
+
     try {
       // Sanitize session name: only letters, numbers, hyphens, periods, plus signs
       const personaName = personas.find((p) => p.id === selectedPersonaId)?.name || "session";
@@ -155,6 +163,7 @@ export function SessionsPage() {
         persona_id: selectedPersonaId,
         name,
       });
+      clearTimeout(slowTimer);
       setShowLauncher(false);
       setSelectedPersonaId("");
       setSessionName("");
@@ -174,9 +183,11 @@ export function SessionsPage() {
       }
       setActiveTabId(resp.session_id);
     } catch (e) {
+      clearTimeout(slowTimer);
       setError(e instanceof Error ? e.message : "Failed to start session");
     } finally {
       setLaunching(false);
+      setLaunchStatus("");
     }
   };
 
@@ -332,7 +343,7 @@ export function SessionsPage() {
           <div className="form-actions">
             <button className="btn" onClick={() => { setShowLauncher(false); setSessionName(""); }}>Cancel</button>
             <button className="btn btn-primary" onClick={handleLaunch} disabled={!selectedPersonaId || launching}>
-              {launching ? "Starting..." : "Start Session"}
+              {launching ? (launchStatus || "Starting...") : "Start Session"}
             </button>
           </div>
         </div>

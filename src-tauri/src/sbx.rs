@@ -15,6 +15,9 @@ const SECRET_COMMANDS: &[&str] = &["secret"];
 /// Default timeout for sbx CLI commands. Prevents hangs when the daemon is stopped.
 const SBX_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Extended timeout for sbx create/run — these can pull images on first use.
+const SBX_CREATE_TIMEOUT: Duration = Duration::from_secs(90);
+
 /// Result of executing an sbx CLI command.
 #[derive(Debug, Clone)]
 pub struct SbxOutput {
@@ -300,6 +303,17 @@ impl SbxCli {
         subcommand: &str,
         args: &[String],
     ) -> Result<SbxOutput, OrchestratorError> {
+        self.exec_command_owned_with_timeout(subcommand, args, SBX_COMMAND_TIMEOUT)
+            .await
+    }
+
+    /// Execute an sbx command with owned String args and a custom timeout.
+    async fn exec_command_owned_with_timeout(
+        &self,
+        subcommand: &str,
+        args: &[String],
+        cmd_timeout: Duration,
+    ) -> Result<SbxOutput, OrchestratorError> {
         let mut cmd = Command::new(&self.sbx_path);
         cmd.arg(subcommand);
         for arg in args {
@@ -308,7 +322,7 @@ impl SbxCli {
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
 
-        let output = timeout(SBX_COMMAND_TIMEOUT, cmd.output())
+        let output = timeout(cmd_timeout, cmd.output())
             .await
             .map_err(|_| OrchestratorError::SbxTimeout(format!("sbx {} timed out", subcommand)))?
             .map_err(|e| {
@@ -461,10 +475,14 @@ impl SbxCli {
     }
 
     /// Create a sandbox without starting it: `sbx create <agent> --kit <path> -v <workspace>`
+    ///
+    /// Uses an extended timeout (90s) since first-time creation may pull images.
     pub async fn create(&self, args: &SbxCreateArgs) -> Result<String, OrchestratorError> {
         let cmd_args = build_create_args(args);
 
-        let output = self.exec_command_owned("create", &cmd_args).await?;
+        let output = self
+            .exec_command_owned_with_timeout("create", &cmd_args, SBX_CREATE_TIMEOUT)
+            .await?;
         if !output.success {
             return Err(OrchestratorError::SbxError(format!(
                 "sbx create failed: {}",
