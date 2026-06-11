@@ -424,7 +424,7 @@ export function SessionsPage() {
                     aria-label={`Detach ${tab.personaName} session`}
                     title="Detach (keeps running)"
                   >
-                    −
+                    ⏏
                   </button>
                 )}
                 {!removingSessionIds.has(tab.session.id) && (
