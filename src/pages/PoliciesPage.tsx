@@ -26,10 +26,10 @@ interface PolicyLogEntry {
   reason: string | null;
 }
 
-type SortColumn = "provenance" | "origin" | "id" | "rule_type" | "action" | "status" | "target";
+type SortColumn = "provenance" | "origin" | "id" | "rule_type" | "action" | "target";
 
-// Initial column widths in px: Provenance, AppliesTo, Policy/Rule, Type, Decision, Status, Resources, Actions
-const DEFAULT_COL_WIDTHS = [96, 128, 220, 88, 88, 80, 220, 80];
+// Initial column widths in px: Provenance, AppliesTo, Policy/Rule, Type, Decision, Resources, Actions
+const DEFAULT_COL_WIDTHS = [96, 128, 220, 88, 88, 220, 80];
 
 function getRuleVal(rule: PolicyRule, col: SortColumn): string {
   switch (col) {
@@ -38,7 +38,6 @@ function getRuleVal(rule: PolicyRule, col: SortColumn): string {
     case "id":         return rule.id || "";
     case "rule_type":  return rule.rule_type || "";
     case "action":     return rule.action;
-    case "status":     return rule.status || "";
     case "target":     return rule.target;
   }
 }
@@ -282,14 +281,13 @@ export function PoliciesPage() {
                 </colgroup>
                 <thead>
                   <tr>
-                    {(["provenance", "origin", "id", "rule_type", "action", "status", "target"] as SortColumn[]).map((col, i) => {
+                    {(["provenance", "origin", "id", "rule_type", "action", "target"] as SortColumn[]).map((col, i) => {
                       const labels: Record<SortColumn, string> = {
                         provenance: "Provenance",
                         origin: "Applies To",
                         id: "Policy/Rule",
                         rule_type: "Type",
                         action: "Decision",
-                        status: "Status",
                         target: "Resources",
                       };
                       return (
@@ -338,7 +336,6 @@ export function PoliciesPage() {
                       <td><code className="rule-name">{rule.id || "—"}</code></td>
                       <td><span className="rule-type">{rule.rule_type || "—"}</span></td>
                       <td><span className={`badge badge-${rule.action}`}>{rule.action}</span></td>
-                      <td><span className={`rule-status rule-status-${rule.status}`}>{rule.status || "—"}</span></td>
                       <td><code>{rule.target}</code></td>
                       <td>
                         {rule.id && !rule.id.startsWith("default-") && (

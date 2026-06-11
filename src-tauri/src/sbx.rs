@@ -748,11 +748,12 @@ impl SbxCli {
         Ok(())
     }
 
-    /// Allow network access: `sbx policy allow network "<target>"`
-    /// Allow network access globally: `sbx policy allow network -g "<target>"`
+    /// Allow network access globally (all sandboxes): `sbx policy allow network "<target>"`
+    ///
+    /// As of sbx 0.32.0, global scope is the default (no flag needed).
     pub async fn policy_allow_network(&self, target: &str) -> Result<(), OrchestratorError> {
         let output = self
-            .exec_multi_command(&["policy", "allow", "network"], &["-g", target])
+            .exec_multi_command(&["policy", "allow", "network"], &[target])
             .await?;
         if !output.success {
             return Err(OrchestratorError::SbxError(format!(
@@ -763,7 +764,9 @@ impl SbxCli {
         Ok(())
     }
 
-    /// Allow network access scoped to a specific sandbox: `sbx policy allow network <sandbox> "<target>"`
+    /// Allow network access scoped to a specific sandbox:
+    /// `sbx policy allow network --sandbox <name> "<target>"`
+    ///
     /// The rule is automatically cleaned up when the sandbox is removed.
     pub async fn policy_allow_network_for_sandbox(
         &self,
@@ -771,7 +774,10 @@ impl SbxCli {
         target: &str,
     ) -> Result<(), OrchestratorError> {
         let output = self
-            .exec_multi_command(&["policy", "allow", "network"], &[sandbox_name, target])
+            .exec_multi_command(
+                &["policy", "allow", "network"],
+                &["--sandbox", sandbox_name, target],
+            )
             .await?;
         if !output.success {
             return Err(OrchestratorError::SbxError(format!(
@@ -783,10 +789,12 @@ impl SbxCli {
         Ok(())
     }
 
-    /// Deny network access globally: `sbx policy deny network -g "<target>"`
+    /// Deny network access globally (all sandboxes): `sbx policy deny network "<target>"`
+    ///
+    /// As of sbx 0.32.0, global scope is the default (no flag needed).
     pub async fn policy_deny_network(&self, target: &str) -> Result<(), OrchestratorError> {
         let output = self
-            .exec_multi_command(&["policy", "deny", "network"], &["-g", target])
+            .exec_multi_command(&["policy", "deny", "network"], &[target])
             .await?;
         if !output.success {
             return Err(OrchestratorError::SbxError(format!(
@@ -797,10 +805,15 @@ impl SbxCli {
         Ok(())
     }
 
-    /// Remove a policy rule: handles global, per-sandbox, and kit-originated rules.
-    /// - Kit rules (id starts with "kit:"): removed by --resource
-    /// - Per-sandbox rules: uses sandbox name instead of -g
-    /// - Global rules: uses -g --id <uuid>
+    /// Remove a policy rule by its parsed ID (the POLICY/RULE column value).
+    ///
+    /// Uses `--resource` for removal since the POLICY/RULE column in `sbx policy ls`
+    /// is not the internal rule ID that `--id` expects (sbx 0.32.0 changed this —
+    /// the displayed value is a policy-scoped name, not the creation-time UUID).
+    ///
+    /// Scoping:
+    /// - Global rules: no scope flag (global is default)
+    /// - Per-sandbox rules: --sandbox <name>
     pub async fn policy_remove_rule(&self, rule_id: &str) -> Result<(), OrchestratorError> {
         // Look up the rule to determine its origin and resource
         let state = self.policy_ls().await?;
@@ -819,42 +832,32 @@ impl SbxCli {
             }
         };
 
-        // Determine scope flag: -g for global, sandbox name for per-sandbox
-        let scope_arg = match &rule.origin {
+        // Build scope args: empty for global, --sandbox <name> for per-sandbox
+        let sandbox_name = match &rule.origin {
             Some(origin) if origin.starts_with("sandbox:") => {
-                origin.strip_prefix("sandbox:").unwrap().to_string()
+                Some(origin.strip_prefix("sandbox:").unwrap().to_string())
             }
-            _ => "-g".to_string(),
+            _ => None,
         };
 
-        // Kit rules must be removed by --resource; local rules by --id (UUID)
-        if rule_id.starts_with("kit:") || rule_id.starts_with("default-") {
-            let output = self
-                .exec_multi_command(
-                    &["policy", "rm", "network"],
-                    &[&scope_arg, "--resource", &rule.target],
-                )
-                .await?;
-            if !output.success {
-                return Err(OrchestratorError::SbxError(format!(
-                    "sbx policy rm failed: {}",
-                    output.stderr.trim()
-                )));
-            }
-            Ok(())
+        let mut args: Vec<&str> = Vec::new();
+        let sandbox_ref;
+        if let Some(ref name) = sandbox_name {
+            sandbox_ref = name.as_str();
+            args.extend_from_slice(&["--sandbox", sandbox_ref]);
+        }
+        args.extend_from_slice(&["--resource", &rule.target]);
+
+        let output = self
+            .exec_multi_command(&["policy", "rm", "network"], &args)
+            .await?;
+        if !output.success {
+            Err(OrchestratorError::SbxError(format!(
+                "sbx policy rm failed: {}",
+                output.stderr.trim()
+            )))
         } else {
-            let id = rule_id.strip_prefix("local:").unwrap_or(rule_id);
-            let output = self
-                .exec_multi_command(&["policy", "rm", "network"], &[&scope_arg, "--id", id])
-                .await?;
-            if !output.success {
-                Err(OrchestratorError::SbxError(format!(
-                    "sbx policy rm failed: {}",
-                    output.stderr.trim()
-                )))
-            } else {
-                Ok(())
-            }
+            Ok(())
         }
     }
 
@@ -1184,10 +1187,13 @@ fn parse_port_output(output: &str) -> Vec<PortMapping> {
 
 /// Parse `sbx policy ls` text output into a PolicyState.
 ///
-/// Output format as of sbx 0.31.0:
+/// Output format as of sbx 0.32.0 (STATUS column removed):
+/// PROVENANCE   APPLIES_TO       POLICY/RULE   TYPE      DECISION   RESOURCES
+/// local        all              rule-name      network   allow      example.com:443
+///                                                                   other.com:443
+///
+/// Legacy format (sbx 0.31.x, 7 columns with STATUS):
 /// PROVENANCE   APPLIES_TO       POLICY/RULE   TYPE      DECISION   STATUS   RESOURCES
-/// local        all              rule-name      network   allow      active   example.com:443
-///                                                                            other.com:443
 ///
 /// APPLIES_TO is "all" for global rules or "sandbox:<name>" for per-sandbox rules.
 /// PROVENANCE is "local" for user-added rules or "kit" for kit-originated rules.
@@ -1201,6 +1207,11 @@ fn parse_policy_text(output: &str) -> PolicyState {
     } else {
         "balanced".to_string()
     };
+
+    // Detect format by checking if header contains STATUS column
+    let has_status_column = output
+        .lines()
+        .any(|l| l.starts_with("PROVENANCE") && l.contains("STATUS"));
 
     let mut rules = Vec::new();
     let mut current_name: Option<String> = None;
@@ -1266,7 +1277,6 @@ fn parse_policy_text(output: &str) -> PolicyState {
 
         if leading_spaces == 0 {
             // New rule line — flush previous, parse new
-            // Columns: PROVENANCE APPLIES_TO POLICY/RULE TYPE DECISION STATUS RESOURCES...
             flush(
                 &current_name,
                 &current_decision,
@@ -1279,30 +1289,61 @@ fn parse_policy_text(output: &str) -> PolicyState {
             );
 
             let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() >= 7 {
-                current_provenance = Some(parts[0].to_string()); // PROVENANCE
-                current_origin = Some(parts[1].to_string()); // APPLIES_TO
-                current_name = Some(parts[2].to_string()); // POLICY/RULE
-                current_rule_type = Some(parts[3].to_string()); // TYPE
-                current_decision = Some(parts[4].to_string()); // DECISION
-                current_status = Some(parts[5].to_string()); // STATUS
-                current_resources = vec![parts[6..].join(" ")];
-            } else if parts.len() >= 6 {
-                current_provenance = Some(parts[0].to_string());
-                current_origin = Some(parts[1].to_string());
-                current_name = Some(parts[2].to_string());
-                current_rule_type = Some(parts[3].to_string());
-                current_decision = Some(parts[4].to_string());
-                current_status = Some(parts[5].to_string());
-                current_resources = Vec::new();
+
+            if has_status_column {
+                // Legacy 7-column format: PROVENANCE APPLIES_TO POLICY/RULE TYPE DECISION STATUS RESOURCES...
+                if parts.len() >= 7 {
+                    current_provenance = Some(parts[0].to_string());
+                    current_origin = Some(parts[1].to_string());
+                    current_name = Some(parts[2].to_string());
+                    current_rule_type = Some(parts[3].to_string());
+                    current_decision = Some(parts[4].to_string());
+                    current_status = Some(parts[5].to_string());
+                    current_resources = vec![parts[6..].join(" ")];
+                } else if parts.len() >= 6 {
+                    current_provenance = Some(parts[0].to_string());
+                    current_origin = Some(parts[1].to_string());
+                    current_name = Some(parts[2].to_string());
+                    current_rule_type = Some(parts[3].to_string());
+                    current_decision = Some(parts[4].to_string());
+                    current_status = Some(parts[5].to_string());
+                    current_resources = Vec::new();
+                } else {
+                    current_name = None;
+                    current_decision = None;
+                    current_origin = None;
+                    current_provenance = None;
+                    current_rule_type = None;
+                    current_status = None;
+                    current_resources = Vec::new();
+                }
             } else {
-                current_name = None;
-                current_decision = None;
-                current_origin = None;
-                current_provenance = None;
-                current_rule_type = None;
-                current_status = None;
-                current_resources = Vec::new();
+                // New 6-column format (sbx 0.32.0+): PROVENANCE APPLIES_TO POLICY/RULE TYPE DECISION RESOURCES...
+                if parts.len() >= 6 {
+                    current_provenance = Some(parts[0].to_string());
+                    current_origin = Some(parts[1].to_string());
+                    current_name = Some(parts[2].to_string());
+                    current_rule_type = Some(parts[3].to_string());
+                    current_decision = Some(parts[4].to_string());
+                    current_status = Some("active".to_string()); // Implied — inactive rules are hidden by default
+                    current_resources = vec![parts[5..].join(" ")];
+                } else if parts.len() >= 5 {
+                    current_provenance = Some(parts[0].to_string());
+                    current_origin = Some(parts[1].to_string());
+                    current_name = Some(parts[2].to_string());
+                    current_rule_type = Some(parts[3].to_string());
+                    current_decision = Some(parts[4].to_string());
+                    current_status = Some("active".to_string());
+                    current_resources = Vec::new();
+                } else {
+                    current_name = None;
+                    current_decision = None;
+                    current_origin = None;
+                    current_provenance = None;
+                    current_rule_type = None;
+                    current_status = None;
+                    current_resources = Vec::new();
+                }
             }
         } else {
             // Continuation line — additional resource for current rule
@@ -1512,6 +1553,78 @@ local        all           my-rule       network   allow      active   example.c
         let state = parse_policy_text(input);
         assert_eq!(state.rules.len(), 1);
         assert_eq!(state.rules[0].id.as_deref(), Some("my-rule"));
+    }
+
+    #[test]
+    fn test_parse_policy_text_sbx_032_no_status_column() {
+        // sbx 0.32.0 removed the STATUS column
+        let input = concat!(
+            "PROVENANCE   APPLIES_TO      POLICY/RULE                            TYPE      DECISION   RESOURCES\n",
+            "local        sandbox:ktest   b656a698-8713-442d-920c-bf95fbe979d4   network   allow      localhost:9100\n",
+            "\n",
+            "local        all             default-ai-services                    network   allow      api.anthropic.com:443\n",
+            "                                                                                         chatgpt.com:443\n",
+            "\n",
+            "kit          sandbox:ctest   kit:ctest                              network   allow      claude.com:443\n",
+            "                                                                                         downloads.claude.ai:443\n",
+            "\n",
+            "local        all             cef43db6-e9fa-4a3e-9154-9564bcedca19   network   allow      httpbin.org:443\n",
+        );
+        let state = parse_policy_text(input);
+        assert_eq!(state.default_policy, "balanced");
+
+        // Per-sandbox rule
+        let sandbox_rule = state
+            .rules
+            .iter()
+            .find(|r| r.target == "localhost:9100")
+            .unwrap();
+        assert_eq!(
+            sandbox_rule.id.as_deref(),
+            Some("b656a698-8713-442d-920c-bf95fbe979d4")
+        );
+        assert_eq!(sandbox_rule.action, "allow");
+        assert_eq!(sandbox_rule.origin.as_deref(), Some("sandbox:ktest"));
+        assert_eq!(sandbox_rule.provenance.as_deref(), Some("local"));
+        assert_eq!(sandbox_rule.status.as_deref(), Some("active")); // Implied
+
+        // Global rule with continuation lines
+        let ai_rule = state
+            .rules
+            .iter()
+            .find(|r| r.target == "api.anthropic.com:443")
+            .unwrap();
+        assert_eq!(ai_rule.id.as_deref(), Some("default-ai-services"));
+        assert_eq!(ai_rule.origin.as_deref(), Some("all"));
+
+        let chatgpt_rule = state
+            .rules
+            .iter()
+            .find(|r| r.target == "chatgpt.com:443")
+            .unwrap();
+        assert_eq!(chatgpt_rule.id.as_deref(), Some("default-ai-services"));
+
+        // Kit rule with continuation
+        let kit_rule = state
+            .rules
+            .iter()
+            .find(|r| r.target == "claude.com:443")
+            .unwrap();
+        assert_eq!(kit_rule.id.as_deref(), Some("kit:ctest"));
+        assert_eq!(kit_rule.origin.as_deref(), Some("sandbox:ctest"));
+        assert_eq!(kit_rule.provenance.as_deref(), Some("kit"));
+
+        // User-added rule
+        let user_rule = state
+            .rules
+            .iter()
+            .find(|r| r.target == "httpbin.org:443")
+            .unwrap();
+        assert_eq!(
+            user_rule.id.as_deref(),
+            Some("cef43db6-e9fa-4a3e-9154-9564bcedca19")
+        );
+        assert_eq!(user_rule.origin.as_deref(), Some("all"));
     }
 
     #[test]

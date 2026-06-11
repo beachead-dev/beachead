@@ -154,7 +154,7 @@ async fn stop_sandbox(
 
     let sandbox = sandboxes
         .iter()
-        .find(|s| s.id.as_deref() == Some(&id))
+        .find(|s| s.id.as_deref() == Some(&id) || s.name.as_deref() == Some(&id))
         .ok_or_else(|| OrchestratorError::NotFound(format!("Sandbox '{}' not found", id)))?;
 
     // If already stopped, return current status without calling stop
@@ -174,7 +174,7 @@ async fn stop_sandbox(
             let status = match timeout(SBX_COMMAND_TIMEOUT, sbx.ls_json()).await {
                 Ok(Ok(list)) => list
                     .iter()
-                    .find(|s| s.id.as_deref() == Some(&id))
+                    .find(|s| s.id.as_deref() == Some(&id) || s.name.as_deref() == Some(&id))
                     .and_then(|s| s.status.clone())
                     .unwrap_or_else(|| "stopped".to_string()),
                 _ => "stopped".to_string(),

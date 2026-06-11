@@ -229,7 +229,7 @@ exit 1
     #[tokio::test]
     async fn test_add_rule_allow() {
         let script = r#"#!/bin/sh
-if [ "$1" = "policy" ] && [ "$2" = "allow" ] && [ "$3" = "network" ] && [ "$4" = "-g" ] && [ "$5" = "127.0.0.1:8080" ]; then
+if [ "$1" = "policy" ] && [ "$2" = "allow" ] && [ "$3" = "network" ] && [ "$4" = "127.0.0.1:8080" ]; then
     exit 0
 fi
 exit 1
@@ -242,7 +242,7 @@ exit 1
     #[tokio::test]
     async fn test_add_rule_deny() {
         let script = r#"#!/bin/sh
-if [ "$1" = "policy" ] && [ "$2" = "deny" ] && [ "$3" = "network" ] && [ "$4" = "-g" ] && [ "$5" = "evil.com" ]; then
+if [ "$1" = "policy" ] && [ "$2" = "deny" ] && [ "$3" = "network" ] && [ "$4" = "evil.com" ]; then
     exit 0
 fi
 exit 1
@@ -314,7 +314,7 @@ if [ "$1" = "policy" ] && [ "$2" = "ls" ]; then
     printf 'local        all          rule-123      network   allow      active   example.com:443\n'
     exit 0
 fi
-if [ "$1" = "policy" ] && [ "$2" = "rm" ] && [ "$3" = "network" ] && [ "$4" = "-g" ] && [ "$5" = "--id" ] && [ "$6" = "rule-123" ]; then
+if [ "$1" = "policy" ] && [ "$2" = "rm" ] && [ "$3" = "network" ] && [ "$4" = "--resource" ] && [ "$5" = "example.com:443" ]; then
     exit 0
 fi
 exit 1
@@ -359,20 +359,20 @@ exit 1
     }
 
     #[tokio::test]
-    async fn test_remove_rule_strips_local_prefix() {
+    async fn test_remove_rule_uses_resource_for_local_prefixed_id() {
         let script = r#"#!/bin/sh
 if [ "$1" = "policy" ] && [ "$2" = "ls" ]; then
     printf 'PROVENANCE   APPLIES_TO   POLICY/RULE                            TYPE      DECISION   STATUS   RESOURCES\n'
     printf 'local        all          local:5fa4ef3f-009e-4ffb-8812-1ca77e211eff   network   allow      active   test.com:443\n'
     exit 0
 fi
-if [ "$1" = "policy" ] && [ "$2" = "rm" ] && [ "$3" = "network" ] && [ "$4" = "-g" ] && [ "$5" = "--id" ] && [ "$6" = "5fa4ef3f-009e-4ffb-8812-1ca77e211eff" ]; then
+if [ "$1" = "policy" ] && [ "$2" = "rm" ] && [ "$3" = "network" ] && [ "$4" = "--resource" ] && [ "$5" = "test.com:443" ]; then
     exit 0
 fi
 exit 1
 "#;
         let (mgr, _dir) = create_test_manager(script);
-        // Pass with "local:" prefix — should be stripped for --id
+        // Even with "local:" prefix in the rule name, removal uses --resource
         let result = mgr
             .remove_rule("local:5fa4ef3f-009e-4ffb-8812-1ca77e211eff")
             .await;

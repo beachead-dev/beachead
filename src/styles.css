@@ -1187,7 +1187,7 @@ body {
 
 /* Column widths are managed via colgroup inline styles; only cell-level overrides here */
 .rules-table td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rules-table td:nth-child(7) { white-space: normal; word-break: break-all; } /* Resources wraps */
+.rules-table td:nth-child(6) { white-space: normal; word-break: break-all; } /* Resources wraps */
 .rules-table td:last-child,
 .rules-table th:last-child { text-align: right; }
 
