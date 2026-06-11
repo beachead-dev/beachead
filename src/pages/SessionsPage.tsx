@@ -62,6 +62,7 @@ export function SessionsPage() {
   const [sessionName, setSessionName] = useState("");
   const [launching, setLaunching] = useState(false);
   const [launchStatus, setLaunchStatus] = useState("");
+  const [removingSessionIds, setRemovingSessionIds] = useState<Set<string>>(new Set());
   const initialLoadDone = useRef(false);
   // Track all sessions that have ever been opened as tabs — keeps their panels mounted
   const [mountedSessionIds, setMountedSessionIds] = useState<Set<string>>(new Set());
@@ -265,6 +266,43 @@ export function SessionsPage() {
     }
   };
 
+  // Force-remove a running session: stop + remove in one action
+  const handleForceRemoveSession = async (sessionId: string) => {
+    setRemovingSessionIds((prev) => new Set([...prev, sessionId]));
+    try {
+      // Stop first (ignore errors — sandbox might already be stopped)
+      try {
+        await api.post(`/api/sessions/${sessionId}/stop`);
+      } catch {
+        // Continue with removal even if stop fails
+      }
+      // Then remove
+      await api.del(`/api/sessions/${sessionId}`);
+      setTabs((prev) => {
+        const remaining = prev.filter((t) => t.session.id !== sessionId);
+        if (activeTabId === sessionId) {
+          setActiveTabId(remaining.length > 0 ? remaining[0]!.session.id : null);
+        }
+        return remaining;
+      });
+      setMountedSessionIds((prev) => {
+        const next = new Set(prev);
+        next.delete(sessionId);
+        return next;
+      });
+      const sessionList = await api.get<Session[]>("/api/sessions");
+      setSessions(sessionList);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to remove session");
+    } finally {
+      setRemovingSessionIds((prev) => {
+        const next = new Set(prev);
+        next.delete(sessionId);
+        return next;
+      });
+    }
+  };
+
   // Close tab = detach only (sandbox keeps running, just remove from active tabs)
   const handleCloseTab = (sessionId: string) => {
     setTabs((prev) => {
@@ -368,22 +406,37 @@ export function SessionsPage() {
             {tabs.map((tab) => (
               <li
                 key={tab.session.id}
-                className={`session-list-item ${activeTabId === tab.session.id ? "active" : ""}`}
+                className={`session-list-item ${activeTabId === tab.session.id ? "active" : ""} ${removingSessionIds.has(tab.session.id) ? "removing" : ""}`}
                 role="tab"
                 aria-selected={activeTabId === tab.session.id}
                 onClick={() => setActiveTabId(tab.session.id)}
                 onKeyDown={(e) => { if (e.key === "Enter") setActiveTabId(tab.session.id); }}
                 tabIndex={0}
               >
-                <span className={`status-indicator status-${tab.session.status}`} aria-label={tab.session.status} />
-                <span className="session-name">{extractSandboxName(tab.session.sandbox_id) || tab.personaName}</span>
-                <button
-                  className="tab-close"
-                  onClick={(e) => { e.stopPropagation(); handleCloseTab(tab.session.id); }}
-                  aria-label={`Close ${tab.personaName} session`}
-                >
-                  ✕
-                </button>
+                <span className={`status-indicator status-${removingSessionIds.has(tab.session.id) ? "removing" : tab.session.status}`} aria-label={tab.session.status} />
+                <span className="session-name">
+                  {removingSessionIds.has(tab.session.id) ? "Removing..." : extractSandboxName(tab.session.sandbox_id) || tab.personaName}
+                </span>
+                {!removingSessionIds.has(tab.session.id) && (
+                  <button
+                    className="tab-close"
+                    onClick={(e) => { e.stopPropagation(); handleCloseTab(tab.session.id); }}
+                    aria-label={`Detach ${tab.personaName} session`}
+                    title="Detach (keeps running)"
+                  >
+                    −
+                  </button>
+                )}
+                {!removingSessionIds.has(tab.session.id) && (
+                  <button
+                    className="tab-close tab-remove"
+                    onClick={(e) => { e.stopPropagation(); handleForceRemoveSession(tab.session.id); }}
+                    aria-label={`Remove ${tab.personaName} session`}
+                    title="Stop and remove"
+                  >
+                    ✕
+                  </button>
+                )}
               </li>
             ))}
           </ul>
@@ -394,6 +447,8 @@ export function SessionsPage() {
             personas={personas}
             onReattach={handleReattach}
             onStop={handleStopSession}
+            onRemove={handleForceRemoveSession}
+            removingIds={removingSessionIds}
           />
 
           {/* Stopped sessions — collapsible section at bottom of sidebar */}
@@ -434,9 +489,11 @@ interface DetachedSessionsSectionProps {
   personas: Persona[];
   onReattach: (id: string) => void;
   onStop: (id: string) => void;
+  onRemove: (id: string) => void;
+  removingIds: Set<string>;
 }
 
-function DetachedSessionsSection({ sessions, personas, onReattach, onStop }: DetachedSessionsSectionProps) {
+function DetachedSessionsSection({ sessions, personas, onReattach, onStop, onRemove, removingIds }: DetachedSessionsSectionProps) {
   const [collapsed, setCollapsed] = useState(false);
 
   if (sessions.length === 0) return null;
@@ -454,31 +511,47 @@ function DetachedSessionsSection({ sessions, personas, onReattach, onStop }: Det
       </button>
       {!collapsed && (
         <ul className="stopped-list">
-          {sessions.map((session) => (
-            <li key={session.id} className="stopped-list-item">
-              <span className="stopped-item-name">
-                {extractSandboxName(session.sandbox_id) || personas.find((p) => p.id === session.persona_id)?.name || session.id.slice(0, 8)}
-              </span>
-              <div className="stopped-item-actions">
-                <button
-                  className="btn-icon"
-                  onClick={() => onReattach(session.id)}
-                  aria-label="Reattach"
-                  title="Reattach"
-                >
-                  ▶
-                </button>
-                <button
-                  className="btn-icon btn-icon-danger"
-                  onClick={() => onStop(session.id)}
-                  aria-label="Stop"
-                  title="Stop sandbox"
-                >
-                  ⏹
-                </button>
-              </div>
-            </li>
-          ))}
+          {sessions.map((session) => {
+            const isRemoving = removingIds.has(session.id);
+            return (
+              <li key={session.id} className={`stopped-list-item ${isRemoving ? "removing" : ""}`}>
+                <span className="stopped-item-name">
+                  {isRemoving
+                    ? "Removing..."
+                    : extractSandboxName(session.sandbox_id) || personas.find((p) => p.id === session.persona_id)?.name || session.id.slice(0, 8)
+                  }
+                </span>
+                {!isRemoving && (
+                  <div className="stopped-item-actions">
+                    <button
+                      className="btn-icon"
+                      onClick={() => onReattach(session.id)}
+                      aria-label="Reattach"
+                      title="Reattach"
+                    >
+                      ▶
+                    </button>
+                    <button
+                      className="btn-icon btn-icon-danger"
+                      onClick={() => onStop(session.id)}
+                      aria-label="Stop"
+                      title="Stop sandbox"
+                    >
+                      ⏹
+                    </button>
+                    <button
+                      className="btn-icon btn-icon-danger"
+                      onClick={() => onRemove(session.id)}
+                      aria-label="Remove"
+                      title="Stop and remove sandbox"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                )}
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>
