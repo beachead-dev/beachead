@@ -429,6 +429,16 @@ export function SessionsPage() {
                 )}
                 {!removingSessionIds.has(tab.session.id) && (
                   <button
+                    className="tab-close tab-stop"
+                    onClick={(e) => { e.stopPropagation(); handleStopSession(tab.session.id); }}
+                    aria-label={`Stop ${tab.personaName} session`}
+                    title="Stop"
+                  >
+                    ⏹
+                  </button>
+                )}
+                {!removingSessionIds.has(tab.session.id) && (
+                  <button
                     className="tab-close tab-remove"
                     onClick={(e) => { e.stopPropagation(); handleForceRemoveSession(tab.session.id); }}
                     aria-label={`Remove ${tab.personaName} session`}
