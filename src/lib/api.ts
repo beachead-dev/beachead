@@ -1,5 +1,47 @@
 const BASE_URL = "http://127.0.0.1:9876";
 
+/// The per-launch API token required on all /api/* requests.
+///
+/// In production the Axum server injects it into index.html as
+/// `<meta name="beachead-token" content="...">`. In dev (Vite serves its own
+/// index.html) it comes from the VITE_API_TOKEN build-time env var, which must
+/// match the server's debug-build token.
+function resolveApiToken(): string {
+  if (typeof document !== "undefined") {
+    const meta = document.querySelector<HTMLMetaElement>(
+      'meta[name="beachead-token"]',
+    );
+    if (meta?.content) {
+      return meta.content;
+    }
+  }
+  // Dev fallback: Vite injects this at build time.
+  const envToken = import.meta.env?.VITE_API_TOKEN;
+  if (typeof envToken === "string" && envToken.length > 0) {
+    return envToken;
+  }
+  return "";
+}
+
+export const API_TOKEN = resolveApiToken();
+
+/// Build request headers including the API token.
+function authHeaders(extra?: Record<string, string>): Record<string, string> {
+  const headers: Record<string, string> = { ...extra };
+  if (API_TOKEN) {
+    headers["Authorization"] = `Bearer ${API_TOKEN}`;
+  }
+  return headers;
+}
+
+/// Append the API token as a query parameter (for WebSocket URLs, which cannot
+/// carry an Authorization header in the browser).
+export function withTokenParam(url: string): string {
+  if (!API_TOKEN) return url;
+  const sep = url.includes("?") ? "&" : "?";
+  return `${url}${sep}token=${encodeURIComponent(API_TOKEN)}`;
+}
+
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -38,7 +80,7 @@ async function handleResponse<T>(response: Response): Promise<T> {
 export async function get<T>(path: string): Promise<T> {
   const response = await fetch(`${BASE_URL}${path}`, {
     method: "GET",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
   });
   return handleResponse<T>(response);
 }
@@ -46,7 +88,7 @@ export async function get<T>(path: string): Promise<T> {
 export async function post<T>(path: string, body?: unknown): Promise<T> {
   const response = await fetch(`${BASE_URL}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   return handleResponse<T>(response);
@@ -55,7 +97,7 @@ export async function post<T>(path: string, body?: unknown): Promise<T> {
 export async function put<T>(path: string, body?: unknown): Promise<T> {
   const response = await fetch(`${BASE_URL}${path}`, {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   return handleResponse<T>(response);
@@ -64,7 +106,7 @@ export async function put<T>(path: string, body?: unknown): Promise<T> {
 export async function del<T>(path: string): Promise<T> {
   const response = await fetch(`${BASE_URL}${path}`, {
     method: "DELETE",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
   });
   return handleResponse<T>(response);
 }
@@ -72,6 +114,7 @@ export async function del<T>(path: string): Promise<T> {
 export async function getText(path: string): Promise<string> {
   const response = await fetch(`${BASE_URL}${path}`, {
     method: "GET",
+    headers: authHeaders(),
   });
   if (!response.ok) {
     const body = await extractErrorBody(response);
@@ -83,7 +126,7 @@ export async function getText(path: string): Promise<string> {
 export async function postForBlob(path: string, body?: unknown): Promise<Blob> {
   const response = await fetch(`${BASE_URL}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   if (!response.ok) {

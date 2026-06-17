@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from "react";
-import { api } from "../lib/api";
+import { api, withTokenParam } from "../lib/api";
 import { ResizeHandle } from "../components/ResizeHandle";
 import { useDropzone } from "react-dropzone";
 import { Terminal } from "@xterm/xterm";
@@ -701,7 +701,11 @@ function TerminalView({ sessionId }: { sessionId: string }) {
     fitAddonRef.current = fitAddon;
 
     // --- WebSocket: direct connection, no React state intermediary ---
-    const wsUrl = `ws://127.0.0.1:9876/api/sessions/${sessionId}/terminal`;
+    // Token rides in the query string because browsers can't set headers on
+    // WebSocket connections; the backend validates it on upgrade.
+    const wsUrl = withTokenParam(
+      `ws://127.0.0.1:9876/api/sessions/${sessionId}/terminal`,
+    );
     const ws = new WebSocket(wsUrl);
     ws.binaryType = "arraybuffer";
     wsRef.current = ws;

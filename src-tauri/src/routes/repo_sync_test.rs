@@ -51,6 +51,8 @@ mod tests {
             pty_bridge,
             kit_generator,
             repo_sync_manager: None,
+            api_token: Arc::new("test-token".to_string()),
+            frontend_dist: None,
         }
     }
 

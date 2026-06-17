@@ -1,8 +1,9 @@
+use axum::response::IntoResponse;
 use axum::{routing::get, Router};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tower_http::cors::{AllowOrigin, CorsLayer};
-use tower_http::services::{ServeDir, ServeFile};
+use tower_http::services::ServeDir;
 
 use crate::agent_manager::AgentManager;
 use crate::credential_manager::CredentialManager;
@@ -42,6 +43,11 @@ pub struct AppState {
     pub sbx: Option<Arc<SbxCli>>,
     pub pty_bridge: Arc<PtyBridge>,
     pub kit_generator: Arc<KitGenerator>,
+    /// Per-launch API token required on all `/api/*` routes (except health).
+    pub api_token: Arc<String>,
+    /// Resolved frontend `dist/` directory, if found. Used to serve the
+    /// token-injected `index.html`.
+    pub frontend_dist: Option<Arc<PathBuf>>,
 }
 
 impl AppState {
@@ -105,9 +111,118 @@ impl AppState {
     }
 }
 
+/// Well-known token accepted ONLY in debug builds (`cargo`/`tauri dev`).
+///
+/// The Vite dev server loads `index.html` itself, so the server-side token
+/// injection never reaches the dev webview. In debug builds the server accepts
+/// this fixed token, and the dev frontend supplies it via `VITE_API_TOKEN`
+/// (see vite.config.ts). Release builds compile with `debug_assertions` off,
+/// generate a random per-launch token, and never accept this value.
+pub const DEV_API_TOKEN: &str = "dev-token-not-valid-in-release-builds";
+
 /// Health check endpoint
 async fn health() -> &'static str {
     "ok"
+}
+
+/// Constant-time byte-slice equality. Returns false for differing lengths.
+/// Token lengths are fixed, so the length check leaks nothing useful.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
+/// Extract the API token from a request: `Authorization: Bearer <token>` header
+/// (preferred) or `?token=<token>` query parameter (used by the WebSocket
+/// terminal, since browsers can't set headers on WebSocket connections).
+fn extract_request_token(headers: &axum::http::HeaderMap, query: Option<&str>) -> Option<String> {
+    if let Some(auth) = headers.get(axum::http::header::AUTHORIZATION) {
+        if let Ok(s) = auth.to_str() {
+            if let Some(token) = s.strip_prefix("Bearer ") {
+                return Some(token.to_string());
+            }
+        }
+    }
+    if let Some(q) = query {
+        for pair in q.split('&') {
+            if let Some(value) = pair.strip_prefix("token=") {
+                // Token is URL-safe base64 (no percent-encoding needed).
+                return Some(value.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Middleware that enforces the per-launch API token on all `/api/*` routes
+/// except `/api/health`. Fails closed with a bare 401.
+async fn require_api_token(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let provided = extract_request_token(req.headers(), req.uri().query());
+
+    let authorized = match provided {
+        Some(token) => constant_time_eq(token.as_bytes(), state.api_token.as_bytes()),
+        None => false,
+    };
+
+    if authorized {
+        next.run(req).await
+    } else {
+        (axum::http::StatusCode::UNAUTHORIZED, "Unauthorized").into_response()
+    }
+}
+
+/// Serve `index.html` with the per-launch API token injected as a `<meta>` tag.
+///
+/// A `<meta>` tag is used rather than an inline `<script>` because the webview
+/// CSP (`default-src 'self'`) forbids inline scripts. Static assets are served
+/// directly by `ServeDir`; only the SPA entry point passes through here.
+async fn serve_index_with_token(
+    axum::extract::State(state): axum::extract::State<AppState>,
+) -> axum::response::Response {
+    let Some(dist) = state.frontend_dist.as_ref() else {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "frontend not available",
+        )
+            .into_response();
+    };
+
+    let index_path = dist.join("index.html");
+    let html = match std::fs::read_to_string(&index_path) {
+        Ok(h) => h,
+        Err(e) => {
+            eprintln!("Failed to read index.html: {}", e);
+            return (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "frontend not available",
+            )
+                .into_response();
+        }
+    };
+
+    // Token is URL-safe base64 (chars [A-Za-z0-9_-]) so it is safe in an
+    // attribute, but escape the quote defensively in case the source changes.
+    let token_attr = state.api_token.replace('"', "&quot;");
+    let meta = format!("<meta name=\"beachead-token\" content=\"{}\">", token_attr);
+    let injected = if let Some(pos) = html.find("</head>") {
+        let (head, tail) = html.split_at(pos);
+        format!("{head}{meta}{tail}")
+    } else {
+        // No </head> — prepend as a fallback so the token is still present.
+        format!("{meta}{html}")
+    };
+
+    axum::response::Html(injected).into_response()
 }
 
 /// Exact-origin allowlist for CORS.
@@ -293,6 +408,30 @@ pub async fn start_server(
         });
     }
 
+    // Resolve frontend dist/ directory before building state (the token-injected
+    // index handler needs it). Search order: dev layout, then exe sibling.
+    let dist_path = {
+        let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../dist");
+        if dev.join("index.html").exists() {
+            Some(dev)
+        } else {
+            std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|d| d.join("dist")))
+                .filter(|p| p.join("index.html").exists())
+        }
+    };
+
+    // Per-launch API token. Release builds use a random 256-bit token generated
+    // fresh each launch. Debug builds use a fixed well-known token so the Vite
+    // dev server (which serves its own index.html) can authenticate via
+    // VITE_API_TOKEN without server-side injection.
+    let api_token = if cfg!(debug_assertions) {
+        DEV_API_TOKEN.to_string()
+    } else {
+        crate::token::generate_bearer_token()
+    };
+
     let state = AppState {
         persona_manager,
         agent_manager,
@@ -308,6 +447,8 @@ pub async fn start_server(
         sbx,
         pty_bridge,
         kit_generator,
+        api_token: Arc::new(api_token),
+        frontend_dist: dist_path.clone().map(Arc::new),
     };
 
     // Exact-origin allowlist. In a released build the webview is served from
@@ -326,37 +467,39 @@ pub async fn start_server(
         .allow_methods(tower_http::cors::Any)
         .allow_headers(tower_http::cors::Any);
 
-    let app = Router::new()
+    // All /api/* routes (except /api/health) require the API token. The health
+    // route is registered separately so it stays unauthenticated for readiness
+    // probes.
+    let api_routes = crate::routes::build_router().layer(axum::middleware::from_fn_with_state(
+        state.clone(),
+        require_api_token,
+    ));
+
+    let mut app = Router::new()
         .route("/api/health", get(health))
-        .merge(crate::routes::build_router())
-        .layer(cors)
-        .with_state(state);
+        .merge(api_routes);
 
     // Serve frontend static files from dist/ so the webview can load via HTTP.
     // This avoids the tauri:// protocol which fails on some WebKitGTK versions.
-    // Search order: dev layout (CARGO_MANIFEST_DIR/../dist), then exe sibling.
-    let dist_path = {
-        let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../dist");
-        if dev.join("index.html").exists() {
-            Some(dev)
-        } else {
-            std::env::current_exe()
-                .ok()
-                .and_then(|p| p.parent().map(|d| d.join("dist")))
-                .filter(|p| p.join("index.html").exists())
-        }
-    };
-
-    let app = if let Some(dist) = dist_path {
-        let index_html = dist.join("index.html");
+    // The SPA entry point (index.html) is served via a handler that injects the
+    // per-launch API token as a <meta> tag; static assets go through ServeDir.
+    // The SPA fallback (for client-side routes) also serves the injected index.
+    if let Some(dist) = dist_path {
+        // The ServeDir fallback handler needs its own resolved state since it is
+        // a standalone service, not part of the AppState router.
+        let index_fallback = get(serve_index_with_token).with_state(state.clone());
         let serve_dir = ServeDir::new(&dist)
-            .append_index_html_on_directories(true)
-            .not_found_service(ServeFile::new(index_html));
-        app.fallback_service(serve_dir)
+            .append_index_html_on_directories(false)
+            .fallback(index_fallback);
+        app = app
+            .route("/", get(serve_index_with_token))
+            .fallback_service(serve_dir);
     } else {
         eprintln!("Warning: dist/ directory not found — frontend will not be served");
-        app
-    };
+    }
+
+    // Apply CORS and shared state once, after all routes are registered.
+    let app = app.layer(cors).with_state(state);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:9876")
         .await
@@ -429,7 +572,8 @@ async fn discover_git_binary() -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::is_allowed_origin;
+    use super::{constant_time_eq, extract_request_token, is_allowed_origin};
+    use axum::http::{header::AUTHORIZATION, HeaderMap, HeaderValue};
 
     #[test]
     fn test_allows_dev_and_production_origins() {
@@ -454,5 +598,61 @@ mod tests {
         assert!(!is_allowed_origin("http://localhost:3000"));
         assert!(!is_allowed_origin("tauri://localhost"));
         assert!(!is_allowed_origin(""));
+    }
+
+    #[test]
+    fn test_constant_time_eq() {
+        assert!(constant_time_eq(b"abc123", b"abc123"));
+        assert!(!constant_time_eq(b"abc123", b"abc124"));
+        assert!(!constant_time_eq(b"abc", b"abcd"));
+        assert!(!constant_time_eq(b"", b"x"));
+        assert!(constant_time_eq(b"", b""));
+    }
+
+    #[test]
+    fn test_extract_token_from_header() {
+        let mut headers = HeaderMap::new();
+        headers.insert(AUTHORIZATION, HeaderValue::from_static("Bearer my-token"));
+        assert_eq!(
+            extract_request_token(&headers, None),
+            Some("my-token".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_token_from_query() {
+        let headers = HeaderMap::new();
+        assert_eq!(
+            extract_request_token(&headers, Some("foo=bar&token=abc123&x=y")),
+            Some("abc123".to_string())
+        );
+        assert_eq!(
+            extract_request_token(&headers, Some("token=only")),
+            Some("only".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_token_header_preferred_over_query() {
+        let mut headers = HeaderMap::new();
+        headers.insert(AUTHORIZATION, HeaderValue::from_static("Bearer from-header"));
+        assert_eq!(
+            extract_request_token(&headers, Some("token=from-query")),
+            Some("from-header".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_token_absent() {
+        let headers = HeaderMap::new();
+        assert_eq!(extract_request_token(&headers, None), None);
+        assert_eq!(extract_request_token(&headers, Some("foo=bar")), None);
+    }
+
+    #[test]
+    fn test_extract_token_ignores_non_bearer_auth() {
+        let mut headers = HeaderMap::new();
+        headers.insert(AUTHORIZATION, HeaderValue::from_static("Basic abc"));
+        assert_eq!(extract_request_token(&headers, None), None);
     }
 }

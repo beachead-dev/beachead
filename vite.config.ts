@@ -10,6 +10,15 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  define: {
+    // Dev-only API token. Must match `DEV_API_TOKEN` in src-tauri/src/server.rs.
+    // The backend only accepts this token in debug builds; release builds use a
+    // random per-launch token injected into index.html, so this value is inert
+    // in production.
+    "import.meta.env.VITE_API_TOKEN": JSON.stringify(
+      "dev-token-not-valid-in-release-builds",
+    ),
+  },
   // Prevent vite from obscuring Rust errors
   clearScreen: false,
   server: {
