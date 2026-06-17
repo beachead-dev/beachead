@@ -2,6 +2,19 @@
 
 All notable changes to Beachead will be documented here.
 
+## [0.1.3] - 2026-06-17
+
+### Security
+
+- **API token authentication:** All `/api/*` routes (except `/api/health`) now require a per-launch bearer token. The token is generated fresh each launch (256-bit random) and injected into `index.html` at serve time. Prevents other local processes and malicious websites from driving the orchestrator via localhost.
+- **CORS tightened to exact-origin allowlist:** Replaces the previous `starts_with` predicate that accepted look-alike origins like `http://localhost.attacker.com`. Production is unaffected (same-origin webview).
+- **Secret scanner: MCP bearer token detection:** Pre-push secret scanning now catches the memory MCP bearer token (`host.docker.internal:<port>/mcp?token=...`) before it can be pushed to a remote via Repo Sync.
+
+### Fixes
+
+- **WebKitGTK cache-busting:** `index.html` is served with `Cache-Control: no-store` to prevent the webview from caching a stale page across launches (the token changes every launch).
+- **Token meta injection order:** The auth token `<meta>` tag is injected first in `<head>` (before scripts) to guarantee it's in the DOM when module scripts evaluate.
+
 ## [0.1.2] - 2026-06-10
 
 ### Features
