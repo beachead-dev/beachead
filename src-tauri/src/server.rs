@@ -110,6 +110,23 @@ async fn health() -> &'static str {
     "ok"
 }
 
+/// Exact-origin allowlist for CORS.
+///
+/// Returns true only for the dev webview origin (Vite) and the production
+/// server origin. Uses exact string matching — never prefix matching — so
+/// look-alike hostnames such as `http://localhost.attacker.com` are rejected.
+fn is_allowed_origin(origin: &str) -> bool {
+    const ALLOWED: &[&str] = &[
+        // Vite dev server (npm run dev)
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        // Production: webview is served from the Axum server itself
+        "http://localhost:9876",
+        "http://127.0.0.1:9876",
+    ];
+    ALLOWED.contains(&origin)
+}
+
 /// Get the application data directory path.
 fn dirs_data_path() -> PathBuf {
     // On Linux, respect XDG_DATA_HOME before falling back to dirs::data_dir().
@@ -293,15 +310,17 @@ pub async fn start_server(
         kit_generator,
     };
 
+    // Exact-origin allowlist. In a released build the webview is served from
+    // http://127.0.0.1:9876 (see tauri.conf.json `frontendDist`), so production
+    // requests are same-origin and never exercise CORS. These entries cover the
+    // dev webview (Vite on :5173) and the production origin for completeness.
+    // A `starts_with` match is intentionally avoided — it would accept hostile
+    // origins like `http://localhost.attacker.com`.
     let cors = CorsLayer::new()
         .allow_origin(AllowOrigin::predicate(|origin, _| {
             origin
                 .to_str()
-                .map(|s| {
-                    s.starts_with("http://localhost")
-                        || s.starts_with("http://127.0.0.1")
-                        || s.starts_with("tauri://")
-                })
+                .map(is_allowed_origin)
                 .unwrap_or(false)
         }))
         .allow_methods(tower_http::cors::Any)
@@ -405,5 +424,35 @@ async fn discover_git_binary() -> Option<String> {
             }
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_allowed_origin;
+
+    #[test]
+    fn test_allows_dev_and_production_origins() {
+        assert!(is_allowed_origin("http://localhost:5173"));
+        assert!(is_allowed_origin("http://127.0.0.1:5173"));
+        assert!(is_allowed_origin("http://localhost:9876"));
+        assert!(is_allowed_origin("http://127.0.0.1:9876"));
+    }
+
+    #[test]
+    fn test_rejects_lookalike_hostnames() {
+        // The previous `starts_with` predicate accepted all of these.
+        assert!(!is_allowed_origin("http://localhost.attacker.com"));
+        assert!(!is_allowed_origin("http://127.0.0.1.attacker.com"));
+        assert!(!is_allowed_origin("http://localhost:5173.attacker.com"));
+        assert!(!is_allowed_origin("http://localhostX:9876"));
+    }
+
+    #[test]
+    fn test_rejects_other_origins() {
+        assert!(!is_allowed_origin("https://example.com"));
+        assert!(!is_allowed_origin("http://localhost:3000"));
+        assert!(!is_allowed_origin("tauri://localhost"));
+        assert!(!is_allowed_origin(""));
     }
 }
