@@ -91,10 +91,8 @@ impl SecretScanner {
                     // client compatibility. Catch it before it can be pushed to
                     // a remote. Matches the host.docker.internal MCP URL shape.
                     name: "Beachhead MCP bearer token",
-                    regex: Regex::new(
-                        r"host\.docker\.internal:\d+/mcp\?token=[A-Za-z0-9_\-]{20,}",
-                    )
-                    .unwrap(),
+                    regex: Regex::new(r"host\.docker\.internal:\d+/mcp\?token=[A-Za-z0-9_\-]{20,}")
+                        .unwrap(),
                     file_only: false,
                 },
             ],
@@ -334,9 +332,9 @@ mod tests {
     fn test_beachead_mcp_token_pattern() {
         let scanner = SecretScanner::new();
         let mcp_pattern = &scanner.patterns[6];
-        assert!(mcp_pattern.regex.is_match(
-            "http://host.docker.internal:9100/mcp?token=abcdefghijklmnopqrstuvwxyz0123"
-        ));
+        assert!(mcp_pattern
+            .regex
+            .is_match("http://host.docker.internal:9100/mcp?token=abcdefghijklmnopqrstuvwxyz0123"));
         assert!(mcp_pattern
             .regex
             .is_match("host.docker.internal:9200/mcp?token=AbC_def-GHI1234567890xyz"));

@@ -459,10 +459,7 @@ pub async fn start_server(
     // origins like `http://localhost.attacker.com`.
     let cors = CorsLayer::new()
         .allow_origin(AllowOrigin::predicate(|origin, _| {
-            origin
-                .to_str()
-                .map(is_allowed_origin)
-                .unwrap_or(false)
+            origin.to_str().map(is_allowed_origin).unwrap_or(false)
         }))
         .allow_methods(tower_http::cors::Any)
         .allow_headers(tower_http::cors::Any);
@@ -635,7 +632,10 @@ mod tests {
     #[test]
     fn test_extract_token_header_preferred_over_query() {
         let mut headers = HeaderMap::new();
-        headers.insert(AUTHORIZATION, HeaderValue::from_static("Bearer from-header"));
+        headers.insert(
+            AUTHORIZATION,
+            HeaderValue::from_static("Bearer from-header"),
+        );
         assert_eq!(
             extract_request_token(&headers, Some("token=from-query")),
             Some("from-header".to_string())
