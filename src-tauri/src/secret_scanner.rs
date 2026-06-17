@@ -85,6 +85,18 @@ impl SecretScanner {
                     regex: Regex::new(r"glpat-[A-Za-z0-9\-_]{20,}").unwrap(),
                     file_only: false,
                 },
+                SecretPattern {
+                    // Beachhead injects the memory MCP bearer token into the
+                    // workspace .mcp.json as a `?token=<token>` URL param for
+                    // client compatibility. Catch it before it can be pushed to
+                    // a remote. Matches the host.docker.internal MCP URL shape.
+                    name: "Beachhead MCP bearer token",
+                    regex: Regex::new(
+                        r"host\.docker\.internal:\d+/mcp\?token=[A-Za-z0-9_\-]{20,}",
+                    )
+                    .unwrap(),
+                    file_only: false,
+                },
             ],
         }
     }
@@ -319,15 +331,36 @@ mod tests {
     }
 
     #[test]
+    fn test_beachead_mcp_token_pattern() {
+        let scanner = SecretScanner::new();
+        let mcp_pattern = &scanner.patterns[6];
+        assert!(mcp_pattern.regex.is_match(
+            "http://host.docker.internal:9100/mcp?token=abcdefghijklmnopqrstuvwxyz0123"
+        ));
+        assert!(mcp_pattern
+            .regex
+            .is_match("host.docker.internal:9200/mcp?token=AbC_def-GHI1234567890xyz"));
+        // No token param → no match
+        assert!(!mcp_pattern
+            .regex
+            .is_match("http://host.docker.internal:9100/mcp"));
+        // Different host → no match (other MCP servers are user-managed)
+        assert!(!mcp_pattern
+            .regex
+            .is_match("http://localhost:9100/mcp?token=abcdefghijklmnopqrst"));
+    }
+
+    #[test]
     fn test_scanner_new_has_all_patterns() {
         let scanner = SecretScanner::new();
-        assert_eq!(scanner.patterns.len(), 6);
+        assert_eq!(scanner.patterns.len(), 7);
         assert_eq!(scanner.patterns[0].name, "env file");
         assert_eq!(scanner.patterns[1].name, "private key file");
         assert_eq!(scanner.patterns[2].name, "private key content");
         assert_eq!(scanner.patterns[3].name, "AWS access key");
         assert_eq!(scanner.patterns[4].name, "GitHub token");
         assert_eq!(scanner.patterns[5].name, "GitLab token");
+        assert_eq!(scanner.patterns[6].name, "Beachhead MCP bearer token");
     }
 
     #[test]
@@ -339,6 +372,7 @@ mod tests {
         assert!(!scanner.patterns[3].file_only); // AWS access key
         assert!(!scanner.patterns[4].file_only); // GitHub token
         assert!(!scanner.patterns[5].file_only); // GitLab token
+        assert!(!scanner.patterns[6].file_only); // Beachhead MCP bearer token
     }
 
     #[tokio::test]
