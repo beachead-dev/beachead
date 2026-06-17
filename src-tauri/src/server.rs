@@ -214,15 +214,26 @@ async fn serve_index_with_token(
     // attribute, but escape the quote defensively in case the source changes.
     let token_attr = state.api_token.replace('"', "&quot;");
     let meta = format!("<meta name=\"beachead-token\" content=\"{}\">", token_attr);
-    let injected = if let Some(pos) = html.find("</head>") {
+    // Inject before <meta charset (first element in <head>) to guarantee the
+    // token is in the DOM before any scripts execute. Fall back to </head> or
+    // file start if the expected structure isn't found.
+    let injected = if let Some(pos) = html.find("<meta charset") {
+        let (head, tail) = html.split_at(pos);
+        format!("{head}{meta}\n    {tail}")
+    } else if let Some(pos) = html.find("</head>") {
         let (head, tail) = html.split_at(pos);
         format!("{head}{meta}{tail}")
     } else {
-        // No </head> — prepend as a fallback so the token is still present.
         format!("{meta}{html}")
     };
 
-    axum::response::Html(injected).into_response()
+    // Prevent the webview from caching index.html — the token changes every
+    // launch, so a stale cached page would send the wrong token and get 401.
+    (
+        [(axum::http::header::CACHE_CONTROL, "no-store")],
+        axum::response::Html(injected),
+    )
+        .into_response()
 }
 
 /// Exact-origin allowlist for CORS.
