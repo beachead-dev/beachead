@@ -2,6 +2,7 @@ use axum::{routing::get, Router};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tower_http::cors::{AllowOrigin, CorsLayer};
+use tower_http::services::{ServeDir, ServeFile};
 
 use crate::agent_manager::AgentManager;
 use crate::credential_manager::CredentialManager;
@@ -138,7 +139,13 @@ fn dirs_home() -> PathBuf {
 }
 
 /// Start the Axum HTTP/WebSocket server bound to localhost only.
-pub async fn start_server(_app_handle: tauri::AppHandle) -> Result<(), OrchestratorError> {
+///
+/// If `ready_signal` is provided, sends `()` once the listener is bound
+/// so the caller knows it's safe to open the webview.
+pub async fn start_server(
+    _app_handle: tauri::AppHandle,
+    ready_signal: Option<std::sync::mpsc::Sender<()>>,
+) -> Result<(), OrchestratorError> {
     let data_path = dirs_data_path();
     std::fs::create_dir_all(&data_path).ok();
 
@@ -286,12 +293,15 @@ pub async fn start_server(_app_handle: tauri::AppHandle) -> Result<(), Orchestra
         kit_generator,
     };
 
-    // CORS configured for localhost-only access
     let cors = CorsLayer::new()
         .allow_origin(AllowOrigin::predicate(|origin, _| {
             origin
                 .to_str()
-                .map(|s| s.starts_with("http://localhost") || s.starts_with("http://127.0.0.1"))
+                .map(|s| {
+                    s.starts_with("http://localhost")
+                        || s.starts_with("http://127.0.0.1")
+                        || s.starts_with("tauri://")
+                })
                 .unwrap_or(false)
         }))
         .allow_methods(tower_http::cors::Any)
@@ -303,11 +313,42 @@ pub async fn start_server(_app_handle: tauri::AppHandle) -> Result<(), Orchestra
         .layer(cors)
         .with_state(state);
 
+    // Serve frontend static files from dist/ so the webview can load via HTTP.
+    // This avoids the tauri:// protocol which fails on some WebKitGTK versions.
+    // Search order: dev layout (CARGO_MANIFEST_DIR/../dist), then exe sibling.
+    let dist_path = {
+        let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../dist");
+        if dev.join("index.html").exists() {
+            Some(dev)
+        } else {
+            std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|d| d.join("dist")))
+                .filter(|p| p.join("index.html").exists())
+        }
+    };
+
+    let app = if let Some(dist) = dist_path {
+        let index_html = dist.join("index.html");
+        let serve_dir = ServeDir::new(&dist)
+            .append_index_html_on_directories(true)
+            .not_found_service(ServeFile::new(index_html));
+        app.fallback_service(serve_dir)
+    } else {
+        eprintln!("Warning: dist/ directory not found — frontend will not be served");
+        app
+    };
+
     let listener = tokio::net::TcpListener::bind("127.0.0.1:9876")
         .await
         .map_err(|e| OrchestratorError::Internal(format!("Failed to bind server: {}", e)))?;
 
     println!("Axum server listening on http://127.0.0.1:9876");
+
+    // Signal that the server is ready to accept connections
+    if let Some(tx) = ready_signal {
+        let _ = tx.send(());
+    }
 
     axum::serve(listener, app)
         .await

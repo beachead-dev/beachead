@@ -3,7 +3,7 @@
   "version": "0.1.2",
   "identifier": "com.beachead.app",
   "build": {
-    "frontendDist": "../dist",
+    "frontendDist": "http://127.0.0.1:9876",
     "devUrl": "http://localhost:5173",
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build"

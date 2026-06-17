@@ -22,7 +22,7 @@ tauri-plugin-shell = "2"
 # HTTP/WebSocket server
 axum = { version = "0.8", features = ["ws", "multipart"] }
 tokio = { version = "1", features = ["full"] }
-tower-http = { version = "0.6", features = ["cors"] }
+tower-http = { version = "0.6", features = ["cors", "fs"] }
 
 # Database
 rusqlite = { version = "0.32", features = ["bundled"] }

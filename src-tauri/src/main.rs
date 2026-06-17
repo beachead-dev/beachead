@@ -67,12 +67,16 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let handle = app.handle().clone();
-            // Start the Axum HTTP server alongside the Tauri app
+            // Start the Axum HTTP server and wait until it's listening
+            // before allowing the window to open (prevents API race condition).
+            let (tx, rx) = std::sync::mpsc::channel();
             tauri::async_runtime::spawn(async move {
-                if let Err(e) = server::start_server(handle).await {
+                if let Err(e) = server::start_server(handle, Some(tx)).await {
                     eprintln!("Failed to start Axum server: {}", e);
                 }
             });
+            // Block until the server signals it's ready (up to 10s)
+            let _ = rx.recv_timeout(std::time::Duration::from_secs(10));
             Ok(())
         })
         .build(tauri::generate_context!())
