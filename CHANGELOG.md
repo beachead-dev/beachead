@@ -2,6 +2,12 @@
 
 All notable changes to Beachead will be documented here.
 
+## [0.1.5] - 2026-06-18
+
+### Fixes
+
+- **Token injection on all HTML paths** — `ServeDir` was serving `index.html` directly for explicit `/index.html` requests, bypassing token injection. Added explicit route so the file is always served through the injection handler regardless of request path.
+
 ## [0.1.4] - 2026-06-17
 
 ### Fixes
