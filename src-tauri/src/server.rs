@@ -509,18 +509,18 @@ pub async fn start_server(
 
     // Serve frontend static files from dist/ so the webview can load via HTTP.
     // This avoids the tauri:// protocol which fails on some WebKitGTK versions.
-    // The SPA entry point (index.html) is served via a handler that injects the
-    // per-launch API token as a <meta> tag; static assets go through ServeDir.
-    // The SPA fallback (for client-side routes) also serves the injected index.
+    // The SPA entry point (index.html) is ALWAYS served via the injection handler
+    // (which adds the per-launch token as a <meta> tag). Static assets (JS, CSS,
+    // images) go through ServeDir directly. The fallback also routes to the
+    // injection handler for SPA client-side routes.
     if let Some(dist) = dist_path {
-        // The ServeDir fallback handler needs its own resolved state since it is
-        // a standalone service, not part of the AppState router.
         let index_fallback = get(serve_index_with_token).with_state(state.clone());
         let serve_dir = ServeDir::new(&dist)
             .append_index_html_on_directories(false)
             .fallback(index_fallback);
         app = app
             .route("/", get(serve_index_with_token))
+            .route("/index.html", get(serve_index_with_token))
             .fallback_service(serve_dir);
     } else {
         eprintln!("Warning: dist/ directory not found — frontend will not be served");
