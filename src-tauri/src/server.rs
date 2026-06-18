@@ -464,13 +464,9 @@ pub async fn start_server(
         }
     };
 
-    if dist_path.is_none() {
-        eprintln!("Warning: dist/ directory not found — frontend will not be served (token injection disabled)");
-    } else {
-        println!(
-            "Frontend dist/ resolved at: {:?}",
-            dist_path.as_ref().unwrap()
-        );
+    match &dist_path {
+        Some(p) => println!("Frontend dist/ resolved at: {:?}", p),
+        None => eprintln!("Warning: dist/ directory not found — frontend will not be served (token injection disabled)"),
     }
 
     // Per-launch API token. Release builds use a random 256-bit token generated
