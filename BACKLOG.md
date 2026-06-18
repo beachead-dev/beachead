@@ -177,6 +177,17 @@ Deferred improvements, bug fixes, and future features for implementation.
 
 ---
 
+### Release Workflow Creates Duplicate Draft Releases
+
+**Priority:** Low  
+**Affected area:** `.github/workflows/release.yml`
+
+**Problem:** The three platform build jobs (Linux, macOS, Windows) each call `tauri-action` with `releaseDraft: true` in parallel. When runners start simultaneously, multiple jobs race to create the draft release, resulting in two (or more) duplicate drafts for the same tag with assets split between them. Requires manual consolidation before publishing.
+
+**Solution:** Add a dedicated `create-release` job that runs first and creates the single draft release. The platform build jobs depend on it (`needs: [create-release]`) and only upload their assets to the existing release. This eliminates the race condition.
+
+---
+
 ## UX Improvements
 
 ### Move Templates Tab from Agents to Docker Page
