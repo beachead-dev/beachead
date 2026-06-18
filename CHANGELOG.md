@@ -2,6 +2,12 @@
 
 All notable changes to Beachead will be documented here.
 
+## [0.1.6] - 2026-06-18
+
+### Fixes
+
+- **Frontend resource path in installed packages** — Tauri encodes `../dist` as `_up_/dist` inside the resource directory. The dist resolver now checks both `$RESOURCE/dist/` and `$RESOURCE/_up_/dist/` to locate the frontend files in installed .deb/.app/.msi packages.
+
 ## [0.1.5] - 2026-06-18
 
 ### Fixes

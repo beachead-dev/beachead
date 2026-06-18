@@ -430,20 +430,31 @@ pub async fn start_server(
         if dev.join("index.html").exists() {
             Some(dev)
         } else {
-            // Try Tauri resource directory (where `bundle.resources` are placed)
+            // Try Tauri resource directory (where `bundle.resources` are placed).
+            // Tauri encodes `../dist` as `_up_/dist` inside the resource dir.
             use tauri::Manager;
-            let resource_dist = app_handle
-                .path()
-                .resource_dir()
-                .ok()
-                .map(|r| r.join("dist"));
-            if resource_dist
-                .as_ref()
-                .map(|p| p.join("index.html").exists())
-                .unwrap_or(false)
-            {
+            let resource_base = app_handle.path().resource_dir().ok();
+            let resource_dist = resource_base.as_ref().and_then(|r| {
+                // Try direct `dist/` first, then Tauri's `_up_/dist/` encoding
+                let direct = r.join("dist");
+                if direct.join("index.html").exists() {
+                    return Some(direct);
+                }
+                let up_encoded = r.join("_up_").join("dist");
+                if up_encoded.join("index.html").exists() {
+                    return Some(up_encoded);
+                }
+                None
+            });
+            if resource_dist.is_some() {
                 resource_dist
             } else {
+                if let Some(ref rb) = resource_base {
+                    eprintln!(
+                        "dist/ not found at resource_dir {:?} — trying exe sibling",
+                        rb
+                    );
+                }
                 // Fallback: exe sibling
                 std::env::current_exe()
                     .ok()
@@ -452,6 +463,15 @@ pub async fn start_server(
             }
         }
     };
+
+    if dist_path.is_none() {
+        eprintln!("Warning: dist/ directory not found — frontend will not be served (token injection disabled)");
+    } else {
+        println!(
+            "Frontend dist/ resolved at: {:?}",
+            dist_path.as_ref().unwrap()
+        );
+    }
 
     // Per-launch API token. Release builds use a random 256-bit token generated
     // fresh each launch. Debug builds use a fixed well-known token so the Vite
