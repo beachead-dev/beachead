@@ -286,7 +286,7 @@ fn dirs_home() -> PathBuf {
 /// If `ready_signal` is provided, sends `()` once the listener is bound
 /// so the caller knows it's safe to open the webview.
 pub async fn start_server(
-    _app_handle: tauri::AppHandle,
+    app_handle: tauri::AppHandle,
     ready_signal: Option<std::sync::mpsc::Sender<()>>,
 ) -> Result<(), OrchestratorError> {
     let data_path = dirs_data_path();
@@ -420,16 +420,36 @@ pub async fn start_server(
     }
 
     // Resolve frontend dist/ directory before building state (the token-injected
-    // index handler needs it). Search order: dev layout, then exe sibling.
+    // index handler needs it).
+    // Search order:
+    //   1. Dev layout: CARGO_MANIFEST_DIR/../dist (works during `cargo run`)
+    //   2. Tauri resource dir: bundled dist/ in the installed .deb/.app/.msi
+    //   3. Exe sibling: <binary_dir>/dist (manual deployment)
     let dist_path = {
         let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../dist");
         if dev.join("index.html").exists() {
             Some(dev)
         } else {
-            std::env::current_exe()
+            // Try Tauri resource directory (where `bundle.resources` are placed)
+            use tauri::Manager;
+            let resource_dist = app_handle
+                .path()
+                .resource_dir()
                 .ok()
-                .and_then(|p| p.parent().map(|d| d.join("dist")))
-                .filter(|p| p.join("index.html").exists())
+                .map(|r| r.join("dist"));
+            if resource_dist
+                .as_ref()
+                .map(|p| p.join("index.html").exists())
+                .unwrap_or(false)
+            {
+                resource_dist
+            } else {
+                // Fallback: exe sibling
+                std::env::current_exe()
+                    .ok()
+                    .and_then(|p| p.parent().map(|d| d.join("dist")))
+                    .filter(|p| p.join("index.html").exists())
+            }
         }
     };
 

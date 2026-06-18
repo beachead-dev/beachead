@@ -35,7 +35,8 @@
     ],
     "resources": [
       "scripts/post-install.sh",
-      "scripts/post-install.ps1"
+      "scripts/post-install.ps1",
+      "../dist"
     ],
     "linux": {
       "deb": {
