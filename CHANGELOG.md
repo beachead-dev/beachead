@@ -2,6 +2,12 @@
 
 All notable changes to Beachead will be documented here.
 
+## [0.1.4] - 2026-06-17
+
+### Fixes
+
+- **Frontend not loading on installed .deb/.app/.msi** — The frontend `dist/` files were not bundled in the installer package. Added `dist/` to Tauri's `bundle.resources` and updated the runtime path resolution to use Tauri's `resource_dir()` API, which correctly locates the files regardless of install location.
+
 ## [0.1.3] - 2026-06-17
 
 ### Security
