@@ -229,9 +229,7 @@ async fn start_sandbox(
     let sandbox_name = {
         let sandboxes = timeout(SBX_COMMAND_TIMEOUT, sbx.ls_json())
             .await
-            .map_err(|_| {
-                OrchestratorError::SbxTimeout("sbx ls timed out".to_string())
-            })??;
+            .map_err(|_| OrchestratorError::SbxTimeout("sbx ls timed out".to_string()))??;
         sandboxes
             .iter()
             .find(|s| s.id.as_deref() == Some(&id) || s.name.as_deref() == Some(&id))
