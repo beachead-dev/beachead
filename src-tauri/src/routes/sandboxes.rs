@@ -125,6 +125,9 @@ async fn list_sandboxes(
 /// Timeout duration for sbx CLI commands (30 seconds per requirements).
 const SBX_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Timeout for sandbox start/reattach (60 seconds — can be slow on first attach or wake).
+const SBX_START_TIMEOUT: Duration = Duration::from_secs(60);
+
 /// POST /api/sandboxes/{id}/stop — stop a running sandbox.
 ///
 /// Calls `sbx stop {id}` with a 30-second timeout.
@@ -285,7 +288,7 @@ async fn start_sandbox(
     // Otherwise, create a new sandbox with full agent/workspace/kit args.
     let result = if let Some(ref name) = sandbox_name {
         // Sandbox exists — just re-attach (no agent/workspace/kit args)
-        timeout(SBX_COMMAND_TIMEOUT, sbx.reattach(name)).await
+        timeout(SBX_START_TIMEOUT, sbx.reattach(name)).await
     } else {
         // Sandbox not found in sbx ls — create a new one
         let run_args = SbxRunArgs {
@@ -296,7 +299,7 @@ async fn start_sandbox(
             template: None,
             agent_args: persona.agent_cli_args,
         };
-        timeout(SBX_COMMAND_TIMEOUT, sbx.run(&run_args)).await
+        timeout(SBX_START_TIMEOUT, sbx.run(&run_args)).await
     };
 
     match result {
@@ -313,7 +316,7 @@ async fn start_sandbox(
             }
         }
         Err(_) => Err(OrchestratorError::SbxTimeout(format!(
-            "sbx run for sandbox '{}' timed out after 30 seconds",
+            "sbx run for sandbox '{}' timed out after 60 seconds",
             id
         ))),
     }
