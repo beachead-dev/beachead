@@ -217,26 +217,49 @@ async fn start_sandbox(
         .as_ref()
         .ok_or_else(|| OrchestratorError::SbxUnavailable("sbx CLI is not available".to_string()))?;
 
-    // Look up the session associated with this sandbox_id to find the persona
+    // The frontend may pass either the stable UUID (from sbx ls --json `id` field)
+    // or the sandbox name. The sessions table stores the sandbox name as `sandbox_id`.
+    // Resolve the sandbox name from sbx ls if needed.
+    let sandbox_name = {
+        let sandboxes = timeout(SBX_COMMAND_TIMEOUT, sbx.ls_json())
+            .await
+            .map_err(|_| {
+                OrchestratorError::SbxTimeout("sbx ls timed out".to_string())
+            })??;
+        sandboxes
+            .iter()
+            .find(|s| s.id.as_deref() == Some(&id) || s.name.as_deref() == Some(&id))
+            .and_then(|s| s.name.clone())
+    };
+
+    // Try looking up the session by the provided id first, then by resolved name
     let persona_id: PersonaId = state.db.with_conn(|conn| {
+        // Try direct match on sandbox_id (handles case where name was stored)
         let result = conn.query_row(
             "SELECT persona_id FROM sessions WHERE sandbox_id = ?1 ORDER BY created_at DESC LIMIT 1",
             [&id],
             |row| row.get::<_, String>(0),
         );
-        match result {
-            Ok(pid) => Ok(PersonaId(pid)),
-            Err(rusqlite::Error::QueryReturnedNoRows) => {
-                Err(OrchestratorError::NotFound(format!(
-                    "Sandbox '{}' not found in sessions",
-                    id
-                )))
-            }
-            Err(e) => Err(OrchestratorError::Database(format!(
-                "Failed to query sessions: {}",
-                e
-            ))),
+        if let Ok(pid) = result {
+            return Ok(PersonaId(pid));
         }
+
+        // Try matching by resolved sandbox name (handles UUID passed but name stored)
+        if let Some(ref name) = sandbox_name {
+            let result = conn.query_row(
+                "SELECT persona_id FROM sessions WHERE sandbox_id = ?1 ORDER BY created_at DESC LIMIT 1",
+                [name],
+                |row| row.get::<_, String>(0),
+            );
+            if let Ok(pid) = result {
+                return Ok(PersonaId(pid));
+            }
+        }
+
+        Err(OrchestratorError::NotFound(format!(
+            "Sandbox '{}' not found in sessions",
+            id
+        )))
     })?;
 
     // Get the persona to find agent_type_id and workspace_path
@@ -255,12 +278,13 @@ async fn start_sandbox(
         ))
     })?;
 
-    // Build run args and execute sbx run with timeout
+    // Build run args and execute sbx run with timeout.
+    // Use --name with the sandbox name to re-attach to the existing stopped sandbox.
     let run_args = SbxRunArgs {
         agent,
         kit_paths: vec![],
         workspace: persona.workspace_path,
-        name: None,
+        name: sandbox_name.clone(),
         template: None,
         agent_args: persona.agent_cli_args,
     };

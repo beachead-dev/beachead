@@ -291,8 +291,13 @@ exit 1
     #[tokio::test]
     async fn test_start_sandbox_success() {
         // Mock sbx that:
+        // - `ls --json` returns a sandbox matching the session's sandbox_id
         // - `run ...` outputs a new sandbox ID
         let script = r#"#!/bin/sh
+if [ "$1" = "ls" ] && [ "$2" = "--json" ]; then
+    echo '[{"name":"old-sandbox-id","id":"uuid-123","status":"stopped"}]'
+    exit 0
+fi
 if [ "$1" = "run" ]; then
     echo "new-sandbox-789"
     exit 0
@@ -351,6 +356,10 @@ exit 1
     #[tokio::test]
     async fn test_start_sandbox_not_found() {
         let script = r#"#!/bin/sh
+if [ "$1" = "ls" ] && [ "$2" = "--json" ]; then
+    echo '[]'
+    exit 0
+fi
 echo "should not be called" >&2
 exit 1
 "#;
