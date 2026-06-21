@@ -15,6 +15,7 @@ use crate::types::DependencyStatus;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/system/version", get(get_version))
+        .route("/api/system/app-version", get(get_app_version))
         .route("/api/system/diagnose", get(diagnose))
         .route("/api/system/auth-status", get(auth_status))
         .route("/api/system/login", post(login))
@@ -23,6 +24,19 @@ pub fn router() -> Router<AppState> {
         .route("/api/system/dependency-check", get(dependency_check))
         .route("/api/system/settings/{key}", get(get_setting))
         .route("/api/system/settings/{key}", put(set_setting))
+}
+
+/// App version response.
+#[derive(Serialize)]
+struct AppVersionResponse {
+    version: &'static str,
+}
+
+/// GET /api/system/app-version — get the Beachead application version (from Cargo.toml).
+async fn get_app_version() -> Json<AppVersionResponse> {
+    Json(AppVersionResponse {
+        version: env!("CARGO_PKG_VERSION"),
+    })
 }
 
 /// GET /api/system/version — get the sbx CLI version.

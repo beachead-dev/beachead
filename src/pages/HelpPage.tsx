@@ -7,6 +7,10 @@ interface HelpTopic {
   label: string;
 }
 
+interface AppVersion {
+  version: string;
+}
+
 const HELP_TOPICS: HelpTopic[] = [
   { id: "getting-started", label: "Getting Started" },
   { id: "personas", label: "Personas" },
@@ -25,6 +29,14 @@ export function HelpPage() {
   const [content, setContent] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [appVersion, setAppVersion] = useState<string | null>(null);
+
+  useEffect(() => {
+    api
+      .get<AppVersion>("/api/system/app-version")
+      .then((data) => setAppVersion(data.version))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -70,6 +82,9 @@ export function HelpPage() {
             </li>
           ))}
         </ul>
+        {appVersion && (
+          <p className="help-version">Beachead v{appVersion}</p>
+        )}
       </nav>
       <main className="help-content" aria-live="polite">
         {loading && <p className="help-loading">Loading...</p>}

@@ -24,6 +24,10 @@ interface DependencyStatus {
   docker_version: string | null;
 }
 
+interface AppVersionInfo {
+  version: string;
+}
+
 export function SystemSettingsPage() {
   const [version, setVersion] = useState<SbxVersion | null>(null);
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
@@ -35,18 +39,21 @@ export function SystemSettingsPage() {
   const [loggingIn, setLoggingIn] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+  const [appVersion, setAppVersion] = useState<AppVersionInfo | null>(null);
 
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
-      const [ver, auth, deps] = await Promise.all([
+      const [ver, auth, deps, appVer] = await Promise.all([
         api.get<SbxVersion>("/api/system/version").catch(() => null),
         api.get<AuthStatus>("/api/system/auth-status").catch(() => null),
         api.get<DependencyStatus>("/api/system/dependency-check").catch(() => null),
+        api.get<AppVersionInfo>("/api/system/app-version").catch(() => null),
       ]);
       setVersion(ver);
       setAuthStatus(auth);
       setDependencies(deps);
+      setAppVersion(appVer);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load system info");
@@ -156,6 +163,8 @@ export function SystemSettingsPage() {
       <section className="settings-section card" aria-label="Version Information">
         <h3>Version</h3>
         <dl className="detail-list">
+          <dt>Beachead</dt>
+          <dd>{appVersion?.version || "Unknown"}</dd>
           <dt>sbx CLI</dt>
           <dd>{version?.version || "Not available"}</dd>
         </dl>

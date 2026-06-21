@@ -1610,6 +1610,14 @@ body {
   min-height: 0;
 }
 
+.help-version {
+  margin: 1rem 0.75rem 0;
+  padding-top: 0.75rem;
+  border-top: 1px solid #e0e0e0;
+  font-size: 0.75rem;
+  color: #999;
+}
+
 .help-loading {
   color: #666;
   font-style: italic;
@@ -1859,6 +1867,11 @@ body {
 
 :root[data-theme="dark"] .help-sidebar-title {
   color: #aaa;
+}
+
+:root[data-theme="dark"] .help-version {
+  border-color: #2d3f6b;
+  color: #777;
 }
 
 :root[data-theme="dark"] .help-topic-btn {
