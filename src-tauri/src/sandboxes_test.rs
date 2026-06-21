@@ -172,7 +172,7 @@ if [ "$1" = "ls" ] && [ "$2" = "--json" ]; then
         echo '[{{"name":"my-sandbox","id":"sandbox-123","status":"running"}}]'
     fi
     exit 0
-elif [ "$1" = "stop" ] && [ "$2" = "sandbox-123" ]; then
+elif [ "$1" = "stop" ] && [ "$2" = "my-sandbox" ]; then
     touch "$STATE_FILE"
     exit 0
 fi
@@ -395,6 +395,10 @@ exit 1
     #[tokio::test]
     async fn test_remove_sandbox_success() {
         let script = r#"#!/bin/sh
+if [ "$1" = "ls" ] && [ "$2" = "--json" ]; then
+    echo '[{"name":"sandbox-to-remove","id":"uuid-456","status":"stopped"}]'
+    exit 0
+fi
 if [ "$1" = "rm" ] && [ "$2" = "--force" ] && [ "$3" = "sandbox-to-remove" ]; then
     exit 0
 fi
@@ -428,6 +432,10 @@ exit 1
     #[tokio::test]
     async fn test_remove_sandbox_not_found() {
         let script = r#"#!/bin/sh
+if [ "$1" = "ls" ] && [ "$2" = "--json" ]; then
+    echo '[]'
+    exit 0
+fi
 if [ "$1" = "rm" ]; then
     echo "No such sandbox: $3" >&2
     exit 1

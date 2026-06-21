@@ -157,6 +157,9 @@ async fn stop_sandbox(
         .find(|s| s.id.as_deref() == Some(&id) || s.name.as_deref() == Some(&id))
         .ok_or_else(|| OrchestratorError::NotFound(format!("Sandbox '{}' not found", id)))?;
 
+    // Resolve the sandbox name for CLI commands (sbx stop/rm accept names, not UUIDs)
+    let sandbox_name = sandbox.name.clone().unwrap_or_else(|| id.clone());
+
     // If already stopped, return current status without calling stop
     if sandbox.status.as_deref() == Some("stopped") {
         return Ok(Json(SandboxActionResponse {
@@ -166,7 +169,7 @@ async fn stop_sandbox(
     }
 
     // Execute sbx stop with timeout
-    let result = timeout(SBX_COMMAND_TIMEOUT, sbx.stop(&id)).await;
+    let result = timeout(SBX_COMMAND_TIMEOUT, sbx.stop(&sandbox_name)).await;
 
     match result {
         Ok(Ok(())) => {
@@ -278,18 +281,23 @@ async fn start_sandbox(
         ))
     })?;
 
-    // Build run args and execute sbx run with timeout.
-    // Use --name with the sandbox name to re-attach to the existing stopped sandbox.
-    let run_args = SbxRunArgs {
-        agent,
-        kit_paths: vec![],
-        workspace: persona.workspace_path,
-        name: sandbox_name.clone(),
-        template: None,
-        agent_args: persona.agent_cli_args,
+    // If the sandbox already exists (found in sbx ls), re-attach to it.
+    // Otherwise, create a new sandbox with full agent/workspace/kit args.
+    let result = if let Some(ref name) = sandbox_name {
+        // Sandbox exists — just re-attach (no agent/workspace/kit args)
+        timeout(SBX_COMMAND_TIMEOUT, sbx.reattach(name)).await
+    } else {
+        // Sandbox not found in sbx ls — create a new one
+        let run_args = SbxRunArgs {
+            agent,
+            kit_paths: vec![],
+            workspace: persona.workspace_path,
+            name: None,
+            template: None,
+            agent_args: persona.agent_cli_args,
+        };
+        timeout(SBX_COMMAND_TIMEOUT, sbx.run(&run_args)).await
     };
-
-    let result = timeout(SBX_COMMAND_TIMEOUT, sbx.run(&run_args)).await;
 
     match result {
         Ok(Ok(new_sandbox_id)) => Ok(Json(SandboxStartResponse { id: new_sandbox_id })),
@@ -325,7 +333,19 @@ async fn remove_sandbox(
         .as_ref()
         .ok_or_else(|| OrchestratorError::SbxUnavailable("sbx CLI is not available".to_string()))?;
 
-    let result = timeout(SBX_COMMAND_TIMEOUT, sbx.rm(&id)).await;
+    // Resolve sandbox name from sbx ls (CLI accepts names, not UUIDs)
+    let sandbox_name = {
+        let sandboxes = timeout(SBX_COMMAND_TIMEOUT, sbx.ls_json())
+            .await
+            .map_err(|_| OrchestratorError::SbxTimeout("sbx ls timed out".to_string()))??;
+        sandboxes
+            .iter()
+            .find(|s| s.id.as_deref() == Some(&id) || s.name.as_deref() == Some(&id))
+            .and_then(|s| s.name.clone())
+            .unwrap_or_else(|| id.clone())
+    };
+
+    let result = timeout(SBX_COMMAND_TIMEOUT, sbx.rm(&sandbox_name)).await;
 
     match result {
         Ok(Ok(())) => Ok(StatusCode::NO_CONTENT),

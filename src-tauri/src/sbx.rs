@@ -474,6 +474,22 @@ impl SbxCli {
         Ok(output.stdout.trim().to_string())
     }
 
+    /// Re-attach to an existing sandbox by name: `sbx run --name <name>`
+    ///
+    /// Unlike `run()`, this does not pass agent, workspace, or kit args.
+    /// Used when the sandbox already exists and just needs to be started/re-entered.
+    pub async fn reattach(&self, name: &str) -> Result<String, OrchestratorError> {
+        let cmd_args = vec!["--name".to_string(), name.to_string()];
+        let output = self.exec_command_owned("run", &cmd_args).await?;
+        if !output.success {
+            return Err(OrchestratorError::SbxError(format!(
+                "sbx run --name failed: {}",
+                output.stderr.trim()
+            )));
+        }
+        Ok(output.stdout.trim().to_string())
+    }
+
     /// Create a sandbox without starting it: `sbx create <agent> --kit <path> -v <workspace>`
     ///
     /// Uses an extended timeout (90s) since first-time creation may pull images.
