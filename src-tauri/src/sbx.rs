@@ -1465,7 +1465,7 @@ fn parse_template_ls_text(output: &str) -> Vec<TemplateInfo> {
 /// This function handles both cases:
 /// 1. If output is a single clean line, use it directly
 /// 2. Otherwise, look for "Created sandbox 'NAME'" pattern
-/// 3. Fall back to looking for "sbx run NAME" pattern
+/// 3. Fall back to looking for "sbx run --name NAME" or legacy "sbx run NAME" pattern
 pub fn extract_sandbox_name(output: &str) -> String {
     let trimmed = output.trim();
 
@@ -1484,11 +1484,18 @@ pub fn extract_sandbox_name(output: &str) -> String {
         }
     }
 
-    // Case 3: look for "sbx run NAME" pattern at end of output
+    // Case 3: look for "sbx run --name NAME" or legacy "sbx run NAME" pattern at end of output
     for line in output.lines().rev() {
         let line = line.trim();
-        if let Some(rest) = line.strip_prefix("sbx run ") {
+        if let Some(rest) = line.strip_prefix("sbx run --name ") {
             return rest.trim().to_string();
+        }
+        if let Some(rest) = line.strip_prefix("sbx run ") {
+            // Legacy format (deprecated in sbx 0.33.0) — skip if rest starts with a flag
+            let rest = rest.trim();
+            if !rest.starts_with('-') {
+                return rest.to_string();
+            }
         }
     }
 

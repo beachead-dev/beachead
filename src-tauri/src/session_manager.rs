@@ -340,13 +340,18 @@ impl SessionManager {
             OrchestratorError::Internal("Session has no sandbox_id to resume".to_string())
         })?;
 
-        // Spawn PTY with `sbx run <sandbox_name>` to reattach
+        // Spawn PTY with `sbx run --name <sandbox_name>` to reattach
+        // (sbx 0.33.0 deprecated positional re-attach; --name is the preferred form)
         let sbx_path = self.sbx.path().to_string_lossy().to_string();
         let pty_bridge = self.pty_bridge.clone();
         let pty_session_id = session_id.clone();
         let sandbox_id_clone = sandbox_id.clone();
         tokio::task::spawn_blocking(move || {
-            pty_bridge.spawn(pty_session_id, &sbx_path, &["run", &sandbox_id_clone])
+            pty_bridge.spawn(
+                pty_session_id,
+                &sbx_path,
+                &["run", "--name", &sandbox_id_clone],
+            )
         })
         .await
         .map_err(|e| OrchestratorError::Internal(format!("PTY spawn task failed: {}", e)))??;
