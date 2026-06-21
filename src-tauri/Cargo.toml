@@ -1,6 +1,6 @@
 [package]
 name = "beachead"
-version = "0.1.6"
+version = "0.16.1"
 edition = "2021"
 description = "Secure AI Orchestrator - manages AI agents in Docker Sandbox microVMs"
 license = "MIT"
