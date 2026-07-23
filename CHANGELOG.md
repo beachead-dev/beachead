@@ -9,6 +9,10 @@ All notable changes to Beachead will be documented here.
 - **sbx 0.35.0 compatibility:** Policy listing and rule removal now use `sbx policy ls --json` instead of parsing the text table. sbx 0.35.0 changed the default `sbx policy ls` output to a summarized per-policy overview (moving the detailed rule table behind `--wide`), which broke the old parser — producing an empty or incorrect Policies list and breaking network rule removal. The legacy text parser has been retired.
 - **Minimum sbx version for policy features:** Policy listing and removal now require sbx 0.35.0 or later. On older sbx versions these operations surface a clear version-requirement error instead of failing opaquely.
 
+### Maintenance
+
+- **Removed dead `sbx` wrapper code:** Deleted the unused `SbxCli` methods `kit_add()`, `kit_inspect()` (and the `KitInspectResult` struct), `exec_it()`, and `secret_set_scoped()`, plus unused fields on the internal policy-listing struct. These had no callers — `kit_add`/`kit_inspect` were leftovers from an abandoned live-kit-update approach (the app applies kit changes on session restart, not via `sbx kit add`, which as of sbx 0.35.0 recreates the container). No user-facing behavior changes; `kit_validate()` (used for custom agent kits) is retained.
+
 ## [0.1.6] - 2026-06-18
 
 ### Fixes

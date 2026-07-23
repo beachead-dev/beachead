@@ -125,17 +125,15 @@ struct SbxPolicyLs {
 /// Verified against real `sbx version: v0.35.0` output. Only `decision` is
 /// guaranteed present; every other field is optional (or defaulted) so that
 /// deserialization is resilient to rules that omit fields.
+///
+/// Only the fields Beachead actually consumes are declared; serde ignores any
+/// other keys in the JSON (e.g. `name`, `policy_id`, `scope`, `sandbox_id`).
+/// Per-sandbox scope for removal is derived from `applies_to`, so `sandbox_id`
+/// is not needed here.
 #[derive(Deserialize, Debug)]
 struct SbxPolicyLsRule {
     #[serde(default)]
     id: Option<String>,
-    #[serde(default)]
-    name: Option<String>,
-    #[serde(default)]
-    policy_id: Option<String>,
-    /// "global" | "sandbox:<name>"
-    #[serde(default)]
-    scope: Option<String>,
     /// "all" | "sandbox:<name>"
     #[serde(default)]
     applies_to: Option<String>,
@@ -153,9 +151,6 @@ struct SbxPolicyLsRule {
     origin: Option<String>,
     #[serde(default)]
     status: Option<String>,
-    /// Bare sandbox name; present only for scoped (per-sandbox) rules.
-    #[serde(default)]
-    sandbox_id: Option<String>,
 }
 
 /// Default policy mode.
@@ -201,13 +196,6 @@ pub struct TemplateInfo {
 pub struct KitValidationResult {
     pub valid: bool,
     pub errors: Vec<String>,
-}
-
-/// Kit inspect result from `sbx kit inspect`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KitInspectResult {
-    pub raw_output: String,
-    pub json: Option<serde_json::Value>,
 }
 
 /// Secret status from `sbx secret ls`.
@@ -625,27 +613,6 @@ impl SbxCli {
         )))
     }
 
-    /// Execute an interactive command in a sandbox: `sbx exec -it <sandbox_id>`
-    /// Returns the child process for PTY attachment.
-    pub async fn exec_it(
-        &self,
-        sandbox_id: &str,
-    ) -> Result<tokio::process::Child, OrchestratorError> {
-        let child = Command::new(&self.sbx_path)
-            .arg("exec")
-            .arg("-it")
-            .arg(sandbox_id)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| {
-                OrchestratorError::SbxError(format!("Failed to spawn sbx exec -it: {}", e))
-            })?;
-
-        Ok(child)
-    }
-
     /// Copy files to/from a sandbox: `sbx cp <src> <dst>`
     /// One side must use the format `SANDBOX:PATH`.
     pub async fn cp(&self, src: &str, dst: &str) -> Result<(), OrchestratorError> {
@@ -660,25 +627,6 @@ impl SbxCli {
     }
 
     // ─── Kit Management (Task 3.3) ───────────────────────────────────────
-
-    /// Add a kit to a running sandbox: `sbx kit add <sandbox_id> <kit_path>`
-    pub async fn kit_add(
-        &self,
-        sandbox_id: &str,
-        kit_path: &Path,
-    ) -> Result<(), OrchestratorError> {
-        let path_str = kit_path.to_string_lossy();
-        let output = self
-            .exec_multi_command(&["kit", "add"], &[sandbox_id, &path_str])
-            .await?;
-        if !output.success {
-            return Err(OrchestratorError::SbxError(format!(
-                "sbx kit add failed: {}",
-                output.stderr.trim()
-            )));
-        }
-        Ok(())
-    }
 
     /// Validate a kit: `sbx kit validate <kit_path>`
     pub async fn kit_validate(
@@ -710,29 +658,6 @@ impl SbxCli {
                 errors,
             })
         }
-    }
-
-    /// Inspect a kit: `sbx kit inspect <kit_path>`
-    pub async fn kit_inspect(
-        &self,
-        kit_path: &Path,
-    ) -> Result<KitInspectResult, OrchestratorError> {
-        let path_str = kit_path.to_string_lossy();
-        let output = self
-            .exec_multi_command(&["kit", "inspect"], &[&path_str])
-            .await?;
-        if !output.success {
-            return Err(OrchestratorError::SbxError(format!(
-                "sbx kit inspect failed: {}",
-                output.stderr.trim()
-            )));
-        }
-
-        let json = serde_json::from_str(&output.stdout).ok();
-        Ok(KitInspectResult {
-            raw_output: output.stdout.clone(),
-            json,
-        })
     }
 
     // ─── Port Management (Task 3.4) ──────────────────────────────────────
@@ -1215,26 +1140,6 @@ impl SbxCli {
         Ok(())
     }
 
-    /// Set a scoped secret for a specific sandbox: `sbx secret set <sandbox_id> -g <service> -t <value>`
-    pub async fn secret_set_scoped(
-        &self,
-        sandbox_id: &str,
-        service: &str,
-        value: &str,
-    ) -> Result<(), OrchestratorError> {
-        let output = self
-            .exec_multi_command(
-                &["secret", "set"],
-                &[sandbox_id, "-g", service, "-t", value],
-            )
-            .await?;
-        if !output.success {
-            return Err(OrchestratorError::SbxError(
-                "sbx secret set (scoped) failed".to_string(),
-            ));
-        }
-        Ok(())
-    }
 
     /// Initiate OAuth flow for a service: `sbx secret set -g <service> --oauth`
     pub async fn secret_set_oauth(&self, service: &str) -> Result<(), OrchestratorError> {
@@ -2031,8 +1936,7 @@ exit 1
 
     /// Generate an arbitrary `SbxPolicyLsRule` covering the input space: varying
     /// decision, resource_type, global/scoped applies_to, single/multi/empty
-    /// resources, and status. `sandbox_id`/`scope` are kept consistent with
-    /// `applies_to` to mirror real 0.35.0 output.
+    /// resources, and status.
     fn arb_policy_ls_rule() -> impl Strategy<Value = SbxPolicyLsRule> {
         (
             "[a-f0-9-]{6,20}".prop_map(|s| s),
@@ -2045,26 +1949,14 @@ exit 1
         )
             .prop_map(
                 |(id, applies_to, resource_type, decision, resources, json_origin, status)| {
-                    let sandbox_id = applies_to
-                        .strip_prefix("sandbox:")
-                        .map(|s| s.to_string());
-                    let scope = if applies_to == "all" {
-                        "global".to_string()
-                    } else {
-                        applies_to.clone()
-                    };
                     SbxPolicyLsRule {
                         id: Some(id),
-                        name: None,
-                        policy_id: None,
-                        scope: Some(scope),
                         applies_to: Some(applies_to),
                         resource_type: Some(resource_type),
                         decision,
                         resources,
                         origin: Some(json_origin),
                         status: Some(status),
-                        sandbox_id,
                     }
                 },
             )
