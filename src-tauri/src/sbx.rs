@@ -125,7 +125,7 @@ struct SbxPolicyLs {
 /// Verified against real `sbx version: v0.35.0` output. Only `decision` is
 /// guaranteed present; every other field is optional (or defaulted) so that
 /// deserialization is resilient to rules that omit fields.
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 struct SbxPolicyLsRule {
     #[serde(default)]
     id: Option<String>,
@@ -847,20 +847,7 @@ impl SbxCli {
         })?;
 
         // Flatten one PolicyRule per resource in each JSON rule.
-        let mut rules: Vec<PolicyRule> = Vec::new();
-        for rule in &parsed.rules {
-            for resource in &rule.resources {
-                rules.push(PolicyRule {
-                    id: rule.id.clone(),
-                    action: rule.decision.clone(),
-                    target: resource.clone(),
-                    origin: rule.applies_to.clone(),
-                    provenance: rule.origin.clone(),
-                    rule_type: rule.resource_type.clone(),
-                    status: rule.status.clone(),
-                });
-            }
-        }
+        let rules = Self::flatten_policy_rules(&parsed.rules);
 
         // Derive `default_policy` best-effort from the JSON rules.
         //
@@ -881,6 +868,38 @@ impl SbxCli {
             default_policy,
             rules,
         })
+    }
+
+    /// Flatten the JSON rules from `sbx policy ls --json` into the frontend-facing
+    /// [`PolicyRule`] list: one `PolicyRule` per resource in each JSON rule.
+    ///
+    /// This is the pure mapping at the heart of `policy_ls()`, extracted so it can
+    /// be exercised directly (including by property tests). The field mapping is:
+    /// - `id`         ← rule `id` (shared by every row from a multi-resource rule)
+    /// - `action`     ← `decision`
+    /// - `target`     ← each individual `resources` element
+    /// - `origin`     ← `applies_to` ("all" | "sandbox:<name>")
+    /// - `provenance` ← JSON `origin` ("local" | "scoped")
+    /// - `rule_type`  ← `resource_type`
+    /// - `status`     ← `status`
+    ///
+    /// A rule with an empty `resources` array produces zero rows.
+    fn flatten_policy_rules(parsed_rules: &[SbxPolicyLsRule]) -> Vec<PolicyRule> {
+        let mut rules: Vec<PolicyRule> = Vec::new();
+        for rule in parsed_rules {
+            for resource in &rule.resources {
+                rules.push(PolicyRule {
+                    id: rule.id.clone(),
+                    action: rule.decision.clone(),
+                    target: resource.clone(),
+                    origin: rule.applies_to.clone(),
+                    provenance: rule.origin.clone(),
+                    rule_type: rule.resource_type.clone(),
+                    status: rule.status.clone(),
+                });
+            }
+        }
+        rules
     }
 
     /// Detect whether a non-zero `sbx policy ls --json` failure is caused by the
@@ -1023,6 +1042,22 @@ impl SbxCli {
         Ok(())
     }
 
+    /// Derive the removal scope for a rule from its `origin` (which maps from the
+    /// JSON `applies_to`): per-sandbox rules (`origin == "sandbox:<name>"`) yield
+    /// `Some("<name>")` to be passed as `--sandbox <name>`; global rules
+    /// (`origin == "all"` or any non-`sandbox:` value, including `None`) yield
+    /// `None` (no sandbox flag — global is the default scope).
+    ///
+    /// Extracted as a pure function so scope derivation can be tested directly.
+    fn derive_removal_scope(origin: Option<&str>) -> Option<String> {
+        match origin {
+            Some(origin) if origin.starts_with("sandbox:") => {
+                Some(origin.strip_prefix("sandbox:").unwrap().to_string())
+            }
+            _ => None,
+        }
+    }
+
     /// Remove a policy rule by the `id` surfaced in `policy_ls()`.
     ///
     /// Resolves the rule from the JSON-parsed `policy_ls()` result (sbx 0.35.0
@@ -1069,12 +1104,7 @@ impl SbxCli {
 
         // Determine scope from the resolved rule's origin (applies_to):
         // strip the "sandbox:" prefix for the --sandbox value; global rules omit it.
-        let sandbox_name = match &rule.origin {
-            Some(origin) if origin.starts_with("sandbox:") => {
-                Some(origin.strip_prefix("sandbox:").unwrap().to_string())
-            }
-            _ => None,
-        };
+        let sandbox_name = Self::derive_removal_scope(rule.origin.as_deref());
 
         // Build args entirely via Command::arg() (through exec_multi_command) —
         // no shell interpolation (Requirement 2.5).
@@ -1647,5 +1677,638 @@ mod tests {
         let secrets = parse_secret_ls_text(input);
         assert!(!secrets.iter().any(|s| s.service == "SCOPE"));
         assert!(!secrets.iter().any(|s| s.service == "(global)"));
+    }
+
+    // ─── Fix-checking: policy_ls / policy_remove_rule (Task 5.1) ─────────────
+    //
+    // These exercise the fixed `SbxCli::policy_ls()` and
+    // `SbxCli::policy_remove_rule()` directly against a shell-script mock `sbx`
+    // binary (the `create_test_manager` pattern from policy_manager.rs, applied
+    // at the SbxCli level here per the design's "Fix Checking" / "Unit Tests").
+    //
+    // The mock scripts are written to a temp dir and made executable (0o755).
+
+    /// Build an `SbxCli` whose `sbx` binary is a shell-script mock with the given
+    /// contents. Returns the CLI plus the owning `TempDir` (kept alive by the
+    /// caller for the duration of the test).
+    #[cfg(unix)]
+    fn mock_sbx(script_content: &str) -> (SbxCli, tempfile::TempDir) {
+        use std::fs;
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let script_path = dir.path().join("sbx");
+        let mut file = fs::File::create(&script_path).unwrap();
+        file.write_all(script_content.as_bytes()).unwrap();
+        file.sync_all().unwrap();
+        drop(file);
+        // Mock scripts MUST be executable for the CLI to invoke them.
+        fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755)).unwrap();
+        // Brief yield so the kernel releases the write lock before exec.
+        std::thread::sleep(std::time::Duration::from_millis(1));
+
+        (SbxCli::with_path(script_path), dir)
+    }
+
+    /// Representative real 0.35.0 payload: one global `applies_to:"all"` rule and
+    /// one per-sandbox `applies_to:"sandbox:ktest"` rule (design.md, Requirement 3.3).
+    #[cfg(unix)]
+    const SBX_035_LS_JSON: &str = r#"#!/bin/sh
+if [ "$1" = "policy" ] && [ "$2" = "ls" ] && [ "$3" = "--json" ]; then
+    cat <<'JSON'
+{
+  "rules": [
+    {
+      "id": "b656a698-8713-442d-920c-bf95fbe979d4",
+      "name": "b656a698-8713-442d-920c-bf95fbe979d4",
+      "policy_id": "d8523707-740f-4d60-8385-a38e572d5639",
+      "scope": "sandbox:ktest",
+      "applies_to": "sandbox:ktest",
+      "resource_type": "network",
+      "decision": "allow",
+      "resources": ["localhost:9100"],
+      "origin": "scoped",
+      "status": "active",
+      "editable": true,
+      "sandbox_id": "ktest"
+    },
+    {
+      "id": "1e17bb98-582a-409a-aa6c-11b144c00938",
+      "name": "1e17bb98-582a-409a-aa6c-11b144c00938",
+      "policy_id": "local-policy",
+      "scope": "global",
+      "applies_to": "all",
+      "resource_type": "network",
+      "decision": "allow",
+      "resources": ["**.kiro.dev:443"],
+      "origin": "local",
+      "status": "active",
+      "editable": true
+    }
+  ]
+}
+JSON
+    exit 0
+fi
+exit 1
+"#;
+
+    /// Requirement 3.3 / 1.1 / 1.2: the verified 0.35.0 JSON (one global + one
+    /// per-sandbox rule) maps into `PolicyState` with correct field mapping —
+    /// decision→action, resource→target, applies_to→origin,
+    /// resource_type→rule_type, json origin→provenance, status→status.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_policy_ls_maps_global_and_sandbox_rules() {
+        let (cli, _dir) = mock_sbx(SBX_035_LS_JSON);
+        let state = cli.policy_ls().await.unwrap();
+
+        assert_eq!(state.rules.len(), 2, "expected exactly two flattened rules");
+
+        // Global rule.
+        let global = state
+            .rules
+            .iter()
+            .find(|r| r.target == "**.kiro.dev:443")
+            .expect("global rule **.kiro.dev:443 missing");
+        assert_eq!(global.id.as_deref(), Some("1e17bb98-582a-409a-aa6c-11b144c00938"));
+        assert_eq!(global.action, "allow"); // decision → action
+        assert_eq!(global.origin.as_deref(), Some("all")); // applies_to → origin
+        assert_eq!(global.provenance.as_deref(), Some("local")); // json origin → provenance
+        assert_eq!(global.rule_type.as_deref(), Some("network")); // resource_type → rule_type
+        assert_eq!(global.status.as_deref(), Some("active"));
+
+        // Per-sandbox rule.
+        let sandbox = state
+            .rules
+            .iter()
+            .find(|r| r.target == "localhost:9100")
+            .expect("per-sandbox rule localhost:9100 missing");
+        assert_eq!(sandbox.id.as_deref(), Some("b656a698-8713-442d-920c-bf95fbe979d4"));
+        assert_eq!(sandbox.action, "allow");
+        assert_eq!(sandbox.origin.as_deref(), Some("sandbox:ktest")); // distinguishes per-sandbox
+        assert_eq!(sandbox.provenance.as_deref(), Some("scoped"));
+        assert_eq!(sandbox.rule_type.as_deref(), Some("network"));
+    }
+
+    /// Requirement 1.4: an empty rule set yields an empty `PolicyState`, no error.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_policy_ls_empty_rules_no_error() {
+        let script = r#"#!/bin/sh
+if [ "$1" = "policy" ] && [ "$2" = "ls" ] && [ "$3" = "--json" ]; then
+    echo '{"rules":[]}'
+    exit 0
+fi
+exit 1
+"#;
+        let (cli, _dir) = mock_sbx(script);
+        let state = cli.policy_ls().await.unwrap();
+        assert!(state.rules.is_empty(), "expected no rules, got {:?}", state.rules);
+    }
+
+    /// Requirement 1.5: malformed / non-JSON stdout returns an `SbxError`
+    /// describing the parse failure — NOT a silently-empty rule set.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_policy_ls_malformed_json_returns_parse_error() {
+        let script = r#"#!/bin/sh
+if [ "$1" = "policy" ] && [ "$2" = "ls" ] && [ "$3" = "--json" ]; then
+    echo 'this is not json at all'
+    exit 0
+fi
+exit 1
+"#;
+        let (cli, _dir) = mock_sbx(script);
+        let result = cli.policy_ls().await;
+        match result {
+            Err(OrchestratorError::SbxError(msg)) => {
+                assert!(
+                    msg.contains("failed to parse sbx policy ls --json output"),
+                    "error should describe the parse failure, got: {}",
+                    msg
+                );
+            }
+            other => panic!("expected SbxError describing parse failure, got: {:?}", other),
+        }
+    }
+
+    /// A single JSON rule carrying multiple `resources` flattens into N
+    /// `PolicyRule` rows that all share the rule id (design: "one row per resource").
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_policy_ls_multi_resource_rule_flattens_sharing_id() {
+        let script = r#"#!/bin/sh
+if [ "$1" = "policy" ] && [ "$2" = "ls" ] && [ "$3" = "--json" ]; then
+    cat <<'JSON'
+{"rules":[{"id":"multi-1","applies_to":"all","resource_type":"network","decision":"allow","resources":["a.com:443","b.com:443","c.com:443"],"origin":"local","status":"active"}]}
+JSON
+    exit 0
+fi
+exit 1
+"#;
+        let (cli, _dir) = mock_sbx(script);
+        let state = cli.policy_ls().await.unwrap();
+
+        assert_eq!(state.rules.len(), 3, "3 resources → 3 rows");
+        assert!(state.rules.iter().all(|r| r.id.as_deref() == Some("multi-1")));
+        let targets: Vec<&str> = state.rules.iter().map(|r| r.target.as_str()).collect();
+        assert_eq!(targets, vec!["a.com:443", "b.com:443", "c.com:443"]);
+    }
+
+    /// Requirement 2.3: removing a global rule issues
+    /// `policy rm network --id <id>` with NO `--sandbox` scope. The mock only
+    /// exits 0 for that exact argument shape, so a wrongly-scoped command fails.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_policy_remove_global_rule_no_sandbox_scope() {
+        let script = r#"#!/bin/sh
+if [ "$1" = "policy" ] && [ "$2" = "ls" ] && [ "$3" = "--json" ]; then
+    cat <<'JSON'
+{"rules":[{"id":"1e17bb98-582a-409a-aa6c-11b144c00938","applies_to":"all","resource_type":"network","decision":"allow","resources":["**.kiro.dev:443"],"origin":"local","status":"active"}]}
+JSON
+    exit 0
+fi
+if [ "$1" = "policy" ] && [ "$2" = "rm" ] && [ "$3" = "network" ] && [ "$4" = "--id" ] && [ "$5" = "1e17bb98-582a-409a-aa6c-11b144c00938" ] && [ -z "$6" ]; then
+    exit 0
+fi
+exit 1
+"#;
+        let (cli, _dir) = mock_sbx(script);
+        let result = cli
+            .policy_remove_rule("1e17bb98-582a-409a-aa6c-11b144c00938")
+            .await;
+        assert!(
+            result.is_ok(),
+            "global removal should issue `policy rm network --id <id>` with no scope, got: {:?}",
+            result
+        );
+    }
+
+    /// Requirement 2.2: removing a per-sandbox rule issues
+    /// `policy rm network --sandbox <name> --id <id>`. The mock only exits 0 for
+    /// that exact scoped shape.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_policy_remove_sandbox_rule_adds_sandbox_scope() {
+        let script = r#"#!/bin/sh
+if [ "$1" = "policy" ] && [ "$2" = "ls" ] && [ "$3" = "--json" ]; then
+    cat <<'JSON'
+{"rules":[{"id":"b656a698-8713-442d-920c-bf95fbe979d4","applies_to":"sandbox:ktest","resource_type":"network","decision":"allow","resources":["localhost:9100"],"origin":"scoped","status":"active","sandbox_id":"ktest"}]}
+JSON
+    exit 0
+fi
+if [ "$1" = "policy" ] && [ "$2" = "rm" ] && [ "$3" = "network" ] && [ "$4" = "--sandbox" ] && [ "$5" = "ktest" ] && [ "$6" = "--id" ] && [ "$7" = "b656a698-8713-442d-920c-bf95fbe979d4" ]; then
+    exit 0
+fi
+exit 1
+"#;
+        let (cli, _dir) = mock_sbx(script);
+        let result = cli
+            .policy_remove_rule("b656a698-8713-442d-920c-bf95fbe979d4")
+            .await;
+        assert!(
+            result.is_ok(),
+            "per-sandbox removal should add `--sandbox ktest`, got: {:?}",
+            result
+        );
+    }
+
+    /// Requirement 2.4: a rule id absent from the JSON listing yields `NotFound`.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_policy_remove_missing_rule_returns_notfound() {
+        let script = r#"#!/bin/sh
+if [ "$1" = "policy" ] && [ "$2" = "ls" ] && [ "$3" = "--json" ]; then
+    echo '{"rules":[]}'
+    exit 0
+fi
+exit 1
+"#;
+        let (cli, _dir) = mock_sbx(script);
+        let result = cli.policy_remove_rule("does-not-exist").await;
+        match result {
+            Err(OrchestratorError::NotFound(msg)) => {
+                assert!(
+                    msg.contains("does-not-exist"),
+                    "NotFound should identify the rule, got: {}",
+                    msg
+                );
+            }
+            other => panic!("expected NotFound, got: {:?}", other),
+        }
+    }
+
+    /// Requirement 4.2: when the installed sbx predates `--json`, the daemon
+    /// fails with an unknown-flag error; `policy_ls()` surfaces the clear
+    /// minimum-version message rather than an opaque failure.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_policy_ls_version_incompat_unknown_flag() {
+        let script = r#"#!/bin/sh
+if [ "$1" = "policy" ] && [ "$2" = "ls" ] && [ "$3" = "--json" ]; then
+    echo "Error: unknown flag: --json" >&2
+    echo "Usage:" >&2
+    echo "  sbx policy ls [flags]" >&2
+    exit 1
+fi
+exit 1
+"#;
+        let (cli, _dir) = mock_sbx(script);
+        let result = cli.policy_ls().await;
+        match result {
+            Err(OrchestratorError::SbxError(msg)) => {
+                assert!(
+                    msg.contains("requires sbx 0.35.0 or later"),
+                    "expected clear minimum-version error, got: {}",
+                    msg
+                );
+            }
+            other => panic!("expected minimum-version SbxError, got: {:?}", other),
+        }
+    }
+
+    // ─── Preservation property tests (Task 5.2 / Property 2) ─────────────────
+    //
+    // Property 2 (Preservation): for arbitrary JSON rule sets emitted by
+    // `sbx policy ls --json`, the flatten mapping preserves the per-rule
+    // invariants (one row per resource; field mapping; multi-resource rows share
+    // an id), the serialized `PolicyState`/`PolicyRule` field names remain the
+    // frontend contract (`id`/`action`/`target`/`origin`/`provenance`/
+    // `rule_type`/`status`, plus `default_policy`/`rules`), and removal-scope
+    // derivation yields `--sandbox <name>` for per-sandbox rules and no scope for
+    // global rules.
+    //
+    // **Validates: Requirements 3.1, 3.2**
+    use proptest::prelude::*;
+
+    /// `decision`: "allow" | "deny".
+    fn arb_decision() -> impl Strategy<Value = String> {
+        prop_oneof![Just("allow".to_string()), Just("deny".to_string())]
+    }
+
+    /// `resource_type`: a small set of plausible types.
+    fn arb_resource_type() -> impl Strategy<Value = String> {
+        prop_oneof![
+            Just("network".to_string()),
+            Just("filesystem".to_string()),
+            Just("process".to_string()),
+        ]
+    }
+
+    /// `status`: "active" | "inactive".
+    fn arb_status() -> impl Strategy<Value = String> {
+        prop_oneof![Just("active".to_string()), Just("inactive".to_string())]
+    }
+
+    /// JSON `origin` (scope indicator, mapped to `provenance`): "local" | "scoped".
+    fn arb_json_origin() -> impl Strategy<Value = String> {
+        prop_oneof![Just("local".to_string()), Just("scoped".to_string())]
+    }
+
+    /// A bare sandbox name.
+    fn arb_sandbox_name() -> impl Strategy<Value = String> {
+        "[a-z][a-z0-9-]{0,14}".prop_map(|s| s)
+    }
+
+    /// `applies_to`: global ("all") or per-sandbox ("sandbox:<name>").
+    fn arb_applies_to() -> impl Strategy<Value = String> {
+        prop_oneof![
+            Just("all".to_string()),
+            arb_sandbox_name().prop_map(|n| format!("sandbox:{}", n)),
+        ]
+    }
+
+    /// A single resource target string.
+    fn arb_resource() -> impl Strategy<Value = String> {
+        prop_oneof![
+            "[a-z]{2,8}\\.(com|dev|io):[0-9]{2,4}".prop_map(|s| s),
+            Just("*".to_string()),
+            "localhost:[0-9]{2,4}".prop_map(|s| s),
+        ]
+    }
+
+    /// Generate an arbitrary `SbxPolicyLsRule` covering the input space: varying
+    /// decision, resource_type, global/scoped applies_to, single/multi/empty
+    /// resources, and status. `sandbox_id`/`scope` are kept consistent with
+    /// `applies_to` to mirror real 0.35.0 output.
+    fn arb_policy_ls_rule() -> impl Strategy<Value = SbxPolicyLsRule> {
+        (
+            "[a-f0-9-]{6,20}".prop_map(|s| s),
+            arb_applies_to(),
+            arb_resource_type(),
+            arb_decision(),
+            prop::collection::vec(arb_resource(), 0..5),
+            arb_json_origin(),
+            arb_status(),
+        )
+            .prop_map(
+                |(id, applies_to, resource_type, decision, resources, json_origin, status)| {
+                    let sandbox_id = applies_to
+                        .strip_prefix("sandbox:")
+                        .map(|s| s.to_string());
+                    let scope = if applies_to == "all" {
+                        "global".to_string()
+                    } else {
+                        applies_to.clone()
+                    };
+                    SbxPolicyLsRule {
+                        id: Some(id),
+                        name: None,
+                        policy_id: None,
+                        scope: Some(scope),
+                        applies_to: Some(applies_to),
+                        resource_type: Some(resource_type),
+                        decision,
+                        resources,
+                        origin: Some(json_origin),
+                        status: Some(status),
+                        sandbox_id,
+                    }
+                },
+            )
+    }
+
+    proptest! {
+        /// Flatten invariants: the number of produced rows equals the total number
+        /// of resources across all rules (empty-resource rules produce zero rows),
+        /// and each row carries its source rule's fields verbatim (action←decision,
+        /// target←each resource, origin←applies_to, provenance←json origin,
+        /// rule_type←resource_type, status←status, id←rule id). Because every row
+        /// from a given rule copies that rule's id, all rows from a multi-resource
+        /// rule share the same id.
+        ///
+        /// **Validates: Requirements 3.1, 3.2**
+        #[test]
+        fn prop_flatten_preserves_invariants(
+            rules in prop::collection::vec(arb_policy_ls_rule(), 0..6)
+        ) {
+            let flat = SbxCli::flatten_policy_rules(&rules);
+
+            // Row count == sum of resources across all rules.
+            let expected_rows: usize = rules.iter().map(|r| r.resources.len()).sum();
+            prop_assert_eq!(flat.len(), expected_rows);
+
+            // Rows are produced in rule/resource order; verify each maps verbatim.
+            let mut idx = 0usize;
+            for rule in &rules {
+                for resource in &rule.resources {
+                    let row = &flat[idx];
+                    prop_assert_eq!(&row.id, &rule.id);
+                    prop_assert_eq!(&row.action, &rule.decision);
+                    prop_assert_eq!(&row.target, resource);
+                    prop_assert_eq!(&row.origin, &rule.applies_to);
+                    prop_assert_eq!(&row.provenance, &rule.origin);
+                    prop_assert_eq!(&row.rule_type, &rule.resource_type);
+                    prop_assert_eq!(&row.status, &rule.status);
+                    idx += 1;
+                }
+            }
+        }
+    }
+
+    proptest! {
+        /// Serialization contract: the serialized `PolicyState` has exactly the
+        /// keys `default_policy`/`rules`, and every serialized `PolicyRule` has
+        /// exactly the frontend-contract keys `id`/`action`/`target`/`origin`/
+        /// `provenance`/`rule_type`/`status`. This protects `PoliciesPage.tsx`
+        /// from silent field renames.
+        ///
+        /// **Validates: Requirements 3.1, 3.2**
+        #[test]
+        fn prop_serialization_field_names_stable(
+            rules in prop::collection::vec(arb_policy_ls_rule(), 0..6)
+        ) {
+            let flat = SbxCli::flatten_policy_rules(&rules);
+            let state = PolicyState {
+                default_policy: "balanced".to_string(),
+                rules: flat,
+            };
+
+            let json = serde_json::to_value(&state).unwrap();
+            let obj = json.as_object().expect("PolicyState must serialize to an object");
+
+            let mut state_keys: Vec<&str> = obj.keys().map(|s| s.as_str()).collect();
+            state_keys.sort();
+            prop_assert_eq!(state_keys, vec!["default_policy", "rules"]);
+
+            for row in obj["rules"].as_array().expect("rules must be an array") {
+                let row_obj = row.as_object().expect("each rule must be an object");
+                let mut rule_keys: Vec<&str> = row_obj.keys().map(|s| s.as_str()).collect();
+                rule_keys.sort();
+                prop_assert_eq!(
+                    rule_keys,
+                    vec!["action", "id", "origin", "provenance", "rule_type", "status", "target"]
+                );
+            }
+        }
+    }
+
+    proptest! {
+        /// Scoping property: a per-sandbox rule (`applies_to == "sandbox:<name>"`)
+        /// always derives a removal scope of `Some("<name>")` (→ `--sandbox <name>`),
+        /// while a global rule (`applies_to == "all"`, or any non-`sandbox:` origin)
+        /// never derives a scope (→ no sandbox flag).
+        ///
+        /// **Validates: Requirements 3.1, 3.2**
+        #[test]
+        fn prop_removal_scope_matches_applies_to(rule in arb_policy_ls_rule()) {
+            let origin = rule.applies_to.as_deref();
+            let scope = SbxCli::derive_removal_scope(origin);
+            match origin {
+                Some(o) if o.starts_with("sandbox:") => {
+                    let expected = o.strip_prefix("sandbox:").unwrap().to_string();
+                    prop_assert_eq!(scope, Some(expected));
+                }
+                _ => {
+                    prop_assert_eq!(scope, None);
+                }
+            }
+        }
+    }
+
+    // ─── Preservation: untouched policy commands (Task 5.3 / Property 2) ─────
+    //
+    // Requirement 3.1 / Design "Preservation Requirements": the policy commands
+    // that this bugfix does NOT touch must keep issuing byte-identical argv.
+    // Each mock below `exit 0` ONLY for the exact expected argument shape and
+    // `exit 1` for anything else, so any drift in command construction (extra
+    // flag, reordered positional, wrong subcommand) makes the assertion fail.
+
+    /// `policy_allow_network(target)` → `policy allow network <target>`
+    /// (global scope, no `--sandbox` flag).
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_preserve_policy_allow_network_command() {
+        let script = r#"#!/bin/sh
+if [ "$1" = "policy" ] && [ "$2" = "allow" ] && [ "$3" = "network" ] && [ "$4" = "example.com:443" ] && [ -z "$5" ]; then
+    exit 0
+fi
+exit 1
+"#;
+        let (cli, _dir) = mock_sbx(script);
+        let result = cli.policy_allow_network("example.com:443").await;
+        assert!(
+            result.is_ok(),
+            "expected `policy allow network example.com:443` (no scope), got: {:?}",
+            result
+        );
+    }
+
+    /// `policy_allow_network_for_sandbox(name, target)` →
+    /// `policy allow network --sandbox <name> <target>` (flag before positional).
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_preserve_policy_allow_network_for_sandbox_command() {
+        let script = r#"#!/bin/sh
+if [ "$1" = "policy" ] && [ "$2" = "allow" ] && [ "$3" = "network" ] && [ "$4" = "--sandbox" ] && [ "$5" = "ktest" ] && [ "$6" = "localhost:9100" ] && [ -z "$7" ]; then
+    exit 0
+fi
+exit 1
+"#;
+        let (cli, _dir) = mock_sbx(script);
+        let result = cli
+            .policy_allow_network_for_sandbox("ktest", "localhost:9100")
+            .await;
+        assert!(
+            result.is_ok(),
+            "expected `policy allow network --sandbox ktest localhost:9100`, got: {:?}",
+            result
+        );
+    }
+
+    /// `policy_deny_network(target)` → `policy deny network <target>`
+    /// (global scope, no `--sandbox` flag).
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_preserve_policy_deny_network_command() {
+        let script = r#"#!/bin/sh
+if [ "$1" = "policy" ] && [ "$2" = "deny" ] && [ "$3" = "network" ] && [ "$4" = "blocked.com:80" ] && [ -z "$5" ]; then
+    exit 0
+fi
+exit 1
+"#;
+        let (cli, _dir) = mock_sbx(script);
+        let result = cli.policy_deny_network("blocked.com:80").await;
+        assert!(
+            result.is_ok(),
+            "expected `policy deny network blocked.com:80` (no scope), got: {:?}",
+            result
+        );
+    }
+
+    /// `policy_set_default(mode)` → `policy set-default <mode>` where the mode
+    /// string comes from `PolicyDefault`'s `Display` ("balanced" / "allow-all" /
+    /// "deny-all"). All three variants are checked to guard against drift in the
+    /// Display mapping used to build the command.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_preserve_policy_set_default_command() {
+        for (mode, expected) in [
+            (PolicyDefault::Balanced, "balanced"),
+            (PolicyDefault::Allow, "allow-all"),
+            (PolicyDefault::Deny, "deny-all"),
+        ] {
+            let script = format!(
+                r#"#!/bin/sh
+if [ "$1" = "policy" ] && [ "$2" = "set-default" ] && [ "$3" = "{expected}" ] && [ -z "$4" ]; then
+    exit 0
+fi
+exit 1
+"#
+            );
+            let (cli, _dir) = mock_sbx(&script);
+            let result = cli.policy_set_default(mode.clone()).await;
+            assert!(
+                result.is_ok(),
+                "expected `policy set-default {}` for {:?}, got: {:?}",
+                expected,
+                mode,
+                result
+            );
+        }
+    }
+
+    /// `policy_log(Some(sandbox), Some(limit))` →
+    /// `policy log <SANDBOX> --limit <n>` — the sandbox is a POSITIONAL argument
+    /// that must precede the `--limit` flag. The mock only exits 0 for that exact
+    /// ordering, so a reordered/`--limit`-first construction would fail.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_preserve_policy_log_command_positional_before_limit() {
+        let script = r#"#!/bin/sh
+if [ "$1" = "policy" ] && [ "$2" = "log" ] && [ "$3" = "ktest" ] && [ "$4" = "--limit" ] && [ "$5" = "50" ] && [ -z "$6" ]; then
+    echo '[]'
+    exit 0
+fi
+exit 1
+"#;
+        let (cli, _dir) = mock_sbx(script);
+        let result = cli.policy_log(Some("ktest"), Some(50)).await;
+        assert!(
+            result.is_ok(),
+            "expected `policy log ktest --limit 50` (positional sandbox before flag), got: {:?}",
+            result
+        );
+    }
+
+    /// `policy_reset()` → `policy reset --force`.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_preserve_policy_reset_command() {
+        let script = r#"#!/bin/sh
+if [ "$1" = "policy" ] && [ "$2" = "reset" ] && [ "$3" = "--force" ] && [ -z "$4" ]; then
+    exit 0
+fi
+exit 1
+"#;
+        let (cli, _dir) = mock_sbx(script);
+        let result = cli.policy_reset().await;
+        assert!(
+            result.is_ok(),
+            "expected `policy reset --force`, got: {:?}",
+            result
+        );
     }
 }
