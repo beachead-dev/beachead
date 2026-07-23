@@ -220,9 +220,12 @@ pub fn build_create_args(args: &SbxCreateArgs) -> Vec<String> {
 
     // Flags must come before positional args per new CLI syntax:
     // sbx create [flags] AGENT PATH [PATH...]
-
-    // Quiet mode to get just the sandbox name on stdout
-    cmd_args.push("-q".to_string());
+    //
+    // NOTE: We intentionally do NOT pass `-q/--quiet`. As of sbx 0.35.0, `-q`
+    // suppresses ALL output (including the sandbox name), leaving stdout empty
+    // so we can't recover the created sandbox's name. Without `-q`, stdout
+    // contains a parseable `Created sandbox '<name>'` line (plus a
+    // `sbx run --name <name>` hint), which `extract_sandbox_name` handles.
 
     for kit_path in &args.kit_paths {
         cmd_args.push("--kit".to_string());
@@ -545,8 +548,8 @@ impl SbxCli {
             )));
         }
 
-        // With -q flag, stdout should contain just the sandbox name
-        // Fall back to parsing "Created sandbox 'NAME'" if quiet mode still outputs extra
+        // stdout contains image-pull progress plus a `Created sandbox 'NAME'`
+        // line (and a `sbx run --name NAME` hint); extract_sandbox_name parses it.
         let sandbox_name = extract_sandbox_name(&output.stdout);
         if sandbox_name.is_empty() {
             return Err(OrchestratorError::SbxError(
@@ -1432,8 +1435,7 @@ fn parse_template_ls_text(output: &str) -> Vec<TemplateInfo> {
 
 /// Extract the sandbox name from `sbx create` output.
 ///
-/// With `-q` flag, output should be just the sandbox name.
-/// Without `-q`, output contains image pull progress and a line like:
+/// `sbx create` output contains image pull progress and a line like:
 ///   "✓ Created sandbox 'kiro-bhtestworspace-1'"
 ///
 /// This function handles both cases:
@@ -1494,6 +1496,40 @@ mod tests {
         // Typical cobra-style error from an older sbx that lacks `--json`.
         let stderr = "Error: unknown flag: --json\nUsage:\n  sbx policy ls [flags]";
         assert!(SbxCli::is_json_flag_unsupported(stderr));
+    }
+
+    #[test]
+    fn test_extract_sandbox_name_real_035_create_output() {
+        // Real `sbx create` (no -q) output on sbx 0.35.0: image-pull progress
+        // followed by the "✓ Created sandbox 'NAME'" line and a run hint.
+        let output = "\
+39cf20eca861: Already exists
+Digest: sha256:39cf20eca861ec92747487af6197f6d916f774bdb98245d267dbd8dfd3debb05
+Status: Image is up to date for docker/sandbox-templates:shell-docker
+✓ Created sandbox 'shell-tmp.Zqe8jHNLOL'
+  Workspace: /tmp/tmp.Zqe8jHNLOL (direct mount)
+  Agent: shell
+
+To connect to this sandbox, run:
+  sbx run --name shell-tmp.Zqe8jHNLOL
+";
+        assert_eq!(extract_sandbox_name(output), "shell-tmp.Zqe8jHNLOL");
+    }
+
+    #[test]
+    fn test_extract_sandbox_name_run_hint_only() {
+        // If the "Created sandbox" line is absent, fall back to the run hint.
+        let output = "some noise\n  sbx run --name my-sandbox-1\n";
+        assert_eq!(extract_sandbox_name(output), "my-sandbox-1");
+    }
+
+    #[test]
+    fn test_extract_sandbox_name_empty_output_is_empty() {
+        // Regression guard: `sbx create -q` on 0.35.0 emits nothing. Empty stdout
+        // must yield an empty name so create() surfaces a clear error. (We no
+        // longer pass -q, but this documents the boundary.)
+        assert_eq!(extract_sandbox_name(""), "");
+        assert_eq!(extract_sandbox_name("   \n  \n"), "");
     }
 
     #[test]

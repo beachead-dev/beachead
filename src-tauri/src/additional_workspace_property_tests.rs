@@ -1057,7 +1057,7 @@ mod tests {
             let cmd_args = build_create_args(&args);
 
             // Find the index of the primary workspace in the args vector.
-            // It comes after agent, -q, optional --kit pairs, optional --name pair, optional -t pair.
+            // It comes after optional --kit pairs, optional --name pair, optional -t pair, and the agent.
             let primary_ws_str = primary_workspace.to_string_lossy().to_string();
 
             // The primary workspace must appear in the args
@@ -1113,12 +1113,13 @@ mod tests {
                 );
             }
 
-            // Verify the primary workspace is the first positional argument
-            // (i.e., it's not preceded by another positional workspace path)
-            // All elements before primary_idx should be flags/options or their values
-            prop_assert_eq!(
-                &cmd_args[0], "-q",
-                "First arg should be -q (quiet mode)"
+            // build_create_args must NOT pass -q/--quiet: as of sbx 0.35.0 quiet
+            // mode suppresses the sandbox name on stdout, which breaks name
+            // extraction after create (regression guard).
+            prop_assert!(
+                !cmd_args.iter().any(|a| a == "-q" || a == "--quiet"),
+                "build_create_args must not pass -q/--quiet (0.35.0 suppresses the sandbox name). Args: {:?}",
+                cmd_args
             );
 
             // Agent name should appear before the primary workspace (as first positional arg after flags)
