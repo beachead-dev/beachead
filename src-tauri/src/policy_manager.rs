@@ -455,4 +455,150 @@ exit 1
         let result = mgr.get_log(None, None).await;
         assert!(matches!(result, Err(OrchestratorError::SbxError(_))));
     }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Bug reproduction: sbx 0.35.0 `sbx policy ls` redesign
+    //
+    // These are EXPLORATORY bug-condition checks (bugfix workflow, Task 1.1).
+    // They are EXPECTED TO FAIL against the current/unfixed code — that failure
+    // documents the counterexample that the bug exists. Each asserts the correct
+    // post-fix behavior:
+    //   - `policy_ls()` should call `sbx policy ls --json` and faithfully map the
+    //     0.35.0 JSON rules into `PolicyState`.
+    //   - `policy_remove_rule()` should resolve the rule from that JSON and remove it.
+    //
+    // The mock below reproduces a real sbx 0.35.0 daemon:
+    //   * `sbx policy ls --json` → the verified 0.35.0 JSON payload (design.md),
+    //     one global `applies_to:"all"` rule and one `applies_to:"sandbox:ktest"` rule.
+    //   * `sbx policy ls` (no --json) → the new summarized default overview
+    //     (`POLICY SOURCE APPLIES TO SUMMARY`), which is what the CURRENT code hits.
+    //   * `sbx policy rm ...` → success (exit 0).
+    //
+    // The current `policy_ls()` invokes `sbx policy ls` WITHOUT `--json`, so it
+    // receives the summarized overview, fails the `serde_json::from_str::<PolicyState>`
+    // attempt, and falls back to `parse_policy_text()` — which does not understand the
+    // summarized layout and drops/misreads every rule.
+    const SBX_035_MOCK: &str = r#"#!/bin/sh
+if [ "$1" = "policy" ] && [ "$2" = "ls" ]; then
+    if [ "$3" = "--json" ]; then
+        cat <<'JSON'
+{
+  "rules": [
+    {
+      "id": "b656a698-8713-442d-920c-bf95fbe979d4",
+      "name": "b656a698-8713-442d-920c-bf95fbe979d4",
+      "policy_id": "d8523707-740f-4d60-8385-a38e572d5639",
+      "scope": "sandbox:ktest",
+      "applies_to": "sandbox:ktest",
+      "resource_type": "network",
+      "decision": "allow",
+      "resources": ["localhost:9100"],
+      "origin": "scoped",
+      "status": "active",
+      "editable": true,
+      "sandbox_id": "ktest"
+    },
+    {
+      "id": "1e17bb98-582a-409a-aa6c-11b144c00938",
+      "name": "1e17bb98-582a-409a-aa6c-11b144c00938",
+      "policy_id": "local-policy",
+      "scope": "global",
+      "applies_to": "all",
+      "resource_type": "network",
+      "decision": "allow",
+      "resources": ["**.kiro.dev:443"],
+      "origin": "local",
+      "status": "active",
+      "editable": true
+    }
+  ]
+}
+JSON
+        exit 0
+    fi
+    cat <<'TXT'
+POLICY         SOURCE   APPLIES TO       SUMMARY
+local-policy   local    all              network: 155 allow, 1 deny
+scoped-ktest   local    sandbox:ktest    network: 1 allow
+TXT
+    exit 0
+fi
+if [ "$1" = "policy" ] && [ "$2" = "rm" ]; then
+    exit 0
+fi
+exit 1
+"#;
+
+    /// Bug repro (Requirement 1.1/1.2): the global `applies_to:"all"` allow rule
+    /// `**.kiro.dev:443` from the real 0.35.0 output must appear in `PolicyState`.
+    /// UNFIXED: dropped, because `policy_ls()` never passes `--json` and the text
+    /// fallback misreads the summarized overview. EXPECTED TO FAIL.
+    #[tokio::test]
+    async fn test_bug_repro_035_global_rule_dropped() {
+        let (mgr, _dir) = create_test_manager(SBX_035_MOCK);
+        let state = mgr.get_state().await.unwrap();
+
+        let global = state.rules.iter().find(|r| r.target == "**.kiro.dev:443");
+        assert!(
+            global.is_some(),
+            "global allow rule **.kiro.dev:443 was dropped/misread; got rules: {:?}",
+            state.rules
+        );
+        let global = global.unwrap();
+        assert_eq!(global.action, "allow");
+        assert_eq!(global.origin.as_deref(), Some("all"));
+    }
+
+    /// Bug repro (Requirement 1.2): the per-sandbox `applies_to:"sandbox:ktest"`
+    /// allow rule `localhost:9100` must appear with `origin == "sandbox:ktest"`.
+    /// UNFIXED: dropped/misread. EXPECTED TO FAIL.
+    #[tokio::test]
+    async fn test_bug_repro_035_sandbox_rule_misread() {
+        let (mgr, _dir) = create_test_manager(SBX_035_MOCK);
+        let state = mgr.get_state().await.unwrap();
+
+        let sandbox = state.rules.iter().find(|r| r.target == "localhost:9100");
+        assert!(
+            sandbox.is_some(),
+            "per-sandbox rule localhost:9100 was dropped/misread; got rules: {:?}",
+            state.rules
+        );
+        assert_eq!(sandbox.unwrap().origin.as_deref(), Some("sandbox:ktest"));
+    }
+
+    /// Bug repro (Requirement 1.1): feeding the summarized default text
+    /// (`POLICY SOURCE APPLIES TO SUMMARY`) to the current text fallback yields a
+    /// misread `PolicyState` instead of the two real rules. Correct behavior is
+    /// exactly the two rules present in the real policy. EXPECTED TO FAIL.
+    #[tokio::test]
+    async fn test_bug_repro_035_summarized_text_misread() {
+        let (mgr, _dir) = create_test_manager(SBX_035_MOCK);
+        let state = mgr.get_state().await.unwrap();
+
+        let has_global = state.rules.iter().any(|r| r.target == "**.kiro.dev:443");
+        let has_sandbox = state.rules.iter().any(|r| r.target == "localhost:9100");
+        assert!(
+            has_global && has_sandbox && state.rules.len() == 2,
+            "summarized-text fallback misread the policy; expected exactly the 2 real \
+             rules (**.kiro.dev:443, localhost:9100), got: {:?}",
+            state.rules
+        );
+    }
+
+    /// Bug repro (Requirement 2.1/2.4): removing the global rule by its real UUID
+    /// must succeed. UNFIXED: `policy_remove_rule()` resolves the rule via the broken
+    /// `policy_ls()`, cannot find the id, and returns `NotFound` for a rule that
+    /// actually exists. EXPECTED TO FAIL.
+    #[tokio::test]
+    async fn test_bug_repro_035_remove_existing_rule_notfound() {
+        let (mgr, _dir) = create_test_manager(SBX_035_MOCK);
+        let result = mgr
+            .remove_rule("1e17bb98-582a-409a-aa6c-11b144c00938")
+            .await;
+        assert!(
+            result.is_ok(),
+            "expected removal of existing rule 1e17bb98-... to succeed, got: {:?}",
+            result
+        );
+    }
 }
