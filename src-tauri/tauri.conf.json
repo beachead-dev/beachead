@@ -1,6 +1,6 @@
 {
   "productName": "Beachead",
-  "version": "0.1.6",
+  "version": "0.17.0",
   "identifier": "com.beachead.app",
   "build": {
     "frontendDist": "http://127.0.0.1:9876",

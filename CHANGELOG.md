@@ -4,6 +4,8 @@ All notable changes to Beachead will be documented here.
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-07-23
+
 ### Fixes
 
 - **sbx 0.35.0 compatibility:** Policy listing and rule removal now use `sbx policy ls --json` instead of parsing the text table. sbx 0.35.0 changed the default `sbx policy ls` output to a summarized per-policy overview (moving the detailed rule table behind `--wide`), which broke the old parser — producing an empty or incorrect Policies list and breaking network rule removal. The legacy text parser has been retired.
@@ -13,6 +15,10 @@ All notable changes to Beachead will be documented here.
 ### Maintenance
 
 - **Removed dead `sbx` wrapper code:** Deleted the unused `SbxCli` methods `kit_add()`, `kit_inspect()` (and the `KitInspectResult` struct), `exec_it()`, and `secret_set_scoped()`, plus unused fields on the internal policy-listing struct. These had no callers — `kit_add`/`kit_inspect` were leftovers from an abandoned live-kit-update approach (the app applies kit changes on session restart, not via `sbx kit add`, which as of sbx 0.35.0 recreates the container). No user-facing behavior changes; `kit_validate()` (used for custom agent kits) is retained.
+
+### Known Issues
+
+- **Default Policy buttons temporarily disabled:** The Balanced / Deny All / Allow All buttons on the Policies page are disabled in this release. Under sbx 0.34.0+, `sbx policy init` is a one-time initialization, so re-invoking it to switch the baseline could error or reset the global policy and wipe custom rules. The buttons will be re-enabled with a corrected reset-then-init flow (with confirmation) in the next release. Network allow/deny rule management is unaffected.
 
 ## [0.1.6] - 2026-06-18
 
