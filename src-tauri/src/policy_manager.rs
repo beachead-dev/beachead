@@ -23,7 +23,8 @@ impl PolicyManager {
 
     /// Get the current policy state (default policy + active rules).
     ///
-    /// Invokes `sbx policy ls` and returns the parsed `PolicyState`.
+    /// Invokes `sbx policy ls --json` (sbx 0.35.0+) and returns the parsed
+    /// `PolicyState`.
     pub async fn get_state(&self) -> Result<PolicyState, OrchestratorError> {
         self.sbx.policy_ls().await
     }
@@ -67,7 +68,8 @@ impl PolicyManager {
 
     /// Remove a policy rule by its ID.
     ///
-    /// Invokes `sbx policy remove <rule_id>`.
+    /// Resolves the rule's scope from `sbx policy ls --json` and invokes
+    /// `sbx policy rm network [--sandbox <name>] --id <rule_id>` (sbx 0.35.0+).
     pub async fn remove_rule(&self, rule_id: &str) -> Result<(), OrchestratorError> {
         if rule_id.trim().is_empty() {
             return Err(OrchestratorError::Validation(
@@ -126,9 +128,47 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_state_parses_json_output() {
+        // sbx 0.35.0: `policy_ls()` invokes `sbx policy ls --json`. The real JSON
+        // shape is `{"rules":[{decision,resources,applies_to,resource_type,origin,
+        // status,sandbox_id?}]}` with no top-level `default_policy`. Each rule is
+        // flattened one `PolicyRule` per resource (action←decision, target←resource,
+        // origin←applies_to). Covers one global (`applies_to:"all"`) and one
+        // per-sandbox (`applies_to:"sandbox:ktest"`) rule (Requirement 3.3).
         let script = r#"#!/bin/sh
-if [ "$1" = "policy" ] && [ "$2" = "ls" ]; then
-    echo '{"default_policy":"balanced","rules":[{"id":"rule-1","action":"allow","target":"127.0.0.1:8080"}]}'
+if [ "$1" = "policy" ] && [ "$2" = "ls" ] && [ "$3" = "--json" ]; then
+    cat <<'JSON'
+{
+  "rules": [
+    {
+      "id": "1e17bb98-582a-409a-aa6c-11b144c00938",
+      "name": "1e17bb98-582a-409a-aa6c-11b144c00938",
+      "policy_id": "local-policy",
+      "scope": "global",
+      "applies_to": "all",
+      "resource_type": "network",
+      "decision": "allow",
+      "resources": ["**.kiro.dev:443"],
+      "origin": "local",
+      "status": "active",
+      "editable": true
+    },
+    {
+      "id": "b656a698-8713-442d-920c-bf95fbe979d4",
+      "name": "b656a698-8713-442d-920c-bf95fbe979d4",
+      "policy_id": "d8523707-740f-4d60-8385-a38e572d5639",
+      "scope": "sandbox:ktest",
+      "applies_to": "sandbox:ktest",
+      "resource_type": "network",
+      "decision": "allow",
+      "resources": ["localhost:9100"],
+      "origin": "scoped",
+      "status": "active",
+      "editable": true,
+      "sandbox_id": "ktest"
+    }
+  ]
+}
+JSON
     exit 0
 fi
 exit 1
@@ -136,18 +176,42 @@ exit 1
         let (mgr, _dir) = create_test_manager(script);
         let state = mgr.get_state().await.unwrap();
 
-        assert_eq!(state.default_policy, "balanced");
-        assert_eq!(state.rules.len(), 1);
-        assert_eq!(state.rules[0].id, Some("rule-1".to_string()));
-        assert_eq!(state.rules[0].action, "allow");
-        assert_eq!(state.rules[0].target, "127.0.0.1:8080");
+        assert_eq!(state.rules.len(), 2);
+
+        // Global rule: flattened action←decision, target←resource, origin←applies_to.
+        let global = state
+            .rules
+            .iter()
+            .find(|r| r.target == "**.kiro.dev:443")
+            .expect("global rule **.kiro.dev:443 should be present");
+        assert_eq!(global.id, Some("1e17bb98-582a-409a-aa6c-11b144c00938".to_string()));
+        assert_eq!(global.action, "allow");
+        assert_eq!(global.origin.as_deref(), Some("all"));
+        assert_eq!(global.rule_type.as_deref(), Some("network"));
+        assert_eq!(global.provenance.as_deref(), Some("local"));
+        assert_eq!(global.status.as_deref(), Some("active"));
+
+        // Per-sandbox rule: origin carries the "sandbox:<name>" scope.
+        let sandbox = state
+            .rules
+            .iter()
+            .find(|r| r.target == "localhost:9100")
+            .expect("per-sandbox rule localhost:9100 should be present");
+        assert_eq!(sandbox.id, Some("b656a698-8713-442d-920c-bf95fbe979d4".to_string()));
+        assert_eq!(sandbox.action, "allow");
+        assert_eq!(sandbox.origin.as_deref(), Some("sandbox:ktest"));
+        assert_eq!(sandbox.provenance.as_deref(), Some("scoped"));
     }
 
     #[tokio::test]
     async fn test_get_state_empty_rules() {
+        // sbx 0.35.0 empty policy: `{"rules":[]}` → empty `PolicyState`, no error.
+        // `default_policy` is inferred, not read (0.35.0 `ls` has no default-mode
+        // field). With no rules at all there are no global network allow rules, so
+        // the inference yields "deny-all".
         let script = r#"#!/bin/sh
-if [ "$1" = "policy" ] && [ "$2" = "ls" ]; then
-    echo '{"default_policy":"deny","rules":[]}'
+if [ "$1" = "policy" ] && [ "$2" = "ls" ] && [ "$3" = "--json" ]; then
+    echo '{"rules":[]}'
     exit 0
 fi
 exit 1
@@ -155,8 +219,8 @@ exit 1
         let (mgr, _dir) = create_test_manager(script);
         let state = mgr.get_state().await.unwrap();
 
-        assert_eq!(state.default_policy, "deny");
         assert!(state.rules.is_empty());
+        assert_eq!(state.default_policy, "deny-all");
     }
 
     #[tokio::test]
@@ -349,7 +413,16 @@ exit 0
 
     #[tokio::test]
     async fn test_remove_rule_cli_failure() {
+        // sbx 0.35.0: removal first lists via `policy ls --json` to resolve scope,
+        // then issues `policy rm network --id <id>`. Here the rule IS found in the
+        // listing but the `rm` command itself fails, which must surface as SbxError.
         let script = r#"#!/bin/sh
+if [ "$1" = "policy" ] && [ "$2" = "ls" ] && [ "$3" = "--json" ]; then
+    cat <<'JSON'
+{"rules":[{"id":"rule-boom","applies_to":"all","resource_type":"network","decision":"allow","resources":["example.com:443"],"origin":"local","status":"active"}]}
+JSON
+    exit 0
+fi
 if [ "$1" = "policy" ] && [ "$2" = "rm" ] && [ "$3" = "network" ]; then
     echo "error: rule not found" >&2
     exit 1
@@ -357,7 +430,7 @@ fi
 exit 1
 "#;
         let (mgr, _dir) = create_test_manager(script);
-        let result = mgr.remove_rule("nonexistent").await;
+        let result = mgr.remove_rule("rule-boom").await;
         assert!(matches!(result, Err(OrchestratorError::SbxError(_))));
     }
 
@@ -464,27 +537,25 @@ exit 1
     }
 
     // ─────────────────────────────────────────────────────────────────────
-    // Bug reproduction: sbx 0.35.0 `sbx policy ls` redesign
+    // sbx 0.35.0 `sbx policy ls` redesign — regression coverage
     //
-    // These are EXPLORATORY bug-condition checks (bugfix workflow, Task 1.1).
-    // They are EXPECTED TO FAIL against the current/unfixed code — that failure
-    // documents the counterexample that the bug exists. Each asserts the correct
-    // post-fix behavior:
-    //   - `policy_ls()` should call `sbx policy ls --json` and faithfully map the
+    // These started as EXPLORATORY bug-condition checks (bugfix workflow,
+    // Task 1.1): they were written to FAIL against the pre-fix code (which
+    // invoked `sbx policy ls` without `--json` and fell back to the legacy text
+    // parser, dropping/misreading every rule). Now that `policy_ls()` uses
+    // `--json` and `policy_remove_rule()` resolves scope from that JSON, they
+    // PASS and serve as regressions guarding the 0.35.0 behavior:
+    //   - `policy_ls()` calls `sbx policy ls --json` and faithfully maps the
     //     0.35.0 JSON rules into `PolicyState`.
-    //   - `policy_remove_rule()` should resolve the rule from that JSON and remove it.
+    //   - `policy_remove_rule()` resolves the rule from that JSON and removes it.
     //
     // The mock below reproduces a real sbx 0.35.0 daemon:
     //   * `sbx policy ls --json` → the verified 0.35.0 JSON payload (design.md),
     //     one global `applies_to:"all"` rule and one `applies_to:"sandbox:ktest"` rule.
     //   * `sbx policy ls` (no --json) → the new summarized default overview
-    //     (`POLICY SOURCE APPLIES TO SUMMARY`), which is what the CURRENT code hits.
+    //     (`POLICY SOURCE APPLIES TO SUMMARY`), retained to prove the fixed code
+    //     never relies on the text path.
     //   * `sbx policy rm ...` → success (exit 0).
-    //
-    // The current `policy_ls()` invokes `sbx policy ls` WITHOUT `--json`, so it
-    // receives the summarized overview, fails the `serde_json::from_str::<PolicyState>`
-    // attempt, and falls back to `parse_policy_text()` — which does not understand the
-    // summarized layout and drops/misreads every rule.
     const SBX_035_MOCK: &str = r#"#!/bin/sh
 if [ "$1" = "policy" ] && [ "$2" = "ls" ]; then
     if [ "$3" = "--json" ]; then
@@ -536,10 +607,9 @@ fi
 exit 1
 "#;
 
-    /// Bug repro (Requirement 1.1/1.2): the global `applies_to:"all"` allow rule
-    /// `**.kiro.dev:443` from the real 0.35.0 output must appear in `PolicyState`.
-    /// UNFIXED: dropped, because `policy_ls()` never passes `--json` and the text
-    /// fallback misreads the summarized overview. EXPECTED TO FAIL.
+    /// Regression (Requirement 1.1/1.2): the global `applies_to:"all"` allow rule
+    /// `**.kiro.dev:443` from the real 0.35.0 output must appear in `PolicyState`
+    /// with `action` from `decision` and `origin` from `applies_to`.
     #[tokio::test]
     async fn test_bug_repro_035_global_rule_dropped() {
         let (mgr, _dir) = create_test_manager(SBX_035_MOCK);
@@ -556,9 +626,8 @@ exit 1
         assert_eq!(global.origin.as_deref(), Some("all"));
     }
 
-    /// Bug repro (Requirement 1.2): the per-sandbox `applies_to:"sandbox:ktest"`
+    /// Regression (Requirement 1.2): the per-sandbox `applies_to:"sandbox:ktest"`
     /// allow rule `localhost:9100` must appear with `origin == "sandbox:ktest"`.
-    /// UNFIXED: dropped/misread. EXPECTED TO FAIL.
     #[tokio::test]
     async fn test_bug_repro_035_sandbox_rule_misread() {
         let (mgr, _dir) = create_test_manager(SBX_035_MOCK);
@@ -573,10 +642,9 @@ exit 1
         assert_eq!(sandbox.unwrap().origin.as_deref(), Some("sandbox:ktest"));
     }
 
-    /// Bug repro (Requirement 1.1): feeding the summarized default text
-    /// (`POLICY SOURCE APPLIES TO SUMMARY`) to the current text fallback yields a
-    /// misread `PolicyState` instead of the two real rules. Correct behavior is
-    /// exactly the two rules present in the real policy. EXPECTED TO FAIL.
+    /// Regression (Requirement 1.1): `policy_ls()` uses `--json`, so it returns
+    /// exactly the two real rules (`**.kiro.dev:443`, `localhost:9100`) and never
+    /// relies on the summarized default text overview.
     #[tokio::test]
     async fn test_bug_repro_035_summarized_text_misread() {
         let (mgr, _dir) = create_test_manager(SBX_035_MOCK);
@@ -592,10 +660,9 @@ exit 1
         );
     }
 
-    /// Bug repro (Requirement 2.1/2.4): removing the global rule by its real UUID
-    /// must succeed. UNFIXED: `policy_remove_rule()` resolves the rule via the broken
-    /// `policy_ls()`, cannot find the id, and returns `NotFound` for a rule that
-    /// actually exists. EXPECTED TO FAIL.
+    /// Regression (Requirement 2.1/2.4): removing the global rule by its real UUID
+    /// must succeed — `policy_remove_rule()` resolves the rule via `policy_ls()`
+    /// (`--json`) and issues the scoped `policy rm network --id <uuid>`.
     #[tokio::test]
     async fn test_bug_repro_035_remove_existing_rule_notfound() {
         let (mgr, _dir) = create_test_manager(SBX_035_MOCK);
@@ -605,6 +672,163 @@ exit 1
         assert!(
             result.is_ok(),
             "expected removal of existing rule 1e17bb98-... to succeed, got: {:?}",
+            result
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Task 6.2 — Integration tests through `PolicyManager`
+    //
+    // These exercise the full PolicyManager → SbxCli → mock `sbx` path end to
+    // end (not just the SbxCli unit level in sbx.rs). They confirm:
+    //   * `get_state()` served to the API faithfully reflects the real 0.35.0
+    //     `--json` output (rule count + every mapped field).
+    //   * `remove_rule()` drives the complete list → resolve → scoped-rm chain
+    //     for BOTH a global rule (no `--sandbox`) and a per-sandbox rule
+    //     (`--sandbox <name>`). The per-sandbox path is not otherwise covered at
+    //     the PolicyManager level.
+    // _Requirements: 1.1, 2.2, 2.3_
+
+    /// get_state() end-to-end: a mock emitting the verified 0.35.0 `--json`
+    /// (one global + one per-sandbox rule) must produce a `PolicyState` whose
+    /// rule count and every mapped field match what the API should serve.
+    #[tokio::test]
+    async fn test_integration_get_state_end_to_end() {
+        let script = r#"#!/bin/sh
+if [ "$1" = "policy" ] && [ "$2" = "ls" ] && [ "$3" = "--json" ]; then
+    cat <<'JSON'
+{
+  "rules": [
+    {
+      "id": "1e17bb98-582a-409a-aa6c-11b144c00938",
+      "name": "1e17bb98-582a-409a-aa6c-11b144c00938",
+      "policy_id": "local-policy",
+      "scope": "global",
+      "applies_to": "all",
+      "resource_type": "network",
+      "decision": "allow",
+      "resources": ["**.kiro.dev:443"],
+      "origin": "local",
+      "status": "active",
+      "editable": true
+    },
+    {
+      "id": "b656a698-8713-442d-920c-bf95fbe979d4",
+      "name": "b656a698-8713-442d-920c-bf95fbe979d4",
+      "policy_id": "d8523707-740f-4d60-8385-a38e572d5639",
+      "scope": "sandbox:ktest",
+      "applies_to": "sandbox:ktest",
+      "resource_type": "network",
+      "decision": "deny",
+      "resources": ["evil.example.com:443"],
+      "origin": "scoped",
+      "status": "active",
+      "editable": true,
+      "sandbox_id": "ktest"
+    }
+  ]
+}
+JSON
+    exit 0
+fi
+exit 1
+"#;
+        let (mgr, _dir) = create_test_manager(script);
+        let state = mgr.get_state().await.unwrap();
+
+        // Rule count matches the JSON (one PolicyRule per resource).
+        assert_eq!(state.rules.len(), 2);
+
+        // Global rule: every field mapped from the JSON.
+        let global = state
+            .rules
+            .iter()
+            .find(|r| r.target == "**.kiro.dev:443")
+            .expect("global rule should be served");
+        assert_eq!(
+            global.id,
+            Some("1e17bb98-582a-409a-aa6c-11b144c00938".to_string())
+        );
+        assert_eq!(global.action, "allow");
+        assert_eq!(global.origin.as_deref(), Some("all"));
+        assert_eq!(global.rule_type.as_deref(), Some("network"));
+        assert_eq!(global.provenance.as_deref(), Some("local"));
+        assert_eq!(global.status.as_deref(), Some("active"));
+
+        // Per-sandbox rule: origin carries the scope; decision maps to action.
+        let sandbox = state
+            .rules
+            .iter()
+            .find(|r| r.target == "evil.example.com:443")
+            .expect("per-sandbox rule should be served");
+        assert_eq!(
+            sandbox.id,
+            Some("b656a698-8713-442d-920c-bf95fbe979d4".to_string())
+        );
+        assert_eq!(sandbox.action, "deny");
+        assert_eq!(sandbox.origin.as_deref(), Some("sandbox:ktest"));
+        assert_eq!(sandbox.rule_type.as_deref(), Some("network"));
+        assert_eq!(sandbox.provenance.as_deref(), Some("scoped"));
+        assert_eq!(sandbox.status.as_deref(), Some("active"));
+    }
+
+    /// remove_rule() end-to-end for a GLOBAL rule: the mock lists a global
+    /// (`applies_to:"all"`) rule via `--json`, then exits 0 ONLY for
+    /// `policy rm network --id <id>` with no `--sandbox` scope (the rm branch
+    /// requires `$4 = --id` and no 6th arg). Proves the full
+    /// list → resolve → scoped-rm chain omits `--sandbox` for global rules.
+    #[tokio::test]
+    async fn test_integration_remove_global_rule_end_to_end() {
+        let script = r#"#!/bin/sh
+if [ "$1" = "policy" ] && [ "$2" = "ls" ] && [ "$3" = "--json" ]; then
+    cat <<'JSON'
+{"rules":[{"id":"1e17bb98-582a-409a-aa6c-11b144c00938","applies_to":"all","resource_type":"network","decision":"allow","resources":["**.kiro.dev:443"],"origin":"local","status":"active"}]}
+JSON
+    exit 0
+fi
+if [ "$1" = "policy" ] && [ "$2" = "rm" ] && [ "$3" = "network" ] && [ "$4" = "--id" ] && [ "$5" = "1e17bb98-582a-409a-aa6c-11b144c00938" ] && [ -z "$6" ]; then
+    exit 0
+fi
+exit 1
+"#;
+        let (mgr, _dir) = create_test_manager(script);
+        let result = mgr
+            .remove_rule("1e17bb98-582a-409a-aa6c-11b144c00938")
+            .await;
+        assert!(
+            result.is_ok(),
+            "global removal should issue `policy rm network --id <id>` with no --sandbox, got: {:?}",
+            result
+        );
+    }
+
+    /// remove_rule() end-to-end for a PER-SANDBOX rule: the mock lists a
+    /// `applies_to:"sandbox:ktest"` rule via `--json`, then exits 0 ONLY for
+    /// `policy rm network --sandbox ktest --id <id>`. Exercises the full
+    /// list → resolve → scoped-rm chain and proves the `--sandbox <name>` scope
+    /// is derived from the JSON and passed through. This per-sandbox removal
+    /// path is not otherwise covered at the PolicyManager level.
+    #[tokio::test]
+    async fn test_integration_remove_sandbox_rule_end_to_end() {
+        let script = r#"#!/bin/sh
+if [ "$1" = "policy" ] && [ "$2" = "ls" ] && [ "$3" = "--json" ]; then
+    cat <<'JSON'
+{"rules":[{"id":"b656a698-8713-442d-920c-bf95fbe979d4","applies_to":"sandbox:ktest","resource_type":"network","decision":"allow","resources":["localhost:9100"],"origin":"scoped","status":"active","sandbox_id":"ktest"}]}
+JSON
+    exit 0
+fi
+if [ "$1" = "policy" ] && [ "$2" = "rm" ] && [ "$3" = "network" ] && [ "$4" = "--sandbox" ] && [ "$5" = "ktest" ] && [ "$6" = "--id" ] && [ "$7" = "b656a698-8713-442d-920c-bf95fbe979d4" ]; then
+    exit 0
+fi
+exit 1
+"#;
+        let (mgr, _dir) = create_test_manager(script);
+        let result = mgr
+            .remove_rule("b656a698-8713-442d-920c-bf95fbe979d4")
+            .await;
+        assert!(
+            result.is_ok(),
+            "per-sandbox removal should issue `policy rm network --sandbox ktest --id <id>`, got: {:?}",
             result
         );
     }

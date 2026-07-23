@@ -2311,4 +2311,77 @@ exit 1
             result
         );
     }
+
+    // ─── Optional real-binary verification (Task 6.3 / Requirement 4.1) ──────
+
+    /// Verifies the `sbx policy ls --json` JSON-shape assumption against the REAL
+    /// installed `sbx` binary rather than a mock, so we catch drift if a future
+    /// sbx release changes the payload the parser in [`SbxCli::policy_ls`] relies
+    /// on (decision/resources/applies_to/resource_type/status).
+    ///
+    /// This test is `#[ignore]`d so it never runs in the normal suite or CI (CI
+    /// machines have no `sbx` install / login). Run it manually on a workstation
+    /// that has a real **sbx 0.35.0+** installed and is logged in:
+    ///
+    /// ```text
+    /// cargo test -- --ignored test_real_binary_policy_ls_json_shape
+    /// ```
+    ///
+    /// It resolves `sbx` from `PATH` via [`SbxCli::new`], calls `policy_ls()`, and
+    /// asserts the call succeeds and that any returned rules satisfy the structural
+    /// invariants the parser depends on. Because real policy contents are
+    /// environment-dependent, it asserts STRUCTURE (well-formed fields), never the
+    /// presence of specific rules. A hard failure here is acceptable — it only runs
+    /// when explicitly requested via `--ignored`.
+    ///
+    /// _Requirements: 4.1_
+    #[ignore = "requires a real sbx 0.35.0+ install and login; run with `cargo test -- --ignored`"]
+    #[tokio::test]
+    async fn test_real_binary_policy_ls_json_shape() {
+        // Resolve the real `sbx` binary from PATH.
+        let cli = SbxCli::new().expect("sbx binary must be resolvable from PATH for this test");
+
+        // The call itself must succeed against the real 0.35.0+ `--json` output.
+        let state = cli
+            .policy_ls()
+            .await
+            .expect("policy_ls() should succeed against a real sbx 0.35.0+ install");
+
+        // `default_policy` is derived best-effort; it must be one of the known labels.
+        assert!(
+            matches!(
+                state.default_policy.as_str(),
+                "allow-all" | "balanced" | "deny-all"
+            ),
+            "default_policy should be a known derived label, got: {:?}",
+            state.default_policy
+        );
+
+        // Assert STRUCTURAL invariants on each returned rule (not specific rules,
+        // since real policy contents are environment-dependent).
+        for rule in &state.rules {
+            assert!(
+                rule.action == "allow" || rule.action == "deny",
+                "rule action must be \"allow\" or \"deny\", got: {:?}",
+                rule.action
+            );
+            assert!(
+                !rule.target.is_empty(),
+                "rule target (resource) must be non-empty"
+            );
+            assert!(
+                rule.rule_type.is_some(),
+                "rule_type (resource_type) should be present, rule: {:?}",
+                rule
+            );
+            // `origin` distinguishes global ("all") from per-sandbox ("sandbox:<name>").
+            if let Some(origin) = rule.origin.as_deref() {
+                assert!(
+                    origin == "all" || origin.starts_with("sandbox:"),
+                    "origin should be \"all\" or \"sandbox:<name>\", got: {:?}",
+                    origin
+                );
+            }
+        }
+    }
 }
