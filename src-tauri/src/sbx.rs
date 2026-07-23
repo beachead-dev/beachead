@@ -15,8 +15,10 @@ const SECRET_COMMANDS: &[&str] = &["secret"];
 /// Default timeout for sbx CLI commands. Prevents hangs when the daemon is stopped.
 const SBX_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Extended timeout for sbx create/run — these can pull images on first use.
-const SBX_CREATE_TIMEOUT: Duration = Duration::from_secs(90);
+/// Extended timeout for sbx create/run — these can pull (potentially large)
+/// agent images on first use, which can exceed a couple of minutes on a cold
+/// cache or slow network.
+const SBX_CREATE_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Result of executing an sbx CLI command.
 #[derive(Debug, Clone)]
@@ -534,7 +536,7 @@ impl SbxCli {
 
     /// Create a sandbox without starting it: `sbx create <agent> --kit <path> -v <workspace>`
     ///
-    /// Uses an extended timeout (90s) since first-time creation may pull images.
+    /// Uses an extended timeout (300s) since first-time creation may pull images.
     pub async fn create(&self, args: &SbxCreateArgs) -> Result<String, OrchestratorError> {
         let cmd_args = build_create_args(args);
 
