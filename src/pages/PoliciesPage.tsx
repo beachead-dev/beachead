@@ -127,14 +127,21 @@ export function PoliciesPage() {
     }
   }, [view, fetchLog]);
 
-  const handleSetDefault = async (mode: string) => {
-    try {
-      await api.put("/api/policies/default", { mode });
-      await fetchPolicies();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to set default policy");
-    }
-  };
+  // TEMPORARILY DISABLED — FIX NEXT RELEASE (spec: default-policy-init-behavior).
+  // sbx 0.34.0+ made `sbx policy init` (which this triggers via
+  // PUT /api/policies/default) a one-time initialization. Re-invoking it to
+  // switch the baseline either errors or resets the global policy, which could
+  // silently wipe the user's custom rules. The Default Policy buttons are
+  // disabled until the correct reset-then-init flow (with confirmation) lands.
+  // Handler left in place (commented) so it can be restored without rewriting.
+  // const handleSetDefault = async (mode: string) => {
+  //   try {
+  //     await api.put("/api/policies/default", { mode });
+  //     await fetchPolicies();
+  //   } catch (e) {
+  //     setError(e instanceof Error ? e.message : "Failed to set default policy");
+  //   }
+  // };
 
   const handleAddRule = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -205,24 +212,31 @@ export function PoliciesPage() {
           <div className="default-policy card">
             <h3>Default Policy</h3>
             <p>Current: <strong>{policyState.default_policy}</strong></p>
+            {/* TEMPORARILY DISABLED — FIX NEXT RELEASE (spec: default-policy-init-behavior).
+                onClick handlers commented out and buttons disabled to prevent
+                triggering `sbx policy init` re-invocation, which could wipe custom
+                policy rules on sbx 0.34.0+. Re-enable with the corrected flow. */}
             <div className="policy-mode-buttons">
               <button
                 className={`btn btn-sm ${policyState.default_policy === "balanced" ? "btn-primary" : ""}`}
-                onClick={() => handleSetDefault("balanced")}
+                /* onClick={() => handleSetDefault("balanced")} */
+                disabled
                 aria-label="Set balanced policy"
               >
                 Balanced (recommended)
               </button>
               <button
                 className={`btn btn-sm ${policyState.default_policy === "deny" ? "btn-primary" : ""}`}
-                onClick={() => handleSetDefault("deny")}
+                /* onClick={() => handleSetDefault("deny")} */
+                disabled
                 aria-label="Set deny policy"
               >
                 Deny All
               </button>
               <button
                 className={`btn btn-sm ${policyState.default_policy === "allow" ? "btn-primary" : ""}`}
-                onClick={() => handleSetDefault("allow")}
+                /* onClick={() => handleSetDefault("allow")} */
+                disabled
                 aria-label="Set allow policy"
               >
                 Allow All
