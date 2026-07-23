@@ -4,6 +4,13 @@ All notable changes to Beachead will be documented here.
 
 ## [Unreleased]
 
+## [0.17.1] - 2026-07-23
+
+### Fixes
+
+- **Session creation on sbx 0.35.0** — `sbx create` was invoked with `-q/--quiet`, which sbx 0.35.0 changed to suppress *all* output including the sandbox name, causing session start to fail with "sbx did not return a sandbox name." Removed `-q`; the sandbox name is now read from the standard `Created sandbox '<name>'` output. (Affects 0.17.0.)
+- **Longer sandbox creation timeout** — raised the `sbx create` timeout from 90s to 300s so first-use agent image pulls on a cold cache or slow network don't time out.
+
 ## [0.17.0] - 2026-07-23
 
 ### Fixes
