@@ -870,8 +870,9 @@ impl SbxCli {
         }
 
         let is_global = |r: &SbxPolicyLsRule| r.applies_to.as_deref() == Some("all");
-        let is_network_allow =
-            |r: &SbxPolicyLsRule| r.decision == "allow" && r.resource_type.as_deref() == Some("network");
+        let is_network_allow = |r: &SbxPolicyLsRule| {
+            r.decision == "allow" && r.resource_type.as_deref() == Some("network")
+        };
 
         // 2. A global network allow rule targeting an "all traffic" resource.
         let allows_all_traffic = rules.iter().any(|r| {
@@ -1144,7 +1145,6 @@ impl SbxCli {
         }
         Ok(())
     }
-
 
     /// Initiate OAuth flow for a service: `sbx secret set -g <service> --oauth`
     pub async fn secret_set_oauth(&self, service: &str) -> Result<(), OrchestratorError> {
@@ -1682,7 +1682,10 @@ exit 1
             .iter()
             .find(|r| r.target == "**.kiro.dev:443")
             .expect("global rule **.kiro.dev:443 missing");
-        assert_eq!(global.id.as_deref(), Some("1e17bb98-582a-409a-aa6c-11b144c00938"));
+        assert_eq!(
+            global.id.as_deref(),
+            Some("1e17bb98-582a-409a-aa6c-11b144c00938")
+        );
         assert_eq!(global.action, "allow"); // decision → action
         assert_eq!(global.origin.as_deref(), Some("all")); // applies_to → origin
         assert_eq!(global.provenance.as_deref(), Some("local")); // json origin → provenance
@@ -1695,7 +1698,10 @@ exit 1
             .iter()
             .find(|r| r.target == "localhost:9100")
             .expect("per-sandbox rule localhost:9100 missing");
-        assert_eq!(sandbox.id.as_deref(), Some("b656a698-8713-442d-920c-bf95fbe979d4"));
+        assert_eq!(
+            sandbox.id.as_deref(),
+            Some("b656a698-8713-442d-920c-bf95fbe979d4")
+        );
         assert_eq!(sandbox.action, "allow");
         assert_eq!(sandbox.origin.as_deref(), Some("sandbox:ktest")); // distinguishes per-sandbox
         assert_eq!(sandbox.provenance.as_deref(), Some("scoped"));
@@ -1715,7 +1721,11 @@ exit 1
 "#;
         let (cli, _dir) = mock_sbx(script);
         let state = cli.policy_ls().await.unwrap();
-        assert!(state.rules.is_empty(), "expected no rules, got {:?}", state.rules);
+        assert!(
+            state.rules.is_empty(),
+            "expected no rules, got {:?}",
+            state.rules
+        );
     }
 
     /// Requirement 1.5: malformed / non-JSON stdout returns an `SbxError`
@@ -1740,7 +1750,10 @@ exit 1
                     msg
                 );
             }
-            other => panic!("expected SbxError describing parse failure, got: {:?}", other),
+            other => panic!(
+                "expected SbxError describing parse failure, got: {:?}",
+                other
+            ),
         }
     }
 
@@ -1762,7 +1775,10 @@ exit 1
         let state = cli.policy_ls().await.unwrap();
 
         assert_eq!(state.rules.len(), 3, "3 resources → 3 rows");
-        assert!(state.rules.iter().all(|r| r.id.as_deref() == Some("multi-1")));
+        assert!(state
+            .rules
+            .iter()
+            .all(|r| r.id.as_deref() == Some("multi-1")));
         let targets: Vec<&str> = state.rules.iter().map(|r| r.target.as_str()).collect();
         assert_eq!(targets, vec!["a.com:443", "b.com:443", "c.com:443"]);
     }

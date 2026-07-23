@@ -184,7 +184,10 @@ exit 1
             .iter()
             .find(|r| r.target == "**.kiro.dev:443")
             .expect("global rule **.kiro.dev:443 should be present");
-        assert_eq!(global.id, Some("1e17bb98-582a-409a-aa6c-11b144c00938".to_string()));
+        assert_eq!(
+            global.id,
+            Some("1e17bb98-582a-409a-aa6c-11b144c00938".to_string())
+        );
         assert_eq!(global.action, "allow");
         assert_eq!(global.origin.as_deref(), Some("all"));
         assert_eq!(global.rule_type.as_deref(), Some("network"));
@@ -197,7 +200,10 @@ exit 1
             .iter()
             .find(|r| r.target == "localhost:9100")
             .expect("per-sandbox rule localhost:9100 should be present");
-        assert_eq!(sandbox.id, Some("b656a698-8713-442d-920c-bf95fbe979d4".to_string()));
+        assert_eq!(
+            sandbox.id,
+            Some("b656a698-8713-442d-920c-bf95fbe979d4".to_string())
+        );
         assert_eq!(sandbox.action, "allow");
         assert_eq!(sandbox.origin.as_deref(), Some("sandbox:ktest"));
         assert_eq!(sandbox.provenance.as_deref(), Some("scoped"));
