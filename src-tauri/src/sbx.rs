@@ -107,6 +107,57 @@ pub struct PolicyRule {
     pub status: Option<String>,
 }
 
+/// Internal deserialization target for the real sbx 0.35.0 `sbx policy ls --json`
+/// output. Private to `sbx.rs` — this is NOT the frontend-facing type; rules are
+/// flattened/mapped into [`PolicyState`]/[`PolicyRule`] before leaving this module.
+///
+/// The 0.35.0 top-level object contains only `rules` (there is no `default_policy`
+/// / mode field — the default mode is set via `sbx policy init` and is not read
+/// back by `sbx policy ls`).
+#[derive(Deserialize)]
+struct SbxPolicyLs {
+    #[serde(default)]
+    rules: Vec<SbxPolicyLsRule>,
+}
+
+/// A single rule as emitted by `sbx policy ls --json` on sbx 0.35.0.
+///
+/// Verified against real `sbx version: v0.35.0` output. Only `decision` is
+/// guaranteed present; every other field is optional (or defaulted) so that
+/// deserialization is resilient to rules that omit fields.
+#[derive(Deserialize)]
+struct SbxPolicyLsRule {
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    policy_id: Option<String>,
+    /// "global" | "sandbox:<name>"
+    #[serde(default)]
+    scope: Option<String>,
+    /// "all" | "sandbox:<name>"
+    #[serde(default)]
+    applies_to: Option<String>,
+    /// "network" | "filesystem" | ...
+    #[serde(default)]
+    resource_type: Option<String>,
+    /// "allow" | "deny" — required.
+    decision: String,
+    /// A single rule can carry many resources.
+    #[serde(default)]
+    resources: Vec<String>,
+    /// "local" (global) | "scoped" (per-sandbox) — a scope indicator, not a
+    /// source/provenance field.
+    #[serde(default)]
+    origin: Option<String>,
+    #[serde(default)]
+    status: Option<String>,
+    /// Bare sandbox name; present only for scoped (per-sandbox) rules.
+    #[serde(default)]
+    sandbox_id: Option<String>,
+}
+
 /// Default policy mode.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PolicyDefault {
@@ -748,23 +799,156 @@ impl SbxCli {
 
     // ─── Policy Management (Task 3.5) ────────────────────────────────────
 
-    /// List current policy state: `sbx policy ls`
+    /// List current policy state via `sbx policy ls --json` (sbx 0.35.0+).
+    ///
+    /// The 0.35.0 JSON shape is `{ "rules": [ { decision, resources[],
+    /// applies_to, resource_type, origin, status, sandbox_id? } ] }` with no
+    /// top-level `default_policy` field. Each JSON rule can carry multiple
+    /// `resources`, so we flatten to one [`PolicyRule`] per resource, preserving
+    /// the frontend "one row per resource" contract:
+    /// - `id`         ← rule `id`
+    /// - `action`     ← `decision`
+    /// - `target`     ← each `resources` element
+    /// - `origin`     ← `applies_to` ("all" | "sandbox:<name>")
+    /// - `provenance` ← JSON `origin` ("local" | "scoped" scope indicator)
+    /// - `rule_type`  ← `resource_type`
+    /// - `status`     ← `status`
+    ///
+    /// JSON is authoritative: a parse failure returns an `SbxError` describing
+    /// the failure (no text fallback).
     pub async fn policy_ls(&self) -> Result<PolicyState, OrchestratorError> {
-        let output = self.exec_multi_command(&["policy", "ls"], &[]).await?;
+        let output = self
+            .exec_multi_command(&["policy", "ls"], &["--json"])
+            .await?;
         if !output.success {
+            let stderr = output.stderr.trim();
+            // Version-compat: an sbx older than 0.35.0 does not support the
+            // `--json` flag and fails with an unknown-flag / usage style error.
+            // Surface a clear, actionable minimum-version message instead of an
+            // opaque failure (Requirement 4.2).
+            if Self::is_json_flag_unsupported(stderr) {
+                return Err(OrchestratorError::SbxError(
+                    "sbx policy ls --json is unavailable; Beachead requires sbx 0.35.0 or later"
+                        .to_string(),
+                ));
+            }
             return Err(OrchestratorError::SbxError(format!(
                 "sbx policy ls failed: {}",
-                output.stderr.trim()
+                stderr
             )));
         }
 
-        // Attempt JSON parse first, fall back to text parsing
-        if let Ok(state) = serde_json::from_str::<PolicyState>(&output.stdout) {
-            return Ok(state);
+        // JSON is authoritative — no text fallback. A parse failure is a loud error.
+        let parsed: SbxPolicyLs = serde_json::from_str(&output.stdout).map_err(|e| {
+            OrchestratorError::SbxError(format!(
+                "failed to parse sbx policy ls --json output: {}",
+                e
+            ))
+        })?;
+
+        // Flatten one PolicyRule per resource in each JSON rule.
+        let mut rules: Vec<PolicyRule> = Vec::new();
+        for rule in &parsed.rules {
+            for resource in &rule.resources {
+                rules.push(PolicyRule {
+                    id: rule.id.clone(),
+                    action: rule.decision.clone(),
+                    target: resource.clone(),
+                    origin: rule.applies_to.clone(),
+                    provenance: rule.origin.clone(),
+                    rule_type: rule.resource_type.clone(),
+                    status: rule.status.clone(),
+                });
+            }
         }
 
-        // Fallback: parse text output
-        Ok(parse_policy_text(&output.stdout))
+        // Derive `default_policy` best-effort from the JSON rules.
+        //
+        // NOTE: this value is INFERRED, not read. sbx 0.35.0's `sbx policy ls`
+        // (and its `--json`) no longer exposes the global default-policy mode —
+        // that mode is set via `sbx policy init <allow-all|balanced|deny-all>`
+        // and is not reported back by the listing. So we infer a best-effort
+        // label from the rules that ARE present, using the following order:
+        //   1. Any built-in rule (id starts with "default-") → "balanced"
+        //      (the balanced preset ships as the `default-*` rule set).
+        //   2. A global (applies_to == "all") network allow rule targeting an
+        //      "all traffic" resource ("*" / "0.0.0.0/0") → "allow-all".
+        //   3. No global network allow rules at all → "deny-all".
+        //   4. Otherwise → "balanced" (fallback).
+        let default_policy = Self::derive_default_policy(&parsed.rules);
+
+        Ok(PolicyState {
+            default_policy,
+            rules,
+        })
+    }
+
+    /// Detect whether a non-zero `sbx policy ls --json` failure is caused by the
+    /// installed sbx not supporting the `--json` flag (i.e. an sbx older than
+    /// 0.35.0), as opposed to some other runtime failure.
+    ///
+    /// The sbx CLI (built on a cobra-style argument parser) prints an
+    /// "unknown flag" / usage-style error that references the offending flag.
+    /// Phrasing varies across CLI frameworks and versions, so we match
+    /// reasonably robustly: the message must reference `--json` AND look like a
+    /// flag/usage complaint. This keeps genuine runtime failures (network,
+    /// daemon, permissions) on the generic error path.
+    fn is_json_flag_unsupported(stderr: &str) -> bool {
+        let lower = stderr.to_lowercase();
+        if !lower.contains("--json") {
+            return false;
+        }
+        lower.contains("unknown flag")
+            || lower.contains("unknown option")
+            || lower.contains("unknown shorthand flag")
+            || lower.contains("unrecognized flag")
+            || lower.contains("unrecognized option")
+            || lower.contains("flag provided but not defined")
+            || lower.contains("invalid flag")
+            || lower.contains("usage")
+    }
+
+    /// Best-effort inference of the global default-policy mode from the rules
+    /// reported by `sbx policy ls --json`.
+    ///
+    /// sbx 0.35.0 removed the default-mode field from the policy listing (it is
+    /// set via `sbx policy init` and not read back), so this label is INFERRED
+    /// from the present rules rather than read from the tool. Returns one of
+    /// `"balanced"`, `"allow-all"`, or `"deny-all"` (matching the casing used by
+    /// `PolicyDefault`'s `Display`).
+    fn derive_default_policy(rules: &[SbxPolicyLsRule]) -> String {
+        // 1. Built-in balanced rule set present.
+        if rules
+            .iter()
+            .any(|r| r.id.as_deref().is_some_and(|id| id.starts_with("default-")))
+        {
+            return "balanced".to_string();
+        }
+
+        let is_global = |r: &SbxPolicyLsRule| r.applies_to.as_deref() == Some("all");
+        let is_network_allow =
+            |r: &SbxPolicyLsRule| r.decision == "allow" && r.resource_type.as_deref() == Some("network");
+
+        // 2. A global network allow rule targeting an "all traffic" resource.
+        let allows_all_traffic = rules.iter().any(|r| {
+            is_global(r)
+                && is_network_allow(r)
+                && r.resources
+                    .iter()
+                    .any(|res| res == "*" || res == "0.0.0.0/0")
+        });
+        if allows_all_traffic {
+            return "allow-all".to_string();
+        }
+
+        // 3. No global network allow rules at all → deny-all.
+        let has_global_network_allow = rules.iter().any(|r| is_global(r) && is_network_allow(r));
+        if !has_global_network_allow {
+            return "deny-all".to_string();
+        }
+
+        // 4. Fallback.
+        "balanced".to_string()
     }
 
     /// Set the default policy: `sbx policy set-default <mode>`
@@ -1528,6 +1712,54 @@ pub fn extract_sandbox_name(output: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ─── Version compatibility (Task 2.4 / Requirement 4.2) ──────────────────
+
+    #[test]
+    fn test_json_flag_unsupported_cobra_unknown_flag() {
+        // Typical cobra-style error from an older sbx that lacks `--json`.
+        let stderr = "Error: unknown flag: --json\nUsage:\n  sbx policy ls [flags]";
+        assert!(SbxCli::is_json_flag_unsupported(stderr));
+    }
+
+    #[test]
+    fn test_json_flag_unsupported_go_flag_phrasing() {
+        let stderr = "flag provided but not defined: -json";
+        // Missing the literal "--json" reference → not matched (avoids false positives).
+        assert!(!SbxCli::is_json_flag_unsupported(stderr));
+
+        let stderr2 = "flag provided but not defined: --json";
+        assert!(SbxCli::is_json_flag_unsupported(stderr2));
+    }
+
+    #[test]
+    fn test_json_flag_unsupported_various_phrasings() {
+        assert!(SbxCli::is_json_flag_unsupported("unknown option '--json'"));
+        assert!(SbxCli::is_json_flag_unsupported(
+            "unrecognized flag --json\nUsage: sbx policy ls"
+        ));
+        assert!(SbxCli::is_json_flag_unsupported(
+            "invalid flag --json provided"
+        ));
+        // Case-insensitive.
+        assert!(SbxCli::is_json_flag_unsupported("Unknown Flag: --JSON"));
+    }
+
+    #[test]
+    fn test_json_flag_unsupported_ignores_other_failures() {
+        // Genuine runtime failures must NOT be misclassified as a version issue.
+        assert!(!SbxCli::is_json_flag_unsupported(
+            "Error: cannot connect to the sandbox daemon"
+        ));
+        assert!(!SbxCli::is_json_flag_unsupported(
+            "permission denied while reading policy"
+        ));
+        // References --json but is not a flag/usage complaint (e.g. parse issue).
+        assert!(!SbxCli::is_json_flag_unsupported(
+            "failed to render --json report: internal error"
+        ));
+        assert!(!SbxCli::is_json_flag_unsupported(""));
+    }
 
     #[test]
     fn test_parse_policy_text_sbx_031() {
