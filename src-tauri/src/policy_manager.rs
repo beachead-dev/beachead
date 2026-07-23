@@ -31,7 +31,7 @@ impl PolicyManager {
 
     /// Set the default policy mode.
     ///
-    /// Invokes `sbx policy set-default <mode>`.
+    /// Invokes `sbx policy init <mode>` (renamed from `set-default` in sbx 0.34.0).
     pub async fn set_default(&self, mode: PolicyDefault) -> Result<(), OrchestratorError> {
         self.sbx.policy_set_default(mode).await
     }
@@ -240,7 +240,7 @@ exit 1
     #[tokio::test]
     async fn test_set_default_allow() {
         let script = r#"#!/bin/sh
-if [ "$1" = "policy" ] && [ "$2" = "set-default" ] && [ "$3" = "allow-all" ]; then
+if [ "$1" = "policy" ] && [ "$2" = "init" ] && [ "$3" = "allow-all" ]; then
     exit 0
 fi
 exit 1
@@ -253,7 +253,7 @@ exit 1
     #[tokio::test]
     async fn test_set_default_deny() {
         let script = r#"#!/bin/sh
-if [ "$1" = "policy" ] && [ "$2" = "set-default" ] && [ "$3" = "deny-all" ]; then
+if [ "$1" = "policy" ] && [ "$2" = "init" ] && [ "$3" = "deny-all" ]; then
     exit 0
 fi
 exit 1
@@ -266,7 +266,7 @@ exit 1
     #[tokio::test]
     async fn test_set_default_balanced() {
         let script = r#"#!/bin/sh
-if [ "$1" = "policy" ] && [ "$2" = "set-default" ] && [ "$3" = "balanced" ]; then
+if [ "$1" = "policy" ] && [ "$2" = "init" ] && [ "$3" = "balanced" ]; then
     exit 0
 fi
 exit 1
@@ -279,7 +279,7 @@ exit 1
     #[tokio::test]
     async fn test_set_default_cli_failure() {
         let script = r#"#!/bin/sh
-if [ "$1" = "policy" ] && [ "$2" = "set-default" ]; then
+if [ "$1" = "policy" ] && [ "$2" = "init" ]; then
     echo "error: permission denied" >&2
     exit 1
 fi

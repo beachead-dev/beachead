@@ -8,6 +8,7 @@ All notable changes to Beachead will be documented here.
 
 - **sbx 0.35.0 compatibility:** Policy listing and rule removal now use `sbx policy ls --json` instead of parsing the text table. sbx 0.35.0 changed the default `sbx policy ls` output to a summarized per-policy overview (moving the detailed rule table behind `--wide`), which broke the old parser — producing an empty or incorrect Policies list and breaking network rule removal. The legacy text parser has been retired.
 - **Minimum sbx version for policy features:** Policy listing and removal now require sbx 0.35.0 or later. On older sbx versions these operations surface a clear version-requirement error instead of failing opaquely.
+- **Default policy uses `sbx policy init`:** Setting the global default policy now calls `sbx policy init` instead of the deprecated `sbx policy set-default` alias (renamed in sbx 0.34.0), so it keeps working after the alias is removed. No user-facing change to the mode options (balanced / allow / deny).
 
 ### Maintenance
 

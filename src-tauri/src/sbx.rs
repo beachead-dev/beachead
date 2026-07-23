@@ -895,15 +895,20 @@ impl SbxCli {
         "balanced".to_string()
     }
 
-    /// Set the default policy: `sbx policy set-default <mode>`
+    /// Set the global default policy: `sbx policy init <mode>`.
+    ///
+    /// The CLI command is `init` (renamed from `set-default` in sbx 0.34.0; the
+    /// old name is a deprecated alias slated for removal). The Rust method name
+    /// is kept for API stability. Accepted modes: `allow-all` / `balanced` /
+    /// `deny-all` (from `PolicyDefault`'s `Display`).
     pub async fn policy_set_default(&self, mode: PolicyDefault) -> Result<(), OrchestratorError> {
         let mode_str = mode.to_string();
         let output = self
-            .exec_multi_command(&["policy", "set-default"], &[&mode_str])
+            .exec_multi_command(&["policy", "init"], &[&mode_str])
             .await?;
         if !output.success {
             return Err(OrchestratorError::SbxError(format!(
-                "sbx policy set-default failed: {}",
+                "sbx policy init failed: {}",
                 output.stderr.trim()
             )));
         }
@@ -2130,10 +2135,11 @@ exit 1
         );
     }
 
-    /// `policy_set_default(mode)` → `policy set-default <mode>` where the mode
-    /// string comes from `PolicyDefault`'s `Display` ("balanced" / "allow-all" /
-    /// "deny-all"). All three variants are checked to guard against drift in the
-    /// Display mapping used to build the command.
+    /// `policy_set_default(mode)` → `policy init <mode>` (the command was renamed
+    /// from `set-default` to `init` in sbx 0.34.0) where the mode string comes
+    /// from `PolicyDefault`'s `Display` ("balanced" / "allow-all" / "deny-all").
+    /// All three variants are checked to guard against drift in the Display
+    /// mapping used to build the command.
     #[cfg(unix)]
     #[tokio::test]
     async fn test_preserve_policy_set_default_command() {
@@ -2144,7 +2150,7 @@ exit 1
         ] {
             let script = format!(
                 r#"#!/bin/sh
-if [ "$1" = "policy" ] && [ "$2" = "set-default" ] && [ "$3" = "{expected}" ] && [ -z "$4" ]; then
+if [ "$1" = "policy" ] && [ "$2" = "init" ] && [ "$3" = "{expected}" ] && [ -z "$4" ]; then
     exit 0
 fi
 exit 1
@@ -2154,7 +2160,7 @@ exit 1
             let result = cli.policy_set_default(mode.clone()).await;
             assert!(
                 result.is_ok(),
-                "expected `policy set-default {}` for {:?}, got: {:?}",
+                "expected `policy init {}` for {:?}, got: {:?}",
                 expected,
                 mode,
                 result
