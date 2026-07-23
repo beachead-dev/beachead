@@ -1023,17 +1023,34 @@ impl SbxCli {
         Ok(())
     }
 
-    /// Remove a policy rule by its parsed ID (the POLICY/RULE column value).
+    /// Remove a policy rule by the `id` surfaced in `policy_ls()`.
     ///
-    /// Uses `--resource` for removal since the POLICY/RULE column in `sbx policy ls`
-    /// is not the internal rule ID that `--id` expects (sbx 0.32.0 changed this —
-    /// the displayed value is a policy-scoped name, not the creation-time UUID).
+    /// Resolves the rule from the JSON-parsed `policy_ls()` result (sbx 0.35.0
+    /// `sbx policy ls --json`) and issues a correctly-scoped
+    /// `sbx policy rm network [--sandbox <name>] --id <rule_id>`.
+    ///
+    /// Removal keys on `--id`, NOT `--resource`:
+    /// - DEVIATION (Requirement 2.1): the requirement is phrased around resolving
+    ///   the rule's `origin` and `target`. Both ARE resolved from the JSON — `origin`
+    ///   drives sandbox scoping and `target` provides error/log context — but the
+    ///   actual removal keys on `--id`. In sbx 0.35.0 the JSON `id` is a stable,
+    ///   unique rule identifier accepted by `sbx policy rm network --id` (verified
+    ///   via `sbx policy rm network --help`). This supersedes the older comment that
+    ///   claimed the displayed value was a policy-scoped name rather than the UUID;
+    ///   in 0.35.0 the `id` IS the stable unique identifier. For every single-resource
+    ///   rule created through Beachead's UI, `--id` removal is exactly equivalent to
+    ///   per-resource removal, and it avoids the ambiguity of a multi-resource rule
+    ///   that flattens into several UI rows sharing one `id`.
+    /// - KNOWN LIMITATION: per-resource removal within a multi-resource rule (e.g. a
+    ///   kit-originated scoped rule carrying several resources) is not selectable
+    ///   through the id-only API — removing by `--id` drops the whole rule. This is
+    ///   documented and out of scope for this fix.
     ///
     /// Scoping:
-    /// - Global rules: no scope flag (global is default)
-    /// - Per-sandbox rules: --sandbox <name>
+    /// - Global rules (origin != "sandbox:<name>"): no scope flag (global is default)
+    /// - Per-sandbox rules (origin == "sandbox:<name>"): --sandbox <name>
     pub async fn policy_remove_rule(&self, rule_id: &str) -> Result<(), OrchestratorError> {
-        // Look up the rule to determine its origin and resource
+        // Resolve the rule from the JSON-parsed policy state to determine scope.
         let state = self.policy_ls().await?;
         let rule = state
             .rules
@@ -1050,7 +1067,8 @@ impl SbxCli {
             }
         };
 
-        // Build scope args: empty for global, --sandbox <name> for per-sandbox
+        // Determine scope from the resolved rule's origin (applies_to):
+        // strip the "sandbox:" prefix for the --sandbox value; global rules omit it.
         let sandbox_name = match &rule.origin {
             Some(origin) if origin.starts_with("sandbox:") => {
                 Some(origin.strip_prefix("sandbox:").unwrap().to_string())
@@ -1058,13 +1076,16 @@ impl SbxCli {
             _ => None,
         };
 
+        // Build args entirely via Command::arg() (through exec_multi_command) —
+        // no shell interpolation (Requirement 2.5).
         let mut args: Vec<&str> = Vec::new();
         let sandbox_ref;
         if let Some(ref name) = sandbox_name {
             sandbox_ref = name.as_str();
             args.extend_from_slice(&["--sandbox", sandbox_ref]);
         }
-        args.extend_from_slice(&["--resource", &rule.target]);
+        // Remove by stable, unique id (see DEVIATION note above).
+        args.extend_from_slice(&["--id", rule_id]);
 
         let output = self
             .exec_multi_command(&["policy", "rm", "network"], &args)

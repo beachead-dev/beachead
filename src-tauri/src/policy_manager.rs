@@ -308,13 +308,16 @@ exit 1
 
     #[tokio::test]
     async fn test_remove_rule_success() {
+        // sbx 0.35.0: policy_ls() uses --json; removal keys on --id (not --resource).
+        // Global rule (applies_to:"all") → no --sandbox scope.
         let script = r#"#!/bin/sh
-if [ "$1" = "policy" ] && [ "$2" = "ls" ]; then
-    printf 'PROVENANCE   APPLIES_TO   POLICY/RULE   TYPE      DECISION   STATUS   RESOURCES\n'
-    printf 'local        all          rule-123      network   allow      active   example.com:443\n'
+if [ "$1" = "policy" ] && [ "$2" = "ls" ] && [ "$3" = "--json" ]; then
+    cat <<'JSON'
+{"rules":[{"id":"rule-123","applies_to":"all","resource_type":"network","decision":"allow","resources":["example.com:443"],"origin":"local","status":"active"}]}
+JSON
     exit 0
 fi
-if [ "$1" = "policy" ] && [ "$2" = "rm" ] && [ "$3" = "network" ] && [ "$4" = "--resource" ] && [ "$5" = "example.com:443" ]; then
+if [ "$1" = "policy" ] && [ "$2" = "rm" ] && [ "$3" = "network" ] && [ "$4" = "--id" ] && [ "$5" = "rule-123" ]; then
     exit 0
 fi
 exit 1
@@ -359,22 +362,26 @@ exit 1
     }
 
     #[tokio::test]
-    async fn test_remove_rule_uses_resource_for_local_prefixed_id() {
+    async fn test_remove_rule_uses_id_for_global_rule() {
+        // Supersedes the pre-0.35.0 `test_remove_rule_uses_resource_for_local_prefixed_id`:
+        // in sbx 0.35.0 the JSON `id` is the stable, unique rule identifier accepted by
+        // `sbx policy rm network --id`, so removal keys on --id (not --resource). The rule
+        // id here is a real UUID as emitted by 0.35.0 `--json`.
         let script = r#"#!/bin/sh
-if [ "$1" = "policy" ] && [ "$2" = "ls" ]; then
-    printf 'PROVENANCE   APPLIES_TO   POLICY/RULE                            TYPE      DECISION   STATUS   RESOURCES\n'
-    printf 'local        all          local:5fa4ef3f-009e-4ffb-8812-1ca77e211eff   network   allow      active   test.com:443\n'
+if [ "$1" = "policy" ] && [ "$2" = "ls" ] && [ "$3" = "--json" ]; then
+    cat <<'JSON'
+{"rules":[{"id":"5fa4ef3f-009e-4ffb-8812-1ca77e211eff","applies_to":"all","resource_type":"network","decision":"allow","resources":["test.com:443"],"origin":"local","status":"active"}]}
+JSON
     exit 0
 fi
-if [ "$1" = "policy" ] && [ "$2" = "rm" ] && [ "$3" = "network" ] && [ "$4" = "--resource" ] && [ "$5" = "test.com:443" ]; then
+if [ "$1" = "policy" ] && [ "$2" = "rm" ] && [ "$3" = "network" ] && [ "$4" = "--id" ] && [ "$5" = "5fa4ef3f-009e-4ffb-8812-1ca77e211eff" ]; then
     exit 0
 fi
 exit 1
 "#;
         let (mgr, _dir) = create_test_manager(script);
-        // Even with "local:" prefix in the rule name, removal uses --resource
         let result = mgr
-            .remove_rule("local:5fa4ef3f-009e-4ffb-8812-1ca77e211eff")
+            .remove_rule("5fa4ef3f-009e-4ffb-8812-1ca77e211eff")
             .await;
         assert!(result.is_ok());
     }
