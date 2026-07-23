@@ -676,7 +676,16 @@ This is a Docker Sandboxes architectural behavior — the sandbox daemon proxies
 **Completed:** 2026-05-17  
 **Affected area:** `src-tauri/src/sbx.rs` (`parse_policy_text`)
 
-**What was done:** Parser completely rewritten for the new sbx column format (PROVENANCE, APPLIES_TO, POLICY/RULE, TYPE, DECISION, STATUS, RESOURCES). Handles continuation lines, per-sandbox scoping, and kit-originated rules. The underlying fragility (text parsing vs JSON) remains — will switch to `sbx policy ls --json` when Docker adds it.
+**What was done:** Parser completely rewritten for the new sbx column format (PROVENANCE, APPLIES_TO, POLICY/RULE, TYPE, DECISION, STATUS, RESOURCES). Handles continuation lines, per-sandbox scoping, and kit-originated rules. The underlying fragility (text parsing vs JSON) remained at the time. **Resolved 2026-07-22** — the switch to `sbx policy ls --json` has now been implemented and the text parser retired; see "Policy Listing Switched to `sbx policy ls --json` (sbx 0.35.0)" below.
+
+---
+
+### Policy Listing Switched to `sbx policy ls --json` (sbx 0.35.0)
+
+**Completed:** 2026-07-22  
+**Affected area:** `src-tauri/src/sbx.rs` (`policy_ls`, `policy_remove_rule`), `src-tauri/src/policy_manager.rs`
+
+**What was done:** Resolves the deferred intent from the "sbx policy ls Text Parser Updated for 0.31.0" entry above. sbx 0.35.0 redesigned `sbx policy ls` — the default output is now a summarized one-row-per-policy overview, the detailed per-rule table moved behind `--wide`, and a first-class `--json` output was added. `SbxCli::policy_ls()` now invokes `sbx policy ls --json` and parses the JSON shape `{"rules":[{decision,resources,applies_to,resource_type,origin,status,sandbox_id?}]}`, flattening one `PolicyRule` per resource; `policy_remove_rule()` resolves rule scope from the JSON and removes by `--id` (with `--sandbox <name>` for per-sandbox rules). The legacy text parser (`parse_policy_text`) was retired. These paths now require **sbx 0.35.0+**. The global default policy mode is set via `sbx policy init <allow-all|balanced|deny-all>` and is not read back by `sbx policy ls`, so `default_policy` is inferred rather than parsed.
 
 ---
 
